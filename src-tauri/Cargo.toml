@@ -1,0 +1,32 @@
+[package]
+name = "xdownloader"
+version = "1.0.0"
+description = "xDownloader — Fast, Multi-Platform Desktop Media Studio Downloader"
+authors = ["efx", "Masagi"]
+edition = "2021"
+
+[lib]
+name = "xdownloader_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["tray-icon"] }
+tauri-plugin-opener = "2.0"
+tauri-plugin-dialog = "2.0"
+tauri-plugin-clipboard-manager = "2.0"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+regex = "1.10"
+dirs = "5.0"
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+open = "5.1"
+zip = { version = "4", default-features = false, features = ["deflate"] }

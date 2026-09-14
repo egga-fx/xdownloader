@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+build/
+
+# Rust / Tauri builds
+src-tauri/target/
+src-tauri/bin/
+*.exe
+
+# Minisign cryptographic keys (DO NOT COMMIT)
+*.key*
+*.pem
+*.sig
+
+# Local SQLite databases & data
+data/
+vault.db*
+*.db
+*.db-wal
+*.db-shm
+
+# Environment & Logs
+.env
+*.local
+*.log
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

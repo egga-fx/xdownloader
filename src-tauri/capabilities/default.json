@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities and permissions for xDownloader",
+  "windows": ["main", "*"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "dialog:default",
+    "clipboard-manager:default",
+    "updater:default",
+    "process:default"
+  ]
+}

@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --background: #09090b;
+    --foreground: #f4f4f5;
+    --card: #121215;
+    --card-foreground: #f4f4f5;
+    --card-hover: #18181c;
+    --popover: #121215;
+    --popover-foreground: #f4f4f5;
+    --primary: #3b82f6;
+    --primary-foreground: #ffffff;
+    --primary-hover: #2563eb;
+    --muted: #1e1e24;
+    --muted-foreground: #71717a;
+    --border: #27272a;
+    --border-hover: #3f3f46;
+    --accent: #27272a;
+    --accent-foreground: #f4f4f5;
+    --destructive: #ef4444;
+    --destructive-foreground: #ffffff;
+    --radius: 0.75rem;
+  }
+
+  * {
+    border-color: var(--border);
+    outline-color: var(--primary);
+  }
+
+  button, [role="button"], a, select {
+    cursor: pointer;
+  }
+
+  button:disabled, [role="button"][aria-disabled="true"], button[disabled] {
+    cursor: not-allowed;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Stunning Kinetic Title & Ambient Effects */
+@keyframes text-aurora {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes ambient-glow {
+  0%, 100% {
+    opacity: 0.32;
+    transform: scale(0.95);
+    filter: blur(42px);
+  }
+  50% {
+    opacity: 0.62;
+    transform: scale(1.08);
+    filter: blur(52px);
+  }
+}
+
+@keyframes gentle-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.title-glow-aura {
+  animation: ambient-glow 6.5s ease-in-out infinite;
+}
+
+.title-animated-gradient {
+  background: linear-gradient(
+    115deg,
+    #ffffff 0%,
+    #f1f5f9 22%,
+    #60a5fa 42%,
+    #38bdf8 52%,
+    #c084fc 64%,
+    #ffffff 82%,
+    #e2e8f0 100%
+  );
+  background-size: 260% 260%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: text-aurora 7.5s ease-in-out infinite, gentle-float 5.5s ease-in-out infinite;
+}
+
+/* Greyscale Light Trail Outline Border Animation */
+@keyframes light-trail {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.light-trail-container {
+  position: relative;
+  padding: 1px;
+  overflow: hidden;
+  border-radius: 0.6rem;
+  background-color: #27272a;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.04);
+}
+
+.light-trail-container::before {
+  content: "";
+  position: absolute;
+  top: -150%;
+  left: -150%;
+  width: 400%;
+  height: 400%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 250deg,
+    rgba(255, 255, 255, 0.15) 290deg,
+    rgba(255, 255, 255, 0.9) 335deg,
+    transparent 360deg
+  );
+  animation: light-trail 3.5s linear infinite;
+  pointer-events: none;
+}
+

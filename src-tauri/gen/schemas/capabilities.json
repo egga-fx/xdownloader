@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities and permissions for xDownloader","local":true,"windows":["main","*"],"permissions":["core:default","opener:default","dialog:default","clipboard-manager:default","updater:default","process:default"]}}
