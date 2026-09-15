@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Settings,
   Info,
+  Scissors,
 } from "lucide-react";
 import { BinariesStatus } from "../types";
 import { isTauriEnvironment } from "../lib/tauri-api";
@@ -20,6 +21,7 @@ interface HeaderProps {
   onToggleVault: () => void;
   vaultCount: number;
   activeDownloadingCount: number;
+  onOpenSplitter?: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
   hasUpdate?: boolean;
@@ -35,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleVault,
   vaultCount,
   activeDownloadingCount,
+  onOpenSplitter,
   onOpenSettings,
   onOpenAbout,
   hasUpdate = false,
@@ -133,6 +136,18 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           ) : null}
         </button>
+
+        {/* Video Splitter Button */}
+        {onOpenSplitter && (
+          <button
+            onClick={onOpenSplitter}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold bg-[#141418] border-[#27272a] text-[#f4f4f5] hover:border-amber-500/40 hover:bg-amber-500/10 hover:text-amber-400 cursor-pointer transition-all"
+            title="Video Splitter (Split stream or local video without full download)"
+          >
+            <Scissors className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Splitter</span>
+          </button>
+        )}
 
         {/* Settings Button: Gear Icon Only */}
         <button

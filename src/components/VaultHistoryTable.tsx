@@ -9,6 +9,7 @@ import {
   Music,
   Loader2,
   AlertTriangle,
+  Scissors,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
 import { triggerDirectBrowserDownload } from "../lib/tauri-api";
@@ -27,6 +28,7 @@ interface VaultHistoryTableProps {
   onOpenFolder: (record: DownloadRecord) => void;
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
+  onSplitRecord?: (record: DownloadRecord) => void;
 }
 
 export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
@@ -37,6 +39,7 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
   onOpenFolder,
   onCopyPath,
   onDeleteRecord,
+  onSplitRecord,
 }) => {
   return (
     <div className="flex flex-col divide-y divide-[#1f1f23]">
@@ -194,6 +197,15 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                   title="Preview Media"
                 >
                   <Play className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {item.exists && onSplitRecord && (
+                <button
+                  onClick={() => onSplitRecord(item)}
+                  className="w-7 h-7 rounded-md text-[#71717a] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                  title="Split Video"
+                >
+                  <Scissors className="w-3.5 h-3.5" />
                 </button>
               )}
               {item.exists && (

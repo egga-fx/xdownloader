@@ -8,7 +8,10 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 use db::Database;
 use downloader::ProcessManager;
-use models::{AppSettings, BinariesStatus, DownloadRecord, TimeRange, VideoInfo};
+use models::{
+    AppSettings, BinariesStatus, DownloadRecord, SplitLocalRequest, SplitStreamRequest, TimeRange,
+    VideoInfo,
+};
 
 pub struct AppState {
     pub db: Arc<Database>,
@@ -127,6 +130,24 @@ fn save_app_settings(state: State<'_, AppState>, settings: AppSettings) -> Resul
     state.db.save_settings(&settings).map(|_| true)
 }
 
+#[tauri::command]
+async fn split_local_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: SplitLocalRequest,
+) -> Result<Vec<String>, String> {
+    downloader::split_local_video(app, state.db.clone(), req).await
+}
+
+#[tauri::command]
+async fn split_stream_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: SplitStreamRequest,
+) -> Result<Vec<String>, String> {
+    downloader::split_stream_video(app, state.db.clone(), state.process_mgr.clone(), req).await
+}
+
 fn uuid_short() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
@@ -167,6 +188,8 @@ pub fn run() {
             open_in_explorer,
             get_app_settings,
             save_app_settings,
+            split_local_video,
+            split_stream_video,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xDownloader application");

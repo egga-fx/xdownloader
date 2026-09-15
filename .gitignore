@@ -8,7 +8,10 @@ build/
 # Rust / Tauri builds
 src-tauri/target/
 src-tauri/bin/
+bin/
 *.exe
+*.pdb
+*.dll
 
 # Minisign cryptographic keys (DO NOT COMMIT)
 *.key*

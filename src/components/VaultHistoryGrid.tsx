@@ -9,6 +9,7 @@ import {
   Clock,
   Loader2,
   AlertTriangle,
+  Scissors,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
 import {
@@ -27,6 +28,7 @@ interface VaultHistoryGridProps {
   onOpenFolder: (record: DownloadRecord) => void;
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
+  onSplitRecord?: (record: DownloadRecord) => void;
 }
 
 export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
@@ -37,6 +39,7 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
   onOpenFolder,
   onCopyPath,
   onDeleteRecord,
+  onSplitRecord,
 }) => {
   return (
     <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -200,6 +203,15 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                       title="Preview Media"
                     >
                       <Play className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {item.exists && onSplitRecord && (
+                    <button
+                      onClick={() => onSplitRecord(item)}
+                      className="w-7 h-7 rounded-md text-[#71717a] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                      title="Split Video"
+                    >
+                      <Scissors className="w-3.5 h-3.5" />
                     </button>
                   )}
                   {item.exists && (

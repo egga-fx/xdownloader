@@ -206,12 +206,7 @@ impl Database {
             })
             .map_err(|e| format!("Query map error: {}", e))?;
 
-        let mut records = Vec::new();
-        for r in rows {
-            if let Ok(rec) = r {
-                records.push(rec);
-            }
-        }
+        let records: Vec<_> = rows.flatten().collect();
 
         Ok(records)
     }
@@ -262,11 +257,12 @@ impl Database {
             }
         }
 
-        let mut def = AppSettings::default();
-        def.output_folder = crate::downloader::get_default_download_dir()
-            .to_string_lossy()
-            .to_string();
-        Ok(def)
+        Ok(AppSettings {
+            output_folder: crate::downloader::get_default_download_dir()
+                .to_string_lossy()
+                .to_string(),
+            ..Default::default()
+        })
     }
 
     pub fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {

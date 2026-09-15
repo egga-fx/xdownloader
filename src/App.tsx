@@ -7,6 +7,7 @@ import { BinarySetupModal } from "./components/BinarySetupModal";
 import { MediaPreviewModal } from "./components/MediaPreviewModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { AboutModal } from "./components/AboutModal";
+import { VideoSplitterModal } from "./components/VideoSplitterModal";
 import {
   ActiveDownloadTask,
   AppSettings,
@@ -18,6 +19,7 @@ import {
   VideoInfo,
   AppUpdateInfo,
   TimeRange,
+  SplitterSource,
 } from "./types";
 import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls } from "./lib/utils";
 import {
@@ -75,6 +77,8 @@ export function App() {
   const [setupModalOpen, setSetupModalOpen] = useState<boolean>(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
   const [aboutModalOpen, setAboutModalOpen] = useState<boolean>(false);
+  const [splitterModalOpen, setSplitterModalOpen] = useState<boolean>(false);
+  const [splitterSource, setSplitterSource] = useState<SplitterSource | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>({
     outputFolder: "Videos\\xDownloader",
     defaultVideoQuality: "1080p",
@@ -92,6 +96,26 @@ export function App() {
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleOpenSplitter = (src?: SplitterSource) => {
+    if (src) {
+      setSplitterSource(src);
+    } else if (videoInfo) {
+      setSplitterSource({
+        type: "online",
+        url: videoInfo.webpageUrl || url,
+        info: videoInfo,
+      });
+    } else if (url.trim()) {
+      setSplitterSource({
+        type: "online",
+        url: url.trim(),
+      });
+    } else {
+      setSplitterSource(null);
+    }
+    setSplitterModalOpen(true);
   };
 
   // 1. Initial Load: Binaries, Settings, Vault records & Updater check
@@ -438,6 +462,7 @@ export function App() {
         onToggleVault={() => setVaultOpen(!vaultOpen)}
         vaultCount={records.length}
         activeDownloadingCount={activeTasks.size}
+        onOpenSplitter={() => handleOpenSplitter()}
         onOpenSettings={() => setSettingsModalOpen(true)}
         onOpenAbout={() => setAboutModalOpen(true)}
         hasUpdate={!!availableUpdate?.available}
@@ -483,6 +508,13 @@ export function App() {
                 timeRange={timeRange}
                 setTimeRange={setTimeRange}
                 onDownload={() => handleStartDownload(videoInfo.webpageUrl || url)}
+                onOpenSplitter={() =>
+                  handleOpenSplitter({
+                    type: "online",
+                    url: videoInfo.webpageUrl || url,
+                    info: videoInfo,
+                  })
+                }
                 isDownloadingCurrentUrl={isDownloadingCurrentUrl}
               />
             </div>
@@ -524,6 +556,16 @@ export function App() {
         onOpenFolder={(rec) => handleOpenFolder(rec)}
         onCopyPath={handleCopyPath}
         onDeleteRecordDirectly={handleDeleteRecordDirectly}
+        onSplitRecord={(rec) =>
+          handleOpenSplitter({
+            type: "local",
+            record: rec,
+            filePath: rec.filePath,
+            title: rec.title,
+            duration: rec.durationSec,
+            thumbnail: rec.thumbnailUrl,
+          })
+        }
         loading={loadingVault}
       />
 
@@ -532,6 +574,18 @@ export function App() {
         record={previewRecord}
         onClose={() => setPreviewRecord(null)}
         onOpenFolder={(rec) => handleOpenFolder(rec)}
+      />
+
+      {/* Video Splitter Modal */}
+      <VideoSplitterModal
+        open={splitterModalOpen}
+        onClose={() => setSplitterModalOpen(false)}
+        source={splitterSource}
+        outputFolder={outputFolder}
+        onSuccess={() => {
+          loadRecords();
+          showToast("Video split successfully!");
+        }}
       />
 
       {/* Engine Setup Modal */}

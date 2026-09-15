@@ -30,6 +30,7 @@ interface MetadataPreviewCardProps {
   setTimeRange?: (tr: TimeRange | undefined) => void;
   onDownload: () => void;
   isDownloadingCurrentUrl: boolean;
+  onOpenSplitter?: () => void;
 }
 
 const VIDEO_QUALITIES: DownloaderQuality[] = ["1080p", "720p", "480p", "360p", "best"];
@@ -47,6 +48,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   setTimeRange,
   onDownload,
   isDownloadingCurrentUrl,
+  onOpenSplitter,
 }) => {
   const [showTrimmer, setShowTrimmer] = useState<boolean>(Boolean(timeRange));
   return (
@@ -223,30 +225,45 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
           ))}
         </div>
 
-        {/* Action: Download Button */}
-        <button
-          onClick={onDownload}
-          disabled={isDownloadingCurrentUrl}
-          className={`w-full sm:w-auto px-6 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all ${
-            isDownloadingCurrentUrl
-              ? "bg-[#27272a] text-[#71717a] !cursor-not-allowed"
-              : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30 active:scale-98"
-          }`}
-        >
-          {isDownloadingCurrentUrl ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-              <span>Downloading in Media Vault...</span>
-            </>
-          ) : (
-            <>
-              <Download className="w-4 h-4" />
-              <span>
-                Download {formatType === "audio" ? "Audio" : "Video"}
-              </span>
-            </>
+        {/* Action Buttons: Splitter & Download */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          {onOpenSplitter && (
+            <button
+              type="button"
+              onClick={onOpenSplitter}
+              disabled={isDownloadingCurrentUrl}
+              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-bold text-xs border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 flex items-center justify-center gap-1.5 cursor-pointer transition-colors disabled:opacity-40"
+              title="Split this video stream directly without downloading the full video"
+            >
+              <Scissors className="w-3.5 h-3.5" />
+              <span>Split Video</span>
+            </button>
           )}
-        </button>
+
+          <button
+            onClick={onDownload}
+            disabled={isDownloadingCurrentUrl}
+            className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all ${
+              isDownloadingCurrentUrl
+                ? "bg-[#27272a] text-[#71717a] !cursor-not-allowed"
+                : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30 active:scale-98"
+            }`}
+          >
+            {isDownloadingCurrentUrl ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                <span>Downloading in Media Vault...</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                <span>
+                  Download {formatType === "audio" ? "Audio" : "Video"}
+                </span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -242,3 +242,60 @@ export function extractMultipleUrls(text: string): string[] {
   return validUrls;
 }
 
+/**
+ * Formats seconds into HH:MM:SS timestamp string
+ */
+export function secondsToTimestamp(sec: number): string {
+  if (isNaN(sec) || sec < 0) return "00:00:00";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Parses timestamp string (HH:MM:SS or MM:SS or raw seconds) into seconds
+ */
+export function timestampToSeconds(ts: string): number {
+  if (!ts) return 0;
+  const parts = ts.trim().split(":").map(Number);
+  if (parts.some(isNaN)) return 0;
+  if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  }
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  return 0;
+}
+
+/**
+ * Generates equal-duration SplitSegments from total duration
+ */
+export function generatePresetSegments(
+  totalSec: number,
+  chunkSec: number
+): { partIndex: number; start: string; end: string; label?: string }[] {
+  if (totalSec <= 0 || chunkSec <= 0) return [];
+  const segments: { partIndex: number; start: string; end: string; label?: string }[] = [];
+  let currentStart = 0;
+  let part = 1;
+
+  while (currentStart < totalSec) {
+    const nextEnd = Math.min(currentStart + chunkSec, totalSec);
+    segments.push({
+      partIndex: part,
+      start: secondsToTimestamp(currentStart),
+      end: secondsToTimestamp(nextEnd),
+      label: `Part ${part}`,
+    });
+    currentStart = nextEnd;
+    part++;
+  }
+
+  return segments;
+}
+

@@ -8,7 +8,10 @@ use tauri::{AppHandle, Emitter};
 
 use crate::binaries::find_binary;
 use crate::db::Database;
-use crate::models::{ActiveDownloadTask, DownloadRecord, TaskProgress, TimeRange};
+use crate::models::{
+    ActiveDownloadTask, DownloadRecord, SplitLocalRequest, SplitStreamRequest, TaskProgress,
+    TimeRange,
+};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -17,6 +20,12 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub struct ProcessManager {
     children: Mutex<HashMap<String, u32>>, // taskId -> process PID
+}
+
+impl Default for ProcessManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ProcessManager {
@@ -378,3 +387,256 @@ pub async fn run_download(
         Err(err_msg)
     }
 }
+
+pub fn time_str_to_seconds(t: &str) -> i64 {
+    let parts: Vec<&str> = t.trim().split(':').collect();
+    match parts.len() {
+        3 => {
+            let h: i64 = parts[0].parse().unwrap_or(0);
+            let m: i64 = parts[1].parse().unwrap_or(0);
+            let s: f64 = parts[2].parse().unwrap_or(0.0);
+            h * 3600 + m * 60 + s as i64
+        }
+        2 => {
+            let m: i64 = parts[0].parse().unwrap_or(0);
+            let s: f64 = parts[1].parse().unwrap_or(0.0);
+            m * 60 + s as i64
+        }
+        1 => parts[0].parse::<f64>().unwrap_or(0.0) as i64,
+        _ => 0,
+    }
+}
+
+pub async fn split_local_video(
+    app: AppHandle,
+    db: Arc<Database>,
+    req: SplitLocalRequest,
+) -> Result<Vec<String>, String> {
+    let in_path = PathBuf::from(&req.file_path);
+    if !in_path.exists() {
+        return Err(format!("Source video file does not exist: {}", req.file_path));
+    }
+
+    let stem = in_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("video")
+        .to_string();
+
+    let ext = in_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("mp4")
+        .to_string();
+
+    let base_parent = match req.output_folder {
+        Some(ref d) if !d.trim().is_empty() => PathBuf::from(d.trim()),
+        _ => in_path.parent().unwrap_or(&PathBuf::from(".")).to_path_buf(),
+    };
+
+    let out_dir = if req.create_subfolder {
+        base_parent.join(format!("{}_parts", sanitize_filename(&stem)))
+    } else {
+        base_parent
+    };
+
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("Failed to create output directory: {}", e))?;
+
+    let ffmpeg_path = find_binary("ffmpeg")
+        .ok_or_else(|| "FFmpeg binary is not installed. Please setup engines first.".to_string())?;
+
+    let mut created_paths: Vec<String> = Vec::new();
+    let total_segments = req.segments.len();
+
+    for (idx, seg) in req.segments.iter().enumerate() {
+        let part_filename = format!("{}_part_{:02}.{}", sanitize_filename(&stem), seg.part_index, ext);
+        let out_path = out_dir.join(&part_filename);
+        let out_str = out_path.to_string_lossy().to_string();
+
+        let mut cmd = Command::new(&ffmpeg_path);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        cmd.arg("-ss")
+            .arg(&seg.start)
+            .arg("-to")
+            .arg(&seg.end)
+            .arg("-i")
+            .arg(&in_path);
+
+        if req.precise_cut {
+            cmd.arg("-c:v")
+                .arg("libx264")
+                .arg("-crf")
+                .arg("18")
+                .arg("-preset")
+                .arg("fast")
+                .arg("-c:a")
+                .arg("aac")
+                .arg("-b:a")
+                .arg("192k");
+        } else {
+            cmd.arg("-c")
+                .arg("copy")
+                .arg("-avoid_negative_ts")
+                .arg("make_zero");
+        }
+
+        cmd.arg("-y").arg(&out_path);
+
+        let output = cmd.output().map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("FFmpeg splitting failed on Part {}: {}", seg.part_index, stderr));
+        }
+
+        let file_size = std::fs::metadata(&out_path)
+            .map(|m| m.len() as i64)
+            .unwrap_or(0);
+
+        let start_sec = time_str_to_seconds(&seg.start);
+        let end_sec = time_str_to_seconds(&seg.end);
+        let part_duration = (end_sec - start_sec).max(1);
+
+        let record_id = format!("split_{}_{:02}", chrono::Utc::now().timestamp_millis(), seg.part_index);
+        let part_title = if let Some(ref l) = seg.label {
+            if !l.trim().is_empty() {
+                format!("{} ({})", stem, l.trim())
+            } else {
+                format!("{} (Part {:02})", stem, seg.part_index)
+            }
+        } else {
+            format!("{} (Part {:02})", stem, seg.part_index)
+        };
+
+        let is_audio = ext == "mp3" || ext == "wav" || ext == "m4a" || ext == "flac" || ext == "opus";
+        let record = DownloadRecord {
+            id: record_id.clone(),
+            platform: "local_split".to_string(),
+            url: format!("file://{}", out_str),
+            title: part_title,
+            author: "Video Splitter".to_string(),
+            duration_sec: part_duration,
+            thumbnail_url: String::new(),
+            format_type: if is_audio { "audio".to_string() } else { "video".to_string() },
+            quality: if req.precise_cut { "precise".to_string() } else { "lossless".to_string() },
+            file_path: out_str.clone(),
+            file_size_bytes: file_size,
+            status: "completed".to_string(),
+            error: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            time_range: Some(TimeRange {
+                start: seg.start.clone(),
+                end: seg.end.clone(),
+            }),
+            exists: true,
+        };
+
+        let _ = db.add_record(&record);
+
+        let pct = ((idx + 1) as f64 / total_segments as f64) * 100.0;
+        let _ = app.emit(
+            "split-progress",
+            serde_json::json!({
+                "partIndex": seg.part_index,
+                "totalParts": total_segments,
+                "percent": pct,
+                "filePath": out_str,
+                "title": record.title,
+                "status": "completed",
+            }),
+        );
+
+        created_paths.push(out_str);
+    }
+
+    Ok(created_paths)
+}
+
+pub async fn split_stream_video(
+    app: AppHandle,
+    db: Arc<Database>,
+    process_mgr: Arc<ProcessManager>,
+    req: SplitStreamRequest,
+) -> Result<Vec<String>, String> {
+    let base_title = req.title.unwrap_or_else(|| "stream".to_string());
+    let clean_title = sanitize_filename(&base_title);
+
+    let base_dir = match req.output_folder {
+        Some(ref d) if !d.trim().is_empty() => PathBuf::from(d.trim()),
+        _ => get_default_download_dir(),
+    };
+
+    let out_dir = if req.create_subfolder {
+        base_dir.join(format!("{}_parts", clean_title))
+    } else {
+        base_dir
+    };
+
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("Failed to create output directory: {}", e))?;
+
+    let mut task_ids: Vec<String> = Vec::new();
+    let total_segments = req.segments.len();
+
+    for (idx, seg) in req.segments.iter().enumerate() {
+        let task_id = format!("split_stream_{}_{:02}", chrono::Utc::now().timestamp_millis(), seg.part_index);
+        let part_name = format!("{}_part_{:02}", clean_title, seg.part_index);
+        let part_title = if let Some(ref l) = seg.label {
+            if !l.trim().is_empty() {
+                format!("{} ({})", base_title, l.trim())
+            } else {
+                format!("{} (Part {:02})", base_title, seg.part_index)
+            }
+        } else {
+            format!("{} (Part {:02})", base_title, seg.part_index)
+        };
+
+        let start_sec = time_str_to_seconds(&seg.start);
+        let end_sec = time_str_to_seconds(&seg.end);
+        let part_duration = (end_sec - start_sec).max(1);
+
+        task_ids.push(task_id.clone());
+
+        let _ = app.emit(
+            "split-progress",
+            serde_json::json!({
+                "partIndex": seg.part_index,
+                "totalParts": total_segments,
+                "percent": ((idx as f64) / total_segments as f64) * 100.0,
+                "title": part_title,
+                "status": "starting",
+            }),
+        );
+
+        let dl_res = run_download(
+            app.clone(),
+            db.clone(),
+            process_mgr.clone(),
+            task_id,
+            req.url.clone(),
+            req.format_type.clone(),
+            req.quality.clone(),
+            Some(part_title),
+            req.thumbnail_url.clone(),
+            req.author.clone(),
+            Some(part_duration),
+            Some(part_name),
+            Some(out_dir.to_string_lossy().to_string()),
+            false,
+            Some(TimeRange {
+                start: seg.start.clone(),
+                end: seg.end.clone(),
+            }),
+        )
+        .await;
+
+        if let Err(e) = dl_res {
+            eprintln!("Warning: Failed to split part {}: {}", seg.part_index, e);
+        }
+    }
+
+    Ok(task_ids)
+}
+

@@ -12,6 +12,9 @@ import {
   DownloaderFormatType,
   DownloaderQuality,
   DownloadRecord,
+  SplitLocalRequest,
+  SplitStreamRequest,
+  SplitProgressEvent,
   TimeRange,
   VideoInfo,
 } from "../types";
@@ -890,3 +893,35 @@ export async function openExternalUrl(url: string): Promise<void> {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 }
+
+// --- 9. VIDEO SPLITTER ---
+
+export async function splitLocalVideo(req: SplitLocalRequest): Promise<string[]> {
+  if (isTauriEnvironment()) {
+    return await invoke<string[]>("split_local_video", { req });
+  }
+  return req.segments.map((s) => `${req.filePath}_part_${String(s.partIndex).padStart(2, "0")}.mp4`);
+}
+
+export async function splitStreamVideo(req: SplitStreamRequest): Promise<string[]> {
+  if (isTauriEnvironment()) {
+    return await invoke<string[]>("split_stream_video", { req });
+  }
+  return req.segments.map((s) => `mock_task_${s.partIndex}`);
+}
+
+export function onSplitProgress(callback: (data: SplitProgressEvent) => void): () => void {
+  if (isTauriEnvironment()) {
+    let unlistenFn: UnlistenFn | undefined;
+    listen<SplitProgressEvent>("split-progress", (event) => {
+      callback(event.payload);
+    }).then((fn) => {
+      unlistenFn = fn;
+    });
+    return () => {
+      if (unlistenFn) unlistenFn();
+    };
+  }
+  return () => {};
+}
+

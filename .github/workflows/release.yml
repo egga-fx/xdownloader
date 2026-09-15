@@ -1,0 +1,66 @@
+name: "Release xDownloader"
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest"
+            target: "x86_64-pc-windows-msvc"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Frontend Dependencies
+        run: bun install
+
+      - name: Build and Publish Tauri Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "xDownloader ${{ github.ref_name }}"
+          releaseBody: |
+            ## 🚀 xDownloader ${{ github.ref_name }}
+
+            ### ✨ What's Included:
+            - Fast multi-platform media downloader (YouTube, TikTok, Instagram, X/Twitter, Pinterest)
+            - Built-in Video Splitter & Shorts Cutter (Multi-segment slicing & precise stream cutting)
+            - Smart Clipboard auto-detection
+            - High-performance SQLite WAL Media Vault (Table & Grid views)
+            - Auto-detected or in-app setup for `yt-dlp` and `ffmpeg`
+            - Verified Minisign updater artifacts
+
+            ### 📦 Assets:
+            Download `xDownloader_${{ github.ref_name }}_x64-setup.exe` below to install or update.
+          releaseDraft: false
+          prerelease: false
