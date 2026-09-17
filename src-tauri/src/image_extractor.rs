@@ -423,18 +423,67 @@ pub async fn extract_tiktok_photos(url: &str) -> Result<ImageMediaBundle, String
     parse_tiktok_response(&res_obj, url)
 }
 
-/// 4. Instagram Image / Carousel Extractor via OpenGraph
+/// 4. Instagram Image / Carousel Extractor via OpenGraph & Embedded JSON
 pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, String> {
-    // Extract og:image
-    let img_re = Regex::new(r#"property="og:image"\s+content="([^"]+)""#)
-        .or_else(|_| Regex::new(r#"content="([^"]+)"[^>]*property="og:image""#))
-        .unwrap();
+    let mut image_urls: Vec<String> = Vec::new();
 
-    let image_url = img_re
-        .captures(html)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().replace("&amp;", "&"))
-        .ok_or_else(|| "Could not locate high-resolution image in this Instagram post".to_string())?;
+    let clean_url = |raw: &str| -> String {
+        raw.replace(r"\/", "/")
+            .replace(r"\u0026", "&")
+            .replace("&amp;", "&")
+            .trim()
+            .to_string()
+    };
+
+    // 1. Scoped Carousel Extraction: Look specifically for carousel children in edge_sidecar_to_children or carousel_media
+    // Use (?s) so '.' matches across newlines in JSON payloads.
+    let sidecar_re = Regex::new(r#"(?s)(?:"edge_sidecar_to_children"\s*:\s*\{.*?"edges"\s*:\s*\[|"carousel_media"\s*:\s*\[)(.*?)\]"#).ok();
+    if let Some(re) = sidecar_re {
+        if let Some(caps) = re.captures(html) {
+            if let Some(edges_block) = caps.get(1) {
+                if let Ok(display_re) = Regex::new(r#""(?:display_url|url)"\s*:\s*"([^"]+)""#) {
+                    for cap in display_re.captures_iter(edges_block.as_str()) {
+                        if let Some(m) = cap.get(1) {
+                            let u = clean_url(m.as_str());
+                            if (u.starts_with("http://") || u.starts_with("https://")) && !image_urls.contains(&u) {
+                                image_urls.push(u);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Single Post Extraction: If no sidecar was found, extract only the first main display_url
+    if image_urls.is_empty() {
+        if let Ok(display_re) = Regex::new(r#""display_url"\s*:\s*"([^"]+)""#) {
+            if let Some(cap) = display_re.captures(html) {
+                if let Some(m) = cap.get(1) {
+                    let u = clean_url(m.as_str());
+                    image_urls.push(u);
+                }
+            }
+        }
+    }
+
+    // 3. Fallback: ONLY if image_urls is still empty, fallback to og:image meta tags
+    if image_urls.is_empty() {
+        if let Ok(og_re) = Regex::new(r#"(?:property="og:image"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:image")"#) {
+            for cap in og_re.captures_iter(html) {
+                if let Some(m) = cap.get(1).or_else(|| cap.get(2)) {
+                    let u = clean_url(m.as_str());
+                    if !image_urls.contains(&u) {
+                        image_urls.push(u);
+                    }
+                }
+            }
+        }
+    }
+
+    if image_urls.is_empty() {
+        return Err("Could not locate high-resolution image in this Instagram post".to_string());
+    }
 
     // Extract Title
     let title_re = Regex::new(r#"property="og:title"\s+content="([^"]+)""#).unwrap();
@@ -451,7 +500,21 @@ pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
         .map(|m| m.as_str().to_string())
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis().to_string());
 
-    let filename = format!("instagram_{}.jpg", post_id);
+    let is_carousel = image_urls.len() > 1;
+    let mut images: Vec<ImageMediaItem> = Vec::new();
+    for (idx, u) in image_urls.iter().enumerate() {
+        let filename = if is_carousel {
+            format!("instagram_{}_{:02}.jpg", post_id, idx + 1)
+        } else {
+            format!("instagram_{}.jpg", post_id)
+        };
+        images.push(ImageMediaItem {
+            url: u.clone(),
+            filename,
+        });
+    }
+
+    let thumbnail = images[0].url.clone();
 
     Ok(ImageMediaBundle {
         id: format!("ig_{}", post_id),
@@ -459,11 +522,8 @@ pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
         title,
         author: "Instagram".to_string(),
         platform: "instagram".to_string(),
-        thumbnail: image_url.clone(),
-        images: vec![ImageMediaItem {
-            url: image_url,
-            filename,
-        }],
+        thumbnail,
+        images,
         audio_url: None,
     })
 }
@@ -513,6 +573,8 @@ pub fn bundle_to_video_info(bundle: &ImageMediaBundle, url: &str) -> VideoInfo {
         bundle.title.clone()
     };
 
+    let image_urls: Vec<String> = bundle.images.iter().map(|img| img.url.clone()).collect();
+
     VideoInfo {
         id: bundle.id.clone(),
         title: formatted_title,
@@ -522,6 +584,7 @@ pub fn bundle_to_video_info(bundle: &ImageMediaBundle, url: &str) -> VideoInfo {
         channel: bundle.platform.clone(),
         description: Some("image".to_string()),
         webpage_url: url.to_string(),
+        images: if count > 1 { Some(image_urls) } else { None },
     }
 }
 
@@ -768,6 +831,63 @@ mod tests {
         assert_eq!(bundle.title, "Art Gallery Exhibition \"Moments\"");
         assert_eq!(bundle.images.len(), 1);
         assert_eq!(bundle.images[0].url, "https://scontent.cdninstagram.com/v/t51.2885-15/photo_highres.jpg?_nc_cat=1&token=abc");
+    }
+
+    #[test]
+    fn test_parse_instagram_carousel_html_offline() {
+        let mock_html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta property="og:title" content="Tokyo City Walk Highlights">
+                <script type="application/json">
+                    {
+                        "edge_sidecar_to_children": {
+                            "edges": [
+                                {"node": {"display_url": "https:\/\/scontent.cdninstagram.com\/slide1.jpg?token=1\u0026v=1"}},
+                                {"node": {"display_url": "https:\/\/scontent.cdninstagram.com\/slide2.jpg?token=2\u0026v=2"}},
+                                {"node": {"display_url": "https:\/\/scontent.cdninstagram.com\/slide3.jpg?token=3\u0026v=3"}}
+                            ]
+                        }
+                    }
+                </script>
+            </head>
+            <body></body>
+            </html>
+        "#;
+        let url = "https://www.instagram.com/p/Tokyo123456/";
+        let res = parse_instagram_html(mock_html, url);
+        assert!(res.is_ok(), "Failed to parse Instagram Carousel: {:?}", res.err());
+        let bundle = res.unwrap();
+        assert_eq!(bundle.platform, "instagram");
+        assert_eq!(bundle.images.len(), 3);
+        assert_eq!(bundle.images[0].url, "https://scontent.cdninstagram.com/slide1.jpg?token=1&v=1");
+        assert_eq!(bundle.images[1].url, "https://scontent.cdninstagram.com/slide2.jpg?token=2&v=2");
+        assert_eq!(bundle.images[2].url, "https://scontent.cdninstagram.com/slide3.jpg?token=3&v=3");
+        assert_eq!(bundle.images[0].filename, "instagram_Tokyo123456_01.jpg");
+    }
+
+    #[test]
+    fn test_bundle_to_video_info_carousel() {
+        let bundle = ImageMediaBundle {
+            id: "ig_test123".to_string(),
+            source_url: "https://www.instagram.com/p/test123/".to_string(),
+            title: "Summer Vacation".to_string(),
+            author: "Instagram".to_string(),
+            platform: "instagram".to_string(),
+            thumbnail: "https://example.com/slide1.jpg".to_string(),
+            images: vec![
+                ImageMediaItem { url: "https://example.com/slide1.jpg".to_string(), filename: "slide_01.jpg".to_string() },
+                ImageMediaItem { url: "https://example.com/slide2.jpg".to_string(), filename: "slide_02.jpg".to_string() },
+            ],
+            audio_url: None,
+        };
+
+        let video_info = bundle_to_video_info(&bundle, "https://www.instagram.com/p/test123/");
+        assert!(video_info.images.is_some());
+        assert_eq!(video_info.images.as_ref().unwrap().len(), 2);
+        assert_eq!(video_info.title, "Summer Vacation [Carousel: 2 Images]");
+        assert_eq!(video_info.description, Some("image".to_string()));
     }
 
     #[tokio::test]

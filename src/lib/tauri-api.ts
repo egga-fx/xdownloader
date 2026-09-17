@@ -324,6 +324,30 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
   // Browser Preview Mode fallback for other platforms
   await new Promise((r) => setTimeout(r, 400));
 
+  const isImagePost =
+    platform === "pinterest" ||
+    cleanUrl.includes("/photo/") ||
+    cleanUrl.includes("pin.it");
+
+  if (isImagePost) {
+    const mockImages = [
+      "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80",
+      "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=800&auto=format&fit=crop&q=80",
+      "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=800&auto=format&fit=crop&q=80",
+    ];
+    return {
+      id: `mock-${Date.now().toString(36)}`,
+      title: `${platform.toUpperCase()} Photo Gallery [Carousel: 3 Images]`,
+      webpageUrl: cleanUrl,
+      duration: 0,
+      thumbnail: mockImages[0],
+      uploader: `${platform.toUpperCase()} Creator`,
+      channel: `${platform.toUpperCase()} Gallery`,
+      description: "image",
+      images: mockImages,
+    };
+  }
+
   return {
     id: `mock-${Date.now().toString(36)}`,
     title: `Amazing ${platform.toUpperCase()} Viral Showcase (Preview Mode)`,

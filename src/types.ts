@@ -77,6 +77,7 @@ export interface VideoInfo {
   channel: string;
   description?: string;
   webpageUrl: string;
+  images?: string[];
 }
 
 export interface BinariesStatus {

@@ -63,6 +63,7 @@ pub struct VideoInfo {
     pub channel: String,
     pub description: Option<String>,
     pub webpage_url: String,
+    pub images: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

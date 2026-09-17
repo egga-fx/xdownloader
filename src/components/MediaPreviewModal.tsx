@@ -78,7 +78,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                 isAudio
                   ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
                   : isImage
-                  ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                  ? "bg-zinc-800 text-zinc-300 border border-zinc-700"
                   : "bg-blue-500/20 text-blue-400 border border-blue-500/30"
               }`}
             >

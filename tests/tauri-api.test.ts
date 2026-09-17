@@ -15,6 +15,7 @@ import {
   trimLocalVideoExact,
   trimStreamVideoExact,
   resetMockStorage,
+  getVideoMetadata,
 } from "../src/lib/tauri-api";
 import { ActiveDownloadTask, LogEntry } from "../src/types";
 
@@ -212,6 +213,15 @@ describe("AI Spec-First Contract Tests: src/lib/tauri-api.ts", () => {
         endSec: 15,
       });
       expect(streamResult).toContain("trim_task_");
+    });
+
+    it("should return carousel image bundle structure for photo/image posts in preview mode", async () => {
+      const pinResult = await getVideoMetadata("https://pin.it/7xYz123");
+      expect(pinResult).toBeDefined();
+      expect(pinResult.description).toBe("image");
+      expect(pinResult.images).toBeDefined();
+      expect(Array.isArray(pinResult.images)).toBe(true);
+      expect((pinResult.images || []).length).toBeGreaterThan(1);
     });
   });
 });
