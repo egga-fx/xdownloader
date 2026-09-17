@@ -223,5 +223,30 @@ describe("AI Spec-First Contract Tests: src/lib/tauri-api.ts", () => {
       expect(Array.isArray(pinResult.images)).toBe(true);
       expect((pinResult.images || []).length).toBeGreaterThan(1);
     });
+
+    it("should target requested slide thumbnail for X photo carousel URLs", async () => {
+      const xResultSlide3 = await getVideoMetadata("https://x.com/txtharihariWNI/status/2100223177443905716/photo/3");
+      expect(xResultSlide3).toBeDefined();
+      expect(xResultSlide3.description).toBe("image");
+      expect(xResultSlide3.images).toBeDefined();
+      expect((xResultSlide3.images || []).length).toBe(5);
+      expect(xResultSlide3.thumbnail).toBe(xResultSlide3.images![2]);
+
+      const xResultSlide1 = await getVideoMetadata("https://x.com/txtharihariWNI/status/2100223177443905716/photo/1");
+      expect(xResultSlide1.thumbnail).toBe(xResultSlide1.images![0]);
+    });
+
+    it("should distinguish Instagram video posts from Instagram carousel photos in preview mode", async () => {
+      const igVideoResult = await getVideoMetadata("https://www.instagram.com/p/DdVzoQTTkM4/?hl=en");
+      expect(igVideoResult).toBeDefined();
+      expect(igVideoResult.description).not.toBe("image");
+      expect(igVideoResult.duration).toBeGreaterThan(0);
+
+      const igCarouselResult = await getVideoMetadata("https://www.instagram.com/p/DdRWIrXmji_/?img_index=2");
+      expect(igCarouselResult).toBeDefined();
+      expect(igCarouselResult.description).toBe("image");
+      expect(igCarouselResult.images).toBeDefined();
+      expect(igCarouselResult.thumbnail).toBe(igCarouselResult.images![1]);
+    });
   });
 });

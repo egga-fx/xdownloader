@@ -171,6 +171,28 @@ pub async fn extract_pinterest_image(url: &str) -> Result<ImageMediaBundle, Stri
     parse_pinterest_html(&html, url)
 }
 
+pub fn parse_slide_index(u: &str) -> Option<usize> {
+    if let Ok(re) = Regex::new(r#"[?&]img_index=(\d+)"#) {
+        if let Some(caps) = re.captures(u) {
+            if let Some(m) = caps.get(1) {
+                if let Ok(idx) = m.as_str().parse::<usize>() {
+                    return Some(idx);
+                }
+            }
+        }
+    }
+    if let Ok(re) = Regex::new(r#"/photo/(\d+)"#) {
+        if let Some(caps) = re.captures(u) {
+            if let Some(m) = caps.get(1) {
+                if let Ok(idx) = m.as_str().parse::<usize>() {
+                    return Some(idx);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// 2. X (Twitter) Photo Extractor via VxTwitter & FxTwitter APIs
 pub fn parse_x_vxtwitter_json(
     json_val: &serde_json::Value,
@@ -207,7 +229,17 @@ pub fn parse_x_vxtwitter_json(
     }
 
     if !image_items.is_empty() {
-        let thumb = image_items[0].url.clone();
+        let target_idx = parse_slide_index(url);
+        let thumb = if let Some(idx) = target_idx {
+            if idx >= 1 && idx <= image_items.len() {
+                image_items[idx - 1].url.clone()
+            } else {
+                image_items[0].url.clone()
+            }
+        } else {
+            image_items[0].url.clone()
+        };
+
         let title = if text.trim().is_empty() {
             format!("X Photo by @{}", screen_name)
         } else {
@@ -273,7 +305,16 @@ pub fn parse_x_fxtwitter_json(
         return Err("No photos found in this X post".to_string());
     }
 
-    let thumb = image_items[0].url.clone();
+    let target_idx = parse_slide_index(url);
+    let thumb = if let Some(idx) = target_idx {
+        if idx >= 1 && idx <= image_items.len() {
+            image_items[idx - 1].url.clone()
+        } else {
+            image_items[0].url.clone()
+        }
+    } else {
+        image_items[0].url.clone()
+    };
     let title = if text.trim().is_empty() {
         format!("X Photo by @{}", user)
     } else {
@@ -435,6 +476,15 @@ pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
             .to_string()
     };
 
+    // If the post explicitly indicates it is a video (e.g. Reels or video posts), do not treat it as an image bundle
+    if html.contains(r#"property="og:video""#)
+        || html.contains(r#"content="video""#)
+        || html.contains(r#""is_video":true"#)
+        || html.contains(r#""is_video": true"#)
+    {
+        return Err("This Instagram post is a video, not an image".to_string());
+    }
+
     // 1. Scoped Carousel Extraction: Look specifically for carousel children in edge_sidecar_to_children or carousel_media
     // Use (?s) so '.' matches across newlines in JSON payloads.
     let sidecar_re = Regex::new(r#"(?s)(?:"edge_sidecar_to_children"\s*:\s*\{.*?"edges"\s*:\s*\[|"carousel_media"\s*:\s*\[)(.*?)\]"#).ok();
@@ -564,6 +614,41 @@ pub async fn try_extract_image_media(url: &str) -> Result<ImageMediaBundle, Stri
     Err("No dedicated image extractor available for this domain".to_string())
 }
 
+/// Creates an ImageMediaBundle directly from a pre-extracted list of image URLs
+pub fn create_bundle_from_urls(
+    id: &str,
+    source_url: &str,
+    title: &str,
+    platform: &str,
+    image_urls: &[String],
+) -> ImageMediaBundle {
+    let clean_title = sanitize_name(title);
+    let images = image_urls
+        .iter()
+        .enumerate()
+        .map(|(idx, u)| {
+            let ext = if u.contains(".png") { "png" } else { "jpg" };
+            ImageMediaItem {
+                url: u.clone(),
+                filename: format!("{}_{:02}.{}", clean_title, idx + 1, ext),
+            }
+        })
+        .collect();
+
+    let thumbnail = image_urls.first().cloned().unwrap_or_default();
+
+    ImageMediaBundle {
+        id: id.to_string(),
+        source_url: source_url.to_string(),
+        title: title.to_string(),
+        author: platform.to_string(),
+        platform: platform.to_string(),
+        thumbnail,
+        images,
+        audio_url: None,
+    }
+}
+
 /// Converts an ImageMediaBundle into a VideoInfo struct for the frontend preview
 pub fn bundle_to_video_info(bundle: &ImageMediaBundle, url: &str) -> VideoInfo {
     let count = bundle.images.len();
@@ -575,11 +660,19 @@ pub fn bundle_to_video_info(bundle: &ImageMediaBundle, url: &str) -> VideoInfo {
 
     let image_urls: Vec<String> = bundle.images.iter().map(|img| img.url.clone()).collect();
 
+    // Check if target slide index is specified in url (?img_index=N or /photo/N)
+    let mut thumbnail = bundle.thumbnail.clone();
+    if let Some(target_idx) = parse_slide_index(url) {
+        if target_idx >= 1 && target_idx <= bundle.images.len() {
+            thumbnail = bundle.images[target_idx - 1].url.clone();
+        }
+    }
+
     VideoInfo {
         id: bundle.id.clone(),
         title: formatted_title,
         duration: 0,
-        thumbnail: bundle.thumbnail.clone(),
+        thumbnail,
         uploader: bundle.author.clone(),
         channel: bundle.platform.clone(),
         description: Some("image".to_string()),
@@ -588,7 +681,7 @@ pub fn bundle_to_video_info(bundle: &ImageMediaBundle, url: &str) -> VideoInfo {
     }
 }
 
-/// Downloads image items (single or carousel bundle) directly to the target folder
+/// Downloads image items (single or carousel bundle) directly to the target folder with sequential naming
 pub async fn download_image_bundle(
     app: &AppHandle,
     db: Arc<Database>,
@@ -596,36 +689,58 @@ pub async fn download_image_bundle(
     bundle: &ImageMediaBundle,
     output_folder: &Path,
     custom_name: Option<String>,
+    selected_indices: Option<Vec<usize>>,
 ) -> Result<String, String> {
     let client = create_http_client();
-    let total_items = bundle.images.len() + if bundle.audio_url.is_some() { 1 } else { 0 };
 
-    let is_carousel = bundle.images.len() > 1 || bundle.audio_url.is_some();
-    let clean_folder_name = sanitize_name(
+    let clean_base_name = sanitize_name(
         custom_name
             .as_deref()
             .unwrap_or(&bundle.title)
     );
 
-    let target_dir = if is_carousel {
-        let sub = output_folder.join(format!("{}_album", clean_folder_name.chars().take(40).collect::<String>()));
-        let _ = std::fs::create_dir_all(&sub);
-        sub
-    } else {
-        output_folder.to_path_buf()
+    // Save directly into output_folder with sequential filenames without creating extra subfolders
+    let target_dir = output_folder.to_path_buf();
+    let _ = std::fs::create_dir_all(&target_dir);
+
+    // Filter items based on selected_indices while preserving 1-based original sequence number
+    let items_to_download: Vec<(usize, ImageMediaItem)> = match selected_indices {
+        Some(ref indices) if !indices.is_empty() => {
+            bundle.images
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| indices.contains(idx))
+                .map(|(idx, item)| (idx + 1, item.clone()))
+                .collect()
+        }
+        _ => {
+            bundle.images
+                .iter()
+                .enumerate()
+                .map(|(idx, item)| (idx + 1, item.clone()))
+                .collect()
+        }
     };
+
+    let total_items = items_to_download.len() + if bundle.audio_url.is_some() { 1 } else { 0 };
 
     let mut primary_saved_path = String::new();
     let mut total_bytes: i64 = 0;
 
-    for (idx, item) in bundle.images.iter().enumerate() {
-        let dest_file = target_dir.join(&item.filename);
+    for (step_idx, (slide_idx, item)) in items_to_download.iter().enumerate() {
+        let ext = if item.url.contains(".png") { "png" } else { "jpg" };
+        let filename = if bundle.images.len() > 1 {
+            format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
+        } else {
+            format!("{}.{}", clean_base_name, ext)
+        };
+        let dest_file = target_dir.join(&filename);
 
         let resp = client
             .get(&item.url)
             .send()
             .await
-            .map_err(|e| format!("Failed to download image {}: {}", item.filename, e))?;
+            .map_err(|e| format!("Failed to download image {}: {}", filename, e))?;
 
         if !resp.status().is_success() {
             return Err(format!("Image download failed with HTTP {}", resp.status()));
@@ -644,7 +759,7 @@ pub async fn download_image_bundle(
             primary_saved_path = dest_file.to_string_lossy().to_string();
         }
 
-        let percent = ((idx + 1) as f64 / total_items as f64) * 100.0;
+        let percent = ((step_idx + 1) as f64 / total_items as f64) * 100.0;
         let _ = app.emit(
             "download-progress",
             ActiveDownloadTask {
@@ -657,7 +772,7 @@ pub async fn download_image_bundle(
                 status: "downloading".to_string(),
                 progress: TaskProgress {
                     percent,
-                    speed_str: format!("{}/{}", idx + 1, total_items),
+                    speed_str: format!("{}/{}", step_idx + 1, total_items),
                     eta_str: "00:00".to_string(),
                     downloaded_bytes: Some(total_bytes),
                     total_bytes: Some(total_bytes),
@@ -680,11 +795,11 @@ pub async fn download_image_bundle(
         }
     }
 
-    // If carousel, primary path is the folder itself
-    let final_record_path = if is_carousel {
-        target_dir.to_string_lossy().to_string()
-    } else {
+    // Final record path is primary saved image or target directory
+    let final_record_path = if !primary_saved_path.is_empty() {
         primary_saved_path.clone()
+    } else {
+        target_dir.to_string_lossy().to_string()
     };
 
     // Save final record in SQLite database
@@ -834,6 +949,25 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_instagram_video_html_offline_rejection() {
+        let mock_html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta property="og:title" content="Video by kemenkes_ri">
+                <meta property="og:video" content="https://scontent.cdninstagram.com/video.mp4">
+                <meta property="og:image" content="https://scontent.cdninstagram.com/thumb.jpg">
+            </head>
+            <body></body>
+            </html>
+        "#;
+        let url = "https://www.instagram.com/p/DdVzoQTTkM4/";
+        let res = parse_instagram_html(mock_html, url);
+        assert!(res.is_err(), "Expected Instagram video post to be rejected by image extractor");
+        assert!(res.unwrap_err().contains("video"));
+    }
+
+    #[test]
     fn test_parse_instagram_carousel_html_offline() {
         let mock_html = r#"
             <!DOCTYPE html>
@@ -868,6 +1002,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_slide_index() {
+        assert_eq!(parse_slide_index("https://x.com/txtharihariWNI/status/2100223177443905716/photo/1"), Some(1));
+        assert_eq!(parse_slide_index("https://x.com/txtharihariWNI/status/2100223177443905716/photo/3"), Some(3));
+        assert_eq!(parse_slide_index("https://www.instagram.com/p/DdRWIrXmji_/?img_index=5"), Some(5));
+        assert_eq!(parse_slide_index("https://x.com/user/status/12345"), None);
+    }
+
+    #[test]
     fn test_bundle_to_video_info_carousel() {
         let bundle = ImageMediaBundle {
             id: "ig_test123".to_string(),
@@ -879,15 +1021,21 @@ mod tests {
             images: vec![
                 ImageMediaItem { url: "https://example.com/slide1.jpg".to_string(), filename: "slide_01.jpg".to_string() },
                 ImageMediaItem { url: "https://example.com/slide2.jpg".to_string(), filename: "slide_02.jpg".to_string() },
+                ImageMediaItem { url: "https://example.com/slide3.jpg".to_string(), filename: "slide_03.jpg".to_string() },
             ],
             audio_url: None,
         };
 
+        // Without slide param
         let video_info = bundle_to_video_info(&bundle, "https://www.instagram.com/p/test123/");
         assert!(video_info.images.is_some());
-        assert_eq!(video_info.images.as_ref().unwrap().len(), 2);
-        assert_eq!(video_info.title, "Summer Vacation [Carousel: 2 Images]");
-        assert_eq!(video_info.description, Some("image".to_string()));
+        assert_eq!(video_info.images.as_ref().unwrap().len(), 3);
+        assert_eq!(video_info.title, "Summer Vacation [Carousel: 3 Images]");
+        assert_eq!(video_info.thumbnail, "https://example.com/slide1.jpg");
+
+        // With /photo/3 target
+        let video_info_photo3 = bundle_to_video_info(&bundle, "https://x.com/user/status/123/photo/3");
+        assert_eq!(video_info_photo3.thumbnail, "https://example.com/slide3.jpg");
     }
 
     #[tokio::test]

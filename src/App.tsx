@@ -63,6 +63,8 @@ interface QueuedDownloadItem {
   author: string;
   durationSec: number;
   timeRange?: TimeRange;
+  selectedIndices?: number[];
+  imageUrls?: string[];
 }
 
 const MAX_CONCURRENT_DOWNLOADS = 2;
@@ -295,6 +297,9 @@ export function App() {
         if (info.description === "image") {
           setFormatType("image");
           setQuality("best");
+        } else {
+          setFormatType("video");
+          setQuality((appSettings.defaultVideoQuality as DownloaderQuality) || "1080p");
         }
       }
     } catch (err: unknown) {
@@ -320,7 +325,7 @@ export function App() {
   };
 
   // 4. Trigger Download
-  const handleStartDownload = async (directUrl?: string) => {
+  const handleStartDownload = async (directUrl?: string, selectedIndices?: number[]) => {
     // Strictly prioritize:
     // 1. Explicit directUrl if provided
     // 2. The active input URL from the input box
@@ -364,6 +369,9 @@ export function App() {
           if (freshInfo.description === "image") {
             setFormatType("image");
             setQuality("best");
+          } else {
+            setFormatType("video");
+            setQuality((appSettings.defaultVideoQuality as DownloaderQuality) || "1080p");
           }
         }
       } catch {
@@ -381,8 +389,18 @@ export function App() {
       }
     }
 
-    const finalFormatType = matchedInfo?.description === "image" ? "image" : formatType;
-    const finalQuality = matchedInfo?.description === "image" ? "best" : quality;
+    const finalFormatType =
+      matchedInfo?.description === "image"
+        ? "image"
+        : formatType === "image"
+        ? "video"
+        : formatType;
+    const finalQuality =
+      matchedInfo?.description === "image"
+        ? "best"
+        : quality === "best"
+        ? (appSettings.defaultVideoQuality as DownloaderQuality) || "1080p"
+        : quality;
 
     const finalTitle = customName || matchedInfo?.title || targetUrl;
     const finalAuthor = matchedInfo?.uploader || matchedInfo?.channel || "";
@@ -400,6 +418,8 @@ export function App() {
       author: finalAuthor,
       durationSec: finalDuration,
       timeRange: finalFormatType === "image" ? undefined : timeRange,
+      selectedIndices,
+      imageUrls: matchedInfo?.images,
     };
 
     if (activeTasksRef.current.size >= MAX_CONCURRENT_DOWNLOADS) {
@@ -441,6 +461,8 @@ export function App() {
         durationSec: item.durationSec,
         downloadSubtitles: Boolean(appSettings.downloadSubtitles),
         timeRange: item.timeRange,
+        selectedIndices: item.selectedIndices,
+        imageUrls: item.imageUrls,
       });
 
       // Optimistically add active task
@@ -606,7 +628,7 @@ export function App() {
                 setCustomName={setCustomName}
                 timeRange={timeRange}
                 setTimeRange={setTimeRange}
-                onDownload={() => handleStartDownload(videoInfo.webpageUrl || url)}
+                onDownload={(selectedIndices) => handleStartDownload(videoInfo.webpageUrl || url, selectedIndices)}
                 onOpenSplitter={() => handleOpenTrimmer()}
                 onOpenTrimmer={() => handleOpenTrimmer()}
                 isDownloadingCurrentUrl={isDownloadingCurrentUrl}

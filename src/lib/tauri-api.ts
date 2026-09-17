@@ -325,22 +325,32 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
   await new Promise((r) => setTimeout(r, 400));
 
   const isImagePost =
-    platform === "pinterest" ||
+    cleanUrl.includes("pin.it") ||
     cleanUrl.includes("/photo/") ||
-    cleanUrl.includes("pin.it");
+    cleanUrl.includes("img_index=") ||
+    (platform === "pinterest" && !cleanUrl.includes("/video/"));
 
   if (isImagePost) {
     const mockImages = [
       "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80",
       "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=800&auto=format&fit=crop&q=80",
       "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=800&auto=format&fit=crop&q=80",
+      "https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&auto=format&fit=crop&q=80",
+      "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=800&auto=format&fit=crop&q=80",
     ];
+
+    const imgIndexMatch =
+      cleanUrl.match(/[?&]img_index=(\d+)/) ||
+      cleanUrl.match(/\/photo\/(\d+)/);
+    const initialSlideIdx = imgIndexMatch ? Math.max(0, parseInt(imgIndexMatch[1], 10) - 1) : 0;
+    const safeIdx = Math.min(initialSlideIdx, mockImages.length - 1);
+
     return {
       id: `mock-${Date.now().toString(36)}`,
-      title: `${platform.toUpperCase()} Photo Gallery [Carousel: 3 Images]`,
+      title: `${platform.toUpperCase()} Post [Carousel: 5 Images]`,
       webpageUrl: cleanUrl,
       duration: 0,
-      thumbnail: mockImages[0],
+      thumbnail: mockImages[safeIdx],
       uploader: `${platform.toUpperCase()} Creator`,
       channel: `${platform.toUpperCase()} Gallery`,
       description: "image",
@@ -375,6 +385,8 @@ export async function startDownload(params: {
   outputFolder?: string;
   downloadSubtitles?: boolean;
   timeRange?: TimeRange;
+  selectedIndices?: number[];
+  imageUrls?: string[];
 }): Promise<string> {
   if (isTauriEnvironment()) {
     return await invoke<string>("start_download", {
@@ -389,6 +401,8 @@ export async function startDownload(params: {
       outputFolder: params.outputFolder || null,
       downloadSubtitles: Boolean(params.downloadSubtitles),
       timeRange: params.timeRange || null,
+      selectedIndices: params.selectedIndices || null,
+      imageUrls: params.imageUrls || null,
     });
   }
 

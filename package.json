@@ -1,7 +1,7 @@
 {
   "name": "xdownloader",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "xDownloader — Fast, Multi-Platform Desktop Media Studio Downloader",
   "scripts": {

@@ -95,7 +95,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
                   xDownloader
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
-                  v1.0.0
+                  v1.0.1
                 </span>
               </div>
               <p className="text-xs text-[#a1a1aa] font-medium mt-0.5">

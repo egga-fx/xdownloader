@@ -57,6 +57,8 @@ async fn start_download(
     output_folder: Option<String>,
     download_subtitles: bool,
     time_range: Option<TimeRange>,
+    selected_indices: Option<Vec<usize>>,
+    image_urls: Option<Vec<String>>,
 ) -> Result<String, String> {
     let task_id = format!("dl_{}_{}", chrono::Utc::now().timestamp_millis(), &uuid_short());
     let db = state.db.clone();
@@ -80,6 +82,8 @@ async fn start_download(
             output_folder,
             download_subtitles,
             time_range,
+            selected_indices,
+            image_urls,
         )
         .await;
     });

@@ -116,9 +116,11 @@ pub async fn run_download(
     output_folder: Option<String>,
     download_subtitles: bool,
     time_range: Option<TimeRange>,
+    selected_indices: Option<Vec<usize>>,
+    image_urls: Option<Vec<String>>,
 ) -> Result<(), String> {
     let out_dir = match output_folder {
-        Some(dir) if !dir.trim().is_empty() => PathBuf::from(dir.trim()),
+        Some(ref f) if !f.trim().is_empty() => PathBuf::from(f),
         _ => get_default_download_dir(),
     };
     let _ = std::fs::create_dir_all(&out_dir);
@@ -133,14 +135,48 @@ pub async fn run_download(
 
     // 1. Direct Image Extraction Interceptor
     if format_type == "image" {
-        if let Ok(bundle) = crate::image_extractor::try_extract_image_media(&url).await {
+        let platform_name = if url.contains("instagram.com") {
+            "instagram"
+        } else if url.contains("pinterest.com") || url.contains("pin.it") {
+            "pinterest"
+        } else if url.contains("tiktok.com") {
+            "tiktok"
+        } else if url.contains("twitter.com") || url.contains("x.com") {
+            "x"
+        } else {
+            "web"
+        };
+
+        let bundle = if let Some(ref urls) = image_urls {
+            if !urls.is_empty() {
+                Some(crate::image_extractor::create_bundle_from_urls(
+                    &task_id,
+                    &url,
+                    title.as_deref().unwrap_or("image"),
+                    platform_name,
+                    urls,
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let final_bundle = match bundle {
+            Some(b) => Ok(b),
+            None => crate::image_extractor::try_extract_image_media(&url).await,
+        };
+
+        if let Ok(b) = final_bundle {
             crate::image_extractor::download_image_bundle(
                 &app,
                 db,
                 &task_id,
-                &bundle,
+                &b,
                 &out_dir,
                 custom_name,
+                selected_indices,
             )
             .await?;
             return Ok(());
@@ -159,6 +195,7 @@ pub async fn run_download(
                     &bundle,
                     &out_dir,
                     custom_name,
+                    selected_indices,
                 )
                 .await?;
                 return Ok(());
@@ -423,6 +460,7 @@ pub async fn run_download(
                     &bundle,
                     &out_dir,
                     custom_name.clone(),
+                    selected_indices.clone(),
                 )
                 .await
                 .is_ok()
@@ -705,6 +743,8 @@ pub async fn split_stream_video(
                 start: seg.start.clone(),
                 end: seg.end.clone(),
             }),
+            None,
+            None,
         )
         .await;
 
@@ -904,6 +944,8 @@ pub async fn trim_stream_video_exact(
             start: start_ts,
             end: end_ts,
         }),
+        None,
+        None,
     )
     .await?;
 

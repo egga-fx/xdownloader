@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Download,
   Film,
@@ -11,6 +11,7 @@ import {
   Scissors,
   Image as ImageIcon,
   Images,
+  Layers,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import {
   VideoInfo,
 } from "../types";
 import { formatDuration } from "../lib/utils";
+import { CarouselSelectionModal } from "./CarouselSelectionModal";
 
 interface MetadataPreviewCardProps {
   info: VideoInfo;
@@ -32,7 +34,7 @@ interface MetadataPreviewCardProps {
   setCustomName: (name: string) => void;
   timeRange?: TimeRange;
   setTimeRange?: (tr: TimeRange | undefined) => void;
-  onDownload: () => void;
+  onDownload: (selectedIndices?: number[]) => void;
   isDownloadingCurrentUrl: boolean;
   onOpenSplitter?: () => void;
   onOpenTrimmer?: () => void;
@@ -56,7 +58,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   onOpenSplitter,
   onOpenTrimmer,
 }) => {
-  const isImage = info.description === "image" || formatType === "image";
+  const isImage = info.description === "image";
   const carouselImages: string[] =
     info.images && info.images.length > 0
       ? info.images
@@ -64,8 +66,38 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
       ? [info.thumbnail]
       : [];
   const isCarousel = isImage && carouselImages.length > 1;
-  const [activeImageIndex, setActiveImageIndex] = useState<number>(0);
+
+  const getInitialIndex = (): number => {
+    if (!info.webpageUrl) return 0;
+    const match =
+      info.webpageUrl.match(/[?&]img_index=(\d+)/) ||
+      info.webpageUrl.match(/\/photo\/(\d+)/);
+    if (match) {
+      const idx = parseInt(match[1], 10) - 1;
+      if (idx >= 0 && idx < carouselImages.length) {
+        return idx;
+      }
+    }
+    return 0;
+  };
+
+  const [activeImageIndex, setActiveImageIndex] = useState<number>(getInitialIndex());
   const [showTrimmer, setShowTrimmer] = useState<boolean>(Boolean(timeRange));
+  const [isSelectionModalOpen, setIsSelectionModalOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    setActiveImageIndex(getInitialIndex());
+  }, [info.webpageUrl, info.images]);
+
+  useEffect(() => {
+    if (info.description === "image" && formatType !== "image") {
+      setFormatType("image");
+      setQuality("best");
+    } else if (info.description !== "image" && formatType === "image") {
+      setFormatType("video");
+      setQuality("1080p");
+    }
+  }, [info.description]);
 
   const currentThumbnail = isCarousel
     ? carouselImages[activeImageIndex] || info.thumbnail
@@ -340,8 +372,8 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
           )}
         </div>
 
-        {/* Action Buttons: Trimmer & Download */}
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        {/* Action Buttons: Trimmer, Selection Modal & Download */}
+        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap sm:flex-nowrap">
           {(onOpenTrimmer || onOpenSplitter) && !isImage && (
             <button
               type="button"
@@ -355,8 +387,36 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
             </button>
           )}
 
+          {isCarousel && (
+            <>
+              {/* Button Pilih Foto */}
+              <button
+                type="button"
+                onClick={() => setIsSelectionModalOpen(true)}
+                disabled={isDownloadingCurrentUrl}
+                className="px-3.5 py-2.5 rounded-xl font-bold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-colors disabled:opacity-40"
+                title="Pilih foto tertentu untuk diunduh"
+              >
+                <Layers className="w-3.5 h-3.5 text-zinc-300" />
+                <span>Pilih Foto</span>
+              </button>
+
+              {/* Quick Download Active Slide */}
+              <button
+                type="button"
+                onClick={() => onDownload([activeImageIndex])}
+                disabled={isDownloadingCurrentUrl}
+                className="px-3.5 py-2.5 rounded-xl font-bold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-colors disabled:opacity-40"
+                title={`Download hanya slide #${activeImageIndex + 1}`}
+              >
+                <ImageIcon className="w-3.5 h-3.5 text-zinc-300" />
+                <span>Foto #{activeImageIndex + 1}</span>
+              </button>
+            </>
+          )}
+
           <button
-            onClick={onDownload}
+            onClick={() => onDownload()}
             disabled={isDownloadingCurrentUrl}
             className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all ${
               isDownloadingCurrentUrl
@@ -377,7 +437,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 <span>
                   {isImage
                     ? isCarousel
-                      ? `Download Carousel (${carouselImages.length} Photos)`
+                      ? `Download Semua (${carouselImages.length} Foto)`
                       : "Download Photo (HD)"
                     : formatType === "audio"
                     ? "Audio"
@@ -388,6 +448,18 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Selection Modal */}
+      {isCarousel && (
+        <CarouselSelectionModal
+          isOpen={isSelectionModalOpen}
+          onClose={() => setIsSelectionModalOpen(false)}
+          images={carouselImages}
+          postTitle={info.title}
+          initialSelectedIndices={[activeImageIndex]}
+          onConfirm={(indices) => onDownload(indices)}
+        />
+      )}
     </div>
   );
 };
