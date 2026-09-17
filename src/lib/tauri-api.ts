@@ -16,6 +16,8 @@ import {
   SplitStreamRequest,
   SplitProgressEvent,
   TimeRange,
+  TrimStreamRequest,
+  TrimVideoRequest,
   VideoInfo,
 } from "../types";
 import { detectPlatform } from "./utils";
@@ -708,6 +710,40 @@ export async function pickFolder(): Promise<string | null> {
   return null;
 }
 
+export function convertLocalFileSrc(filePath: string): string {
+  if (isTauriEnvironment()) {
+    try {
+      return convertFileSrc(filePath);
+    } catch {
+      return filePath;
+    }
+  }
+  return filePath;
+}
+
+export async function pickMediaFile(): Promise<string | null> {
+  if (isTauriEnvironment()) {
+    try {
+      const selected = await openDialog({
+        directory: false,
+        multiple: false,
+        title: "Pilih File Video untuk Di-trim",
+        filters: [
+          {
+            name: "Video Files",
+            extensions: ["mp4", "mkv", "mov", "webm", "avi", "flv", "ts", "m4v"],
+          },
+        ],
+      });
+      return typeof selected === "string" ? selected : null;
+    } catch (err) {
+      console.warn("Failed to open file dialog:", err);
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function getAppSettings(): Promise<AppSettings> {
   if (isTauriEnvironment()) {
     try {
@@ -924,4 +960,21 @@ export function onSplitProgress(callback: (data: SplitProgressEvent) => void): (
   }
   return () => {};
 }
+
+// --- 10. VIDEO TRIMMER ---
+
+export async function trimLocalVideoExact(req: TrimVideoRequest): Promise<string> {
+  if (isTauriEnvironment()) {
+    return await invoke<string>("trim_local_video", { req });
+  }
+  return `${req.filePath}_trim_${Date.now()}.mp4`;
+}
+
+export async function trimStreamVideoExact(req: TrimStreamRequest): Promise<string> {
+  if (isTauriEnvironment()) {
+    return await invoke<string>("trim_stream_video", { req });
+  }
+  return `trim_task_${Date.now()}`;
+}
+
 

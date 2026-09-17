@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { BinariesStatus } from "../types";
 import { installBinary, updateEngine, isTauriEnvironment } from "../lib/tauri-api";
+import { getErrorMessage } from "../lib/utils";
 
 interface BinarySetupModalProps {
   open: boolean;
@@ -39,8 +40,8 @@ export const BinarySetupModal: React.FC<BinarySetupModalProps> = ({
     try {
       await installBinary(binaryType);
       onRefresh();
-    } catch (err: any) {
-      setError(err?.message || `Failed to download ${binaryType}`);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || `Failed to download ${binaryType}`);
     } finally {
       setInstallingType(null);
     }
@@ -54,8 +55,8 @@ export const BinarySetupModal: React.FC<BinarySetupModalProps> = ({
       const msg = await updateEngine();
       setSuccessMsg(msg);
       onRefresh();
-    } catch (err: any) {
-      setError(err?.message || "Failed to update yt-dlp engine");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || "Failed to update yt-dlp engine");
     } finally {
       setUpdatingEngine(false);
     }

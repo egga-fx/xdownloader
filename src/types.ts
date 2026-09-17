@@ -158,3 +158,27 @@ export type SplitterSource =
       thumbnail?: string;
     };
 
+export type TrimmerSource = SplitterSource;
+
+export interface TrimVideoRequest {
+  filePath: string;
+  startSec: number;
+  endSec: number;
+  customName?: string;
+  outputFolder?: string;
+}
+
+export interface TrimStreamRequest {
+  url: string;
+  startSec: number;
+  endSec: number;
+  customName?: string;
+  outputFolder?: string;
+  formatType?: string;
+  quality?: string;
+  title?: string;
+  thumbnailUrl?: string;
+  author?: string;
+}
+
+

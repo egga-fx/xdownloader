@@ -1,15 +1,23 @@
-use std::process::Command;
+use std::time::Duration;
+use tokio::process::Command;
 use crate::binaries::find_binary;
 use crate::models::VideoInfo;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
+
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
-    let ytdlp_path = find_binary("yt-dlp")
-        .ok_or_else(|| "yt-dlp binary is not installed. Please set it up via the engine setup button.".to_string())?;
+    let ytdlp_path = match find_binary("yt-dlp") {
+        Some(p) => p,
+        None => {
+            // Fallback: Check if this is an image/photo URL that can be extracted natively
+            if let Ok(bundle) = crate::image_extractor::try_extract_image_media(url).await {
+                return Ok(crate::image_extractor::bundle_to_video_info(&bundle, url));
+            }
+            return Err("yt-dlp binary is not installed. Please set it up via the engine setup button.".to_string());
+        }
+    };
 
     let mut cmd = Command::new(ytdlp_path);
     #[cfg(target_os = "windows")]
@@ -21,9 +29,18 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         .arg("--skip-download")
         .arg(url);
 
-    let output = cmd.output().map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
+    // Run async command with 20 seconds safety timeout to prevent UI freezes
+    let output = match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {
+        Ok(res) => res.map_err(|e| format!("Failed to execute yt-dlp: {}", e))?,
+        Err(_) => return Err("Metadata request timed out (exceeded 20 seconds). Please check your connection.".to_string()),
+    };
 
     if !output.status.success() {
+        // Fallback: Check if it's an image/photo post that yt-dlp cannot extract (e.g. Pinterest, X, TikTok, IG images)
+        if let Ok(bundle) = crate::image_extractor::try_extract_image_media(url).await {
+            return Ok(crate::image_extractor::bundle_to_video_info(&bundle, url));
+        }
+
         let stderr = String::from_utf8_lossy(&output.stderr);
         let first_err = stderr.lines().next().unwrap_or("Failed to fetch video metadata");
         return Err(first_err.to_string());

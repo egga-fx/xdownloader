@@ -29,6 +29,7 @@ import {
   generatePresetSegments,
   detectPlatform,
   isSupportedMediaUrl,
+  getErrorMessage,
 } from "../lib/utils";
 import {
   splitLocalVideo,
@@ -49,9 +50,10 @@ interface VideoSplitterModalProps {
 type SplitMode = "preset" | "custom";
 
 const PRESET_DURATIONS = [
-  { label: "30s (Shorts)", sec: 30 },
-  { label: "60s (TikTok / Reels)", sec: 60 },
-  { label: "90s (Stories)", sec: 90 },
+  { label: "15s (Stories)", sec: 15 },
+  { label: "30s (TikTok / Reels)", sec: 30 },
+  { label: "59s (Shorts)", sec: 59 },
+  { label: "90s (Clips)", sec: 90 },
   { label: "120s (2 Min)", sec: 120 },
 ];
 
@@ -136,8 +138,8 @@ export const VideoSplitterModal: React.FC<VideoSplitterModalProps> = ({
     try {
       const info = await getVideoMetadata(targetUrl.trim());
       setFetchedInfo(info);
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Failed to fetch stream details");
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err) || "Failed to fetch stream details");
     } finally {
       setFetchingInfo(false);
     }
@@ -287,9 +289,9 @@ export const VideoSplitterModal: React.FC<VideoSplitterModalProps> = ({
       }
 
       if (onSuccess) onSuccess();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Split execution error:", err);
-      setErrorMsg(err?.message || "Splitting process failed. Check media engine logs.");
+      setErrorMsg(getErrorMessage(err) || "Splitting process failed. Check media engine logs.");
     } finally {
       setSplitting(false);
     }

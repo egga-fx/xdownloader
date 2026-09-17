@@ -8,6 +8,7 @@ import {
   Music,
   RotateCcw,
   Volume2,
+  Scissors,
 } from "lucide-react";
 import { DownloadRecord } from "../types";
 import { formatDuration, formatFileSize, getSourceAccount } from "../lib/utils";
@@ -22,12 +23,14 @@ interface MediaPreviewModalProps {
   record: DownloadRecord | null;
   onClose: () => void;
   onOpenFolder: (record: DownloadRecord) => void;
+  onOpenTrimmer?: (record: DownloadRecord) => void;
 }
 
 export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   record,
   onClose,
   onOpenFolder,
+  onOpenTrimmer,
 }) => {
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [videoError, setVideoError] = useState(false);
@@ -233,6 +236,19 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenTrimmer && !isImage && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenTrimmer(record);
+                }}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 hover:text-white font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Potong klip video ini"
+              >
+                <Scissors className="w-3.5 h-3.5 text-zinc-300" />
+                <span>Trim Video</span>
+              </button>
+            )}
             <button
               onClick={() => triggerDirectBrowserDownload(record)}
               className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"

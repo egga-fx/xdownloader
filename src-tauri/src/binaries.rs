@@ -196,7 +196,11 @@ pub async fn download_binary_file(
 
     let target_path = bin_dir.join(target_filename);
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     let response = client
         .get(url)
         .send()

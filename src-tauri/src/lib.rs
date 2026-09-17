@@ -1,6 +1,7 @@
 pub mod binaries;
 pub mod db;
 pub mod downloader;
+pub mod image_extractor;
 pub mod metadata;
 pub mod models;
 
@@ -10,7 +11,7 @@ use db::Database;
 use downloader::ProcessManager;
 use models::{
     AppSettings, BinariesStatus, DownloadRecord, SplitLocalRequest, SplitStreamRequest, TimeRange,
-    VideoInfo,
+    TrimStreamRequest, TrimVideoRequest, VideoInfo,
 };
 
 pub struct AppState {
@@ -148,6 +149,24 @@ async fn split_stream_video(
     downloader::split_stream_video(app, state.db.clone(), state.process_mgr.clone(), req).await
 }
 
+#[tauri::command]
+async fn trim_local_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: TrimVideoRequest,
+) -> Result<String, String> {
+    downloader::trim_local_video_exact(app, state.db.clone(), req).await
+}
+
+#[tauri::command]
+async fn trim_stream_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: TrimStreamRequest,
+) -> Result<String, String> {
+    downloader::trim_stream_video_exact(app, state.db.clone(), state.process_mgr.clone(), req).await
+}
+
 fn uuid_short() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
@@ -190,6 +209,8 @@ pub fn run() {
             save_app_settings,
             split_local_video,
             split_stream_video,
+            trim_local_video,
+            trim_stream_video,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xDownloader application");

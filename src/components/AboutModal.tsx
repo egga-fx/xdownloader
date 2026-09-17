@@ -4,15 +4,13 @@ import {
   ExternalLink,
   Copy,
   Check,
-  Code2,
   Sparkles,
   Cpu,
-  Layers,
-  ShieldCheck,
   User,
   Bot,
-  Heart,
   GitBranch,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { openExternalUrl } from "../lib/tauri-api";
 
@@ -38,6 +36,7 @@ interface AboutModalProps {
 
 export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [toolsAgentsExpanded, setToolsAgentsExpanded] = useState<boolean>(false);
 
   // Close on Escape key
   useEffect(() => {
@@ -63,61 +62,51 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
   };
 
   const REPO_URL = "https://github.com/egga-fx/xdownloader";
-  const MONOREPO_URL = "https://github.com/egga-fx/xclips";
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200 select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200 select-none"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="w-full max-w-2xl bg-[#0e0e11] border border-[#27272a] rounded-2xl shadow-2xl shadow-black/90 flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200"
+        className="w-full max-w-xl bg-[#141418] border border-[#27272a] rounded-2xl shadow-2xl shadow-black/90 flex flex-col overflow-hidden max-h-[90vh] animate-in zoom-in-95 duration-200"
         role="dialog"
         aria-modal="true"
         aria-labelledby="about-modal-title"
       >
-        {/* Header with Aurora Banner */}
-        <div className="relative p-6 pb-5 border-b border-[#1f1f23] bg-gradient-to-b from-[#18181e] to-[#0e0e11] flex items-start justify-between shrink-0 overflow-hidden">
-          {/* Subtle Ambient Glow */}
-          <div className="absolute top-0 left-1/4 -translate-y-1/2 w-72 h-36 bg-blue-600/20 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute top-0 right-1/4 -translate-y-1/2 w-72 h-36 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
-
-          <div className="flex items-center gap-4 relative z-10">
+        {/* Header */}
+        <div className="relative p-5 pb-4 border-b border-[#27272a] bg-[#18181b] flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3.5 relative z-10">
             {/* App Logo Emblem */}
-            <div className="w-13 h-13 rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-600 to-cyan-500 p-0.5 shadow-lg shadow-blue-500/25 shrink-0 flex items-center justify-center">
-              <div className="w-full h-full bg-[#09090b] rounded-[14px] flex items-center justify-center">
-                <span className="text-xl font-black tracking-tighter bg-gradient-to-br from-white via-zinc-200 to-blue-400 bg-clip-text text-transparent">
-                  xD
-                </span>
-              </div>
+            <div className="w-11 h-11 rounded-xl bg-zinc-800 border border-zinc-700 p-0.5 shadow-md flex items-center justify-center shrink-0">
+              <span className="text-lg font-black tracking-tighter text-zinc-100">
+                xD
+              </span>
             </div>
 
             <div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2">
                 <h2
                   id="about-modal-title"
-                  className="text-xl font-extrabold text-white tracking-tight"
+                  className="text-lg font-bold text-white tracking-tight"
                 >
                   xDownloader
                 </h2>
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
                   v1.0.0
-                </span>
-                <span className="hidden sm:inline px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Stable
                 </span>
               </div>
               <p className="text-xs text-[#a1a1aa] font-medium mt-0.5">
-                High-Performance Universal Media Studio & Downloader
+                Download video, musik, dan foto favoritmu dengan mudah
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg text-[#71717a] hover:text-white hover:bg-[#27272a] flex items-center justify-center cursor-pointer transition-colors relative z-10"
+            className="w-7 h-7 rounded-lg text-[#71717a] hover:text-white hover:bg-zinc-800 flex items-center justify-center cursor-pointer transition-colors relative z-10"
             title="Close (Esc)"
           >
             <X className="w-4 h-4" />
@@ -125,260 +114,196 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
         </div>
 
         {/* Scrollable Content Body */}
-        <div className="overflow-y-auto p-6 space-y-6 text-sm text-[#d4d4d8] divide-y divide-[#1f1f23]">
-          {/* 1. App Description */}
-          <div className="space-y-3">
+        <div className="overflow-y-auto p-5 space-y-5 text-sm text-[#d4d4d8] divide-y divide-[#1f1f23]">
+          {/* 1. App Description (Chips removed) */}
+          <div className="space-y-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-[#71717a] flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-              <span>About the Application</span>
+              <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Tentang Aplikasi</span>
             </h3>
             <p className="text-xs leading-relaxed text-[#a1a1aa]">
-              <strong className="text-white font-semibold">xDownloader</strong> is a modern,
-              local-first desktop media downloader and studio transcoder engineered for high-speed,
-              lossless media extraction. Built with <span className="text-zinc-200 font-semibold">Tauri v2, Rust, and React 19</span>,
-              it offers a seamless, zero-telemetry environment for downloading video, audio, and subtitles from
-              major platforms including YouTube, TikTok, Instagram, X (Twitter), and Pinterest.
+              <strong className="text-white font-semibold">xDownloader</strong> adalah aplikasi santai dan praktis buat unduh video, musik, dan foto berkualitas tinggi dari berbagai platform favorit seperti YouTube, TikTok, Instagram, X (Twitter), hingga Pinterest. Ringan, cepat, dan langsung tersimpan rapi di komputermu tanpa ribet.
             </p>
-
-            {/* Feature Badges */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-              <div className="p-3 rounded-xl bg-[#141418] border border-[#27272a] flex items-start gap-2.5">
-                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="text-xs font-bold text-white">100% Local-First</div>
-                  <div className="text-[11px] text-[#71717a]">Zero cloud upload & zero tracking</div>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-[#141418] border border-[#27272a] flex items-start gap-2.5">
-                <Cpu className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="text-xs font-bold text-white">Native Dual-Engine</div>
-                  <div className="text-[11px] text-[#71717a]">yt-dlp & FFmpeg hardware accelerated</div>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-[#141418] border border-[#27272a] flex items-start gap-2.5">
-                <Layers className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="text-xs font-bold text-white">Smart Media Vault</div>
-                  <div className="text-[11px] text-[#71717a]">Instant preview & SQLite WAL index</div>
-                </div>
-              </div>
-            </div>
           </div>
 
-          {/* 2. Contributors Section */}
-          <div className="pt-5 space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-[#71717a] flex items-center gap-1.5">
-              <Heart className="w-3.5 h-3.5 text-rose-400" />
-              <span>Project Contributors</span>
-            </h3>
+          {/* 2. Collaborator (eggafx + Tools & Agents dropdown) */}
+          <div className="pt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-[#71717a] flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-zinc-400" />
+                <span>Collaborator</span>
+              </h3>
+            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* eggafx */}
-              <div className="p-4 rounded-xl bg-[#141418] border border-[#27272a] hover:border-[#3f3f46] transition-all flex flex-col justify-between group">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-blue-500/30 flex items-center justify-center text-cyan-300 font-extrabold text-sm shrink-0">
-                    <User className="w-5 h-5 text-blue-400" />
-                  </div>
-                  <div className="flex-grow min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-white text-sm tracking-tight">eggafx</span>
-                      <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-500/15 text-blue-400 border border-blue-500/25">
-                        Author & Architect
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#a1a1aa] mt-1 leading-normal">
-                      Founder, Product Owner & Lead System Architect of xClips & xDownloader suite.
-                    </p>
-                  </div>
+            {/* Main Collaborator Card: eggafx */}
+            <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-[#27272a] flex flex-col justify-between">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-200 font-extrabold text-sm shrink-0">
+                  <User className="w-4 h-4 text-zinc-300" />
                 </div>
-
-                <div className="mt-3 pt-3 border-t border-[#1f1f23] flex items-center justify-between">
-                  <span className="text-[11px] text-[#71717a] font-mono">@eggafx</span>
-                  <button
-                    onClick={() => handleOpenLink("https://github.com/eggafx")}
-                    className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 font-semibold cursor-pointer transition-colors"
-                  >
-                    <span>GitHub Profile</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </button>
+                <div className="flex-grow min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-bold text-white text-sm tracking-tight">eggafx</span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-200 border border-zinc-700">
+                      Creator & Developer
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#a1a1aa] mt-1 leading-normal">
+                    Kreator dan pengembang utama di balik pembuatan xDownloader.
+                  </p>
                 </div>
               </div>
 
-              {/* Antigravity */}
-              <div className="p-4 rounded-xl bg-[#141418] border border-[#27272a] hover:border-[#3f3f46] transition-all flex flex-col justify-between group">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-300 font-extrabold text-sm shrink-0">
-                    <Bot className="w-5 h-5 text-indigo-400" />
+              <div className="mt-2.5 pt-2.5 border-t border-[#1f1f23] flex items-center justify-between">
+                <span className="text-[11px] text-[#71717a] font-mono">@eggafx</span>
+                <button
+                  onClick={() => handleOpenLink("https://github.com/eggafx")}
+                  className="inline-flex items-center gap-1 text-xs text-zinc-300 hover:text-white font-semibold cursor-pointer transition-colors"
+                >
+                  <span>GitHub Profile</span>
+                  <ExternalLink className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+
+            {/* Sub-part of Collaborator: Tools & Agents Dropdown */}
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setToolsAgentsExpanded(!toolsAgentsExpanded)}
+                className="w-full flex items-center justify-between p-2.5 sm:p-3 rounded-xl bg-[#0e0e11] hover:bg-[#18181e] border border-[#27272a] hover:border-zinc-700 text-left transition-all cursor-pointer group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-300">
+                    <Cpu className="w-3.5 h-3.5" />
                   </div>
-                  <div className="flex-grow min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-white text-sm tracking-tight">Antigravity</span>
-                      <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-400 border border-purple-500/25">
-                        AI Co-Engineer
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-white tracking-wide">
+                        Tools & Agents
+                      </span>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300">
+                        AI Agent
                       </span>
                     </div>
-                    <p className="text-[11px] text-[#a1a1aa] mt-1 leading-normal">
-                      Advanced Agentic Coding partner by Google DeepMind for full-stack engineering & QA.
+                    <p className="text-[11px] text-[#71717a] mt-0.5">
+                      Partner AI yang ikut bantu ngoding dan kembangin aplikasi ini
                     </p>
                   </div>
                 </div>
 
-                <div className="mt-3 pt-3 border-t border-[#1f1f23] flex items-center justify-between">
-                  <span className="text-[11px] text-[#71717a] font-mono">DeepMind Agent</span>
-                  <span className="text-[11px] text-purple-400 font-medium flex items-center gap-1">
-                    <span>Pair Programming</span>
+                <div className="flex items-center gap-1 text-zinc-400 group-hover:text-white transition-colors">
+                  <span className="text-[11px] font-medium hidden sm:inline">
+                    {toolsAgentsExpanded ? "Tutup" : "Lihat"}
                   </span>
+                  {toolsAgentsExpanded ? (
+                    <ChevronUp className="w-4 h-4 text-zinc-400" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-zinc-400" />
+                  )}
                 </div>
-              </div>
+              </button>
+
+              {/* Dropdown Content: AI Agent Only */}
+              {toolsAgentsExpanded && (
+                <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-[#27272a] flex flex-col justify-between animate-in fade-in duration-150">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-200">
+                        AI Agent
+                      </span>
+                      <span className="text-[10px] text-zinc-500 font-mono">Google DeepMind</span>
+                    </div>
+
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-200 shrink-0">
+                        <Bot className="w-4 h-4 text-zinc-300" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-white tracking-tight">Antigravity</h4>
+                          <span className="text-[10px] text-zinc-400 font-mono">AI Partner</span>
+                        </div>
+                        <p className="text-[11px] text-[#a1a1aa] mt-1 leading-relaxed">
+                          AI coding partner dari Google DeepMind yang diajak duet buat bantu ngoding, beresin fitur, dan jaga performa aplikasi.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 pt-2.5 border-t border-[#1f1f23] flex items-center justify-between text-[11px] text-zinc-500">
+                    <span>Role: AI Coding Partner</span>
+                    <span className="text-zinc-300 font-medium">AI Agent</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* 3. Git Repository Section */}
-          <div className="pt-5 space-y-3">
+          {/* 4. Source Repository (xDownloader Only) */}
+          <div className="pt-4 space-y-2.5">
             <h3 className="text-xs font-bold uppercase tracking-wider text-[#71717a] flex items-center gap-1.5">
               <GithubIcon className="w-3.5 h-3.5 text-zinc-300" />
-              <span>Source Repositories</span>
+              <span>Source Repository</span>
             </h3>
 
-            <div className="space-y-2">
-              {/* xDownloader Standalone */}
-              <div className="p-3.5 rounded-xl bg-[#141418] border border-[#27272a] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-[#1e1e24] border border-[#2e2e36] flex items-center justify-center text-zinc-300 shrink-0">
-                    <GitBranch className="w-4 h-4 text-emerald-400" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-white">egga-fx/xdownloader</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        main
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-[#71717a] truncate max-w-sm">
-                      Standalone desktop app repository with Tauri v2 bundle
-                    </div>
-                  </div>
+            <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-[#27272a] flex flex-col sm:flex-row sm:items-center justify-between gap-3 overflow-hidden">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="w-8 h-8 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-200 shrink-0">
+                  <GitBranch className="w-4 h-4 text-zinc-300" />
                 </div>
-
-                <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
-                  <button
-                    onClick={() => handleCopy(REPO_URL, "xdownloader")}
-                    className="h-7 px-2.5 rounded-md bg-[#1f1f23] hover:bg-[#27272a] text-[#a1a1aa] hover:text-white border border-[#2e2e36] text-[11px] font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
-                    title="Copy Git clone URL"
-                  >
-                    {copiedUrl === "xdownloader" ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-400" />
-                        <span className="text-emerald-400 font-semibold">Copied</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        <span>Copy URL</span>
-                      </>
-                    )}
-                  </button>
-
-                  <button
-                    onClick={() => handleOpenLink(REPO_URL)}
-                    className="h-7 px-2.5 rounded-md bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-blue-300 border border-blue-500/30 text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <span>View GitHub</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </button>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white truncate">egga-fx/xdownloader</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 shrink-0">
+                      main
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[#71717a] truncate">
+                    Repository resmi di GitHub. Terbuka buat dieksplorasi atau dikembangkan bareng!
+                  </div>
                 </div>
               </div>
 
-              {/* xClips Parent Monorepo */}
-              <div className="p-3.5 rounded-xl bg-[#141418] border border-[#27272a] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-[#1e1e24] border border-[#2e2e36] flex items-center justify-center text-zinc-300 shrink-0">
-                    <Code2 className="w-4 h-4 text-blue-400" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-white">egga-fx/xclips</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                        suite
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-[#71717a] truncate max-w-sm">
-                      Smart Video Clipper & Short-Form Studio parent suite
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
-                  <button
-                    onClick={() => handleCopy(MONOREPO_URL, "xclips")}
-                    className="h-7 px-2.5 rounded-md bg-[#1f1f23] hover:bg-[#27272a] text-[#a1a1aa] hover:text-white border border-[#2e2e36] text-[11px] font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
-                    title="Copy Git clone URL"
-                  >
-                    {copiedUrl === "xclips" ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-400" />
-                        <span className="text-emerald-400 font-semibold">Copied</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        <span>Copy URL</span>
-                      </>
-                    )}
-                  </button>
-
-                  <button
-                    onClick={() => handleOpenLink(MONOREPO_URL)}
-                    className="h-7 px-2.5 rounded-md bg-[#1f1f23] hover:bg-[#27272a] text-[#a1a1aa] hover:text-white border border-[#2e2e36] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <span>View Suite</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 4. Tech Stack & Environment */}
-          <div className="pt-5 space-y-2">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-[#71717a] flex items-center gap-1.5">
-              <Cpu className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Technology Stack</span>
-            </h3>
-
-            <div className="flex flex-wrap gap-1.5">
-              {[
-                "Tauri v2 (Rust 2021)",
-                "React 19",
-                "TypeScript strict",
-                "Tailwind CSS v4",
-                "yt-dlp",
-                "FFmpeg & FFprobe",
-                "SQLite WAL",
-                "Masagi Zinc Dark",
-              ].map((tech) => (
-                <span
-                  key={tech}
-                  className="px-2.5 py-1 rounded-lg bg-[#141418] border border-[#27272a] text-[11px] font-medium text-[#a1a1aa]"
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => handleCopy(REPO_URL, "xdownloader")}
+                  className="h-7 px-2.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 text-[11px] font-medium flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
+                  title="Copy Git clone URL"
                 >
-                  {tech}
-                </span>
-              ))}
+                  {copiedUrl === "xdownloader" ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-400" />
+                      <span className="text-emerald-400 font-semibold">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Copy URL</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => handleOpenLink(REPO_URL)}
+                  className="h-7 px-2.5 rounded-md bg-zinc-100 hover:bg-white text-zinc-950 text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
+                >
+                  <span>View GitHub</span>
+                  <ExternalLink className="w-3 h-3" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 px-6 border-t border-[#1f1f23] bg-[#0c0c0f] flex items-center justify-between shrink-0">
+        <div className="p-3.5 px-5 border-t border-[#27272a] bg-[#141418] flex items-center justify-between shrink-0">
           <div className="text-[11px] text-[#71717a]">
             Released under <span className="text-zinc-300 font-semibold">MIT License</span> · 2026
           </div>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-lg bg-[#1f1f23] hover:bg-[#27272a] text-white text-xs font-bold border border-[#2e2e36] hover:border-[#3f3f46] cursor-pointer transition-colors"
+            className="px-4 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold border border-zinc-700 cursor-pointer transition-colors"
           >
             Close
           </button>

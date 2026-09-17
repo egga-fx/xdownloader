@@ -81,6 +81,10 @@ impl Database {
         )
         .map_err(|e| format!("Failed to create settings table: {}", e))?;
 
+        // Auto-migration: ensure time_range columns exist for partial clips
+        let _ = conn.execute("ALTER TABLE downloads ADD COLUMN time_range_start TEXT;", []);
+        let _ = conn.execute("ALTER TABLE downloads ADD COLUMN time_range_end TEXT;", []);
+
         Ok(Self {
             conn: Mutex::new(conn),
             db_path,
@@ -89,11 +93,14 @@ impl Database {
 
     pub fn add_record(&self, record: &DownloadRecord) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        let tr_start = record.time_range.as_ref().map(|tr| tr.start.clone());
+        let tr_end = record.time_range.as_ref().map(|tr| tr.end.clone());
         conn.execute(
             "INSERT OR REPLACE INTO downloads (
                 id, platform, url, title, author, duration_sec, thumbnail_url,
-                format_type, quality, file_path, file_size_bytes, status, error, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                format_type, quality, file_path, file_size_bytes, status, error, created_at,
+                time_range_start, time_range_end
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 record.id,
                 record.platform,
@@ -109,6 +116,8 @@ impl Database {
                 record.status,
                 record.error,
                 record.created_at,
+                tr_start,
+                tr_end,
             ],
         )
         .map_err(|e| format!("Failed to insert record: {}", e))?;
@@ -147,7 +156,7 @@ impl Database {
     ) -> Result<Vec<DownloadRecord>, String> {
         let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
 
-        let mut query = String::from("SELECT id, platform, url, title, author, duration_sec, thumbnail_url, format_type, quality, file_path, file_size_bytes, status, error, created_at FROM downloads WHERE 1=1");
+        let mut query = String::from("SELECT id, platform, url, title, author, duration_sec, thumbnail_url, format_type, quality, file_path, file_size_bytes, status, error, created_at, time_range_start, time_range_end FROM downloads WHERE 1=1");
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(p) = platform {
@@ -185,6 +194,15 @@ impl Database {
                     false
                 };
 
+                let tr_start: Option<String> = row.get(14).ok();
+                let tr_end: Option<String> = row.get(15).ok();
+                let time_range = match (tr_start, tr_end) {
+                    (Some(s), Some(e)) if !s.trim().is_empty() || !e.trim().is_empty() => {
+                        Some(crate::models::TimeRange { start: s, end: e })
+                    }
+                    _ => None,
+                };
+
                 Ok(DownloadRecord {
                     id: row.get(0)?,
                     platform: row.get(1)?,
@@ -200,7 +218,7 @@ impl Database {
                     status: row.get(11)?,
                     error: row.get(12)?,
                     created_at: row.get(13)?,
-                    time_range: None,
+                    time_range,
                     exists,
                 })
             })

@@ -25,6 +25,7 @@ import {
   updateEngine,
   checkBinariesStatus,
 } from "../lib/tauri-api";
+import { getErrorMessage } from "../lib/utils";
 
 interface SettingsModalProps {
   open: boolean;
@@ -282,8 +283,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setEngineStatusMsg(msg);
       const st = await checkBinariesStatus();
       if (st.ytdlp_version) setEngineVersion(st.ytdlp_version);
-    } catch (err: any) {
-      setEngineStatusMsg(err?.message || "Failed to update engine");
+    } catch (err: unknown) {
+      setEngineStatusMsg(getErrorMessage(err) || "Failed to update engine");
     } finally {
       setUpdatingEngine(false);
     }
@@ -297,8 +298,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const info = await checkForAppUpdate();
       setUpdateInfo(info);
       setUpdateChecked(true);
-    } catch (err: any) {
-      setUpdateError(err?.message || "Failed to check for updates");
+    } catch (err: unknown) {
+      setUpdateError(getErrorMessage(err) || "Failed to check for updates");
     } finally {
       setCheckingUpdate(false);
     }
@@ -309,8 +310,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setUpdateError(null);
     try {
       await downloadAndInstallAppUpdate((pct) => setUpdateProgress(pct));
-    } catch (err: any) {
-      setUpdateError(err?.message || "Failed to download and apply update");
+    } catch (err: unknown) {
+      setUpdateError(getErrorMessage(err) || "Failed to download and apply update");
       setInstallingUpdate(false);
     }
   };

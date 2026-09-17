@@ -8,6 +8,7 @@ import { MediaPreviewModal } from "./components/MediaPreviewModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { AboutModal } from "./components/AboutModal";
 import { VideoSplitterModal } from "./components/VideoSplitterModal";
+import { VideoTrimmerModal } from "./components/VideoTrimmerModal";
 import {
   ActiveDownloadTask,
   AppSettings,
@@ -20,8 +21,9 @@ import {
   AppUpdateInfo,
   TimeRange,
   SplitterSource,
+  TrimmerSource,
 } from "./types";
-import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls } from "./lib/utils";
+import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage } from "./lib/utils";
 import {
   checkBinariesStatus,
   checkForAppUpdate,
@@ -49,6 +51,22 @@ import {
   PinterestIcon,
 } from "./lib/icons";
 
+interface QueuedDownloadItem {
+  id: string;
+  targetUrl: string;
+  formatType: DownloaderFormatType;
+  quality: DownloaderQuality;
+  customName?: string;
+  outputFolder?: string;
+  title: string;
+  thumbnailUrl: string;
+  author: string;
+  durationSec: number;
+  timeRange?: TimeRange;
+}
+
+const MAX_CONCURRENT_DOWNLOADS = 2;
+
 export function App() {
   // Input & Metadata State
   const [url, setUrl] = useState<string>("");
@@ -67,6 +85,11 @@ export function App() {
   // Media Vault & Tasks State
   const [vaultOpen, setVaultOpen] = useState<boolean>(false);
   const [activeTasks, setActiveTasks] = useState<Map<string, ActiveDownloadTask>>(new Map());
+  const [downloadQueue, setDownloadQueue] = useState<QueuedDownloadItem[]>([]);
+  const downloadQueueRef = useRef<QueuedDownloadItem[]>([]);
+  downloadQueueRef.current = downloadQueue;
+  const activeTasksRef = useRef<Map<string, ActiveDownloadTask>>(activeTasks);
+  activeTasksRef.current = activeTasks;
   const [records, setRecords] = useState<DownloadRecord[]>([]);
   const [loadingVault, setLoadingVault] = useState<boolean>(false);
   const [previewRecord, setPreviewRecord] = useState<DownloadRecord | null>(null);
@@ -79,6 +102,8 @@ export function App() {
   const [aboutModalOpen, setAboutModalOpen] = useState<boolean>(false);
   const [splitterModalOpen, setSplitterModalOpen] = useState<boolean>(false);
   const [splitterSource, setSplitterSource] = useState<SplitterSource | null>(null);
+  const [trimmerModalOpen, setTrimmerModalOpen] = useState<boolean>(false);
+  const [trimmerSource, setTrimmerSource] = useState<TrimmerSource | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>({
     outputFolder: "Videos\\xDownloader",
     defaultVideoQuality: "1080p",
@@ -96,6 +121,26 @@ export function App() {
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleOpenTrimmer = (src?: TrimmerSource) => {
+    if (src) {
+      setTrimmerSource(src);
+    } else if (videoInfo) {
+      setTrimmerSource({
+        type: "online",
+        url: videoInfo.webpageUrl || url,
+        info: videoInfo,
+      });
+    } else if (url.trim()) {
+      setTrimmerSource({
+        type: "online",
+        url: url.trim(),
+      });
+    } else {
+      setTrimmerSource(null);
+    }
+    setTrimmerModalOpen(true);
   };
 
   const handleOpenSplitter = (src?: SplitterSource) => {
@@ -183,6 +228,8 @@ export function App() {
             showToast(`Download finished: "${task.title}"`);
           }
           next.delete(task.taskId);
+          // Auto-trigger next item from queue if slots available
+          setTimeout(dequeueAndStartNext, 150);
         } else {
           next.set(task.taskId, task);
         }
@@ -242,10 +289,14 @@ export function App() {
       if (currentUrlRef.current.trim() === cleanTarget) {
         setVideoInfo(info);
         setCustomName(info.title);
+        if (info.description === "image") {
+          setFormatType("image");
+          setQuality("best");
+        }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (currentUrlRef.current.trim() === cleanTarget) {
-        setError(err?.message || "Failed to retrieve video information");
+        setError(getErrorMessage(err) || "Failed to retrieve video information");
       }
     } finally {
       if (currentUrlRef.current.trim() === cleanTarget) {
@@ -307,6 +358,10 @@ export function App() {
         if (currentUrlRef.current.trim() === targetUrl) {
           setVideoInfo(freshInfo);
           setCustomName(freshInfo.title);
+          if (freshInfo.description === "image") {
+            setFormatType("image");
+            setQuality("best");
+          }
         }
       } catch {
         // continue with fallback
@@ -323,29 +378,66 @@ export function App() {
       }
     }
 
+    const finalFormatType = matchedInfo?.description === "image" ? "image" : formatType;
+    const finalQuality = matchedInfo?.description === "image" ? "best" : quality;
+
     const finalTitle = customName || matchedInfo?.title || targetUrl;
     const finalAuthor = matchedInfo?.uploader || matchedInfo?.channel || "";
     const finalDuration = matchedInfo?.duration || 0;
 
+    const queuedItem: QueuedDownloadItem = {
+      id: `queue_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      targetUrl,
+      formatType: finalFormatType,
+      quality: finalQuality,
+      customName: customName || (matchedInfo ? matchedInfo.title : undefined),
+      outputFolder: outputFolder || undefined,
+      title: finalTitle,
+      thumbnailUrl: finalThumb,
+      author: finalAuthor,
+      durationSec: finalDuration,
+      timeRange: finalFormatType === "image" ? undefined : timeRange,
+    };
+
+    if (activeTasksRef.current.size >= MAX_CONCURRENT_DOWNLOADS) {
+      setDownloadQueue((prev) => [...prev, queuedItem]);
+      setVaultOpen(true);
+      showToast(`Added to queue (#${downloadQueueRef.current.length + 1} in line)`);
+    } else {
+      executeDownloadTask(queuedItem);
+    }
+  };
+
+  const dequeueAndStartNext = () => {
+    if (downloadQueueRef.current.length > 0 && activeTasksRef.current.size < MAX_CONCURRENT_DOWNLOADS) {
+      const nextItem = downloadQueueRef.current[0];
+      setDownloadQueue((prev) => prev.slice(1));
+      executeDownloadTask(nextItem);
+    }
+  };
+
+  const executeDownloadTask = async (item: QueuedDownloadItem) => {
     try {
       setError(null);
       const effectiveQuality =
-        formatType === "audio"
-          ? (["mp3", "m4a", "wav", "flac"].includes(quality) ? quality : appSettings.defaultAudioQuality || "mp3")
-          : (quality || appSettings.defaultVideoQuality || "1080p");
+        item.formatType === "audio"
+          ? (["mp3", "m4a", "wav", "flac"].includes(item.quality) ? item.quality : appSettings.defaultAudioQuality || "mp3")
+          : (item.quality || appSettings.defaultVideoQuality || "1080p");
+
+      const platform = detectPlatform(item.targetUrl);
 
       const taskId = await startDownload({
-        url: targetUrl,
-        formatType,
+        url: item.targetUrl,
+        formatType: item.formatType,
         quality: effectiveQuality,
-        customName: customName || (matchedInfo ? matchedInfo.title : undefined),
-        outputFolder: outputFolder || undefined,
-        title: finalTitle,
-        thumbnailUrl: finalThumb,
-        author: finalAuthor,
-        durationSec: finalDuration,
+        customName: item.customName,
+        outputFolder: item.outputFolder || undefined,
+        title: item.title,
+        thumbnailUrl: item.thumbnailUrl,
+        author: item.author,
+        durationSec: item.durationSec,
         downloadSubtitles: Boolean(appSettings.downloadSubtitles),
-        timeRange: timeRange,
+        timeRange: item.timeRange,
       });
 
       // Optimistically add active task
@@ -353,11 +445,11 @@ export function App() {
         const next = new Map(prev);
         next.set(taskId, {
           taskId,
-          url: targetUrl,
-          title: finalTitle,
-          platform: detectedPlatform,
-          formatType,
-          quality,
+          url: item.targetUrl,
+          title: item.title,
+          platform,
+          formatType: item.formatType,
+          quality: item.quality,
           status: "downloading",
           progress: { percent: 0, speedStr: "Starting...", etaStr: "--:--" },
         });
@@ -367,8 +459,9 @@ export function App() {
       // Automatically open Media Vault to show download progress
       setVaultOpen(true);
       showToast("Download started in Media Vault");
-    } catch (err: any) {
-      setError(err?.message || "Failed to start download process");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || "Failed to start download process");
+      setTimeout(dequeueAndStartNext, 200);
     }
   };
 
@@ -382,7 +475,8 @@ export function App() {
         return next;
       });
       showToast("Download cancelled");
-    } catch (err) {
+      setTimeout(dequeueAndStartNext, 200);
+    } catch (err: unknown) {
       console.error("Failed to cancel task:", err);
     }
   };
@@ -422,8 +516,8 @@ export function App() {
         setOutputFolder(newSettings.outputFolder);
       }
       showToast("Settings saved successfully");
-    } catch (err: any) {
-      setError(err?.message || "Failed to save settings");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || "Failed to save settings");
     }
   };
 
@@ -463,6 +557,7 @@ export function App() {
         vaultCount={records.length}
         activeDownloadingCount={activeTasks.size}
         onOpenSplitter={() => handleOpenSplitter()}
+        onOpenTrimmer={() => handleOpenTrimmer()}
         onOpenSettings={() => setSettingsModalOpen(true)}
         onOpenAbout={() => setAboutModalOpen(true)}
         hasUpdate={!!availableUpdate?.available}
@@ -508,13 +603,8 @@ export function App() {
                 timeRange={timeRange}
                 setTimeRange={setTimeRange}
                 onDownload={() => handleStartDownload(videoInfo.webpageUrl || url)}
-                onOpenSplitter={() =>
-                  handleOpenSplitter({
-                    type: "online",
-                    url: videoInfo.webpageUrl || url,
-                    info: videoInfo,
-                  })
-                }
+                onOpenSplitter={() => handleOpenTrimmer()}
+                onOpenTrimmer={() => handleOpenTrimmer()}
                 isDownloadingCurrentUrl={isDownloadingCurrentUrl}
               />
             </div>
@@ -557,7 +647,7 @@ export function App() {
         onCopyPath={handleCopyPath}
         onDeleteRecordDirectly={handleDeleteRecordDirectly}
         onSplitRecord={(rec) =>
-          handleOpenSplitter({
+          handleOpenTrimmer({
             type: "local",
             record: rec,
             filePath: rec.filePath,
@@ -574,6 +664,28 @@ export function App() {
         record={previewRecord}
         onClose={() => setPreviewRecord(null)}
         onOpenFolder={(rec) => handleOpenFolder(rec)}
+        onOpenTrimmer={(rec) =>
+          handleOpenTrimmer({
+            type: "local",
+            record: rec,
+            filePath: rec.filePath,
+            title: rec.title,
+            duration: rec.durationSec,
+            thumbnail: rec.thumbnailUrl,
+          })
+        }
+      />
+
+      {/* Video Trimmer Modal */}
+      <VideoTrimmerModal
+        open={trimmerModalOpen}
+        onClose={() => setTrimmerModalOpen(false)}
+        source={trimmerSource}
+        outputFolder={outputFolder}
+        onSuccess={() => {
+          loadRecords();
+          showToast("Video trimmed successfully!");
+        }}
       />
 
       {/* Video Splitter Modal */}

@@ -1,138 +1,182 @@
-# xDownloader — Standalone Multi-Platform Desktop Media Studio
+# 📥 xDownloader — Fast, Multi-Platform Desktop Media Studio Downloader
 
-<p align="center">
-  <a href="https://github.com/egga-fx/xdownloader/releases"><img src="https://img.shields.io/github/v/release/egga-fx/xdownloader?style=flat-square&color=3b82f6" alt="Release Version"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-10b981.svg?style=flat-square" alt="License MIT"></a>
-  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-v2-24c8db?style=flat-square&logo=tauri&logoColor=white" alt="Tauri v2"></a>
-  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black" alt="React 19"></a>
-  <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind-v4-38bdf8?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS v4"></a>
-  <img src="https://img.shields.io/badge/Platform-Windows%20x64-0078d4?style=flat-square&logo=windows&logoColor=white" alt="Platform Windows">
-</p>
+[![Status: Production Ready](https://img.shields.io/badge/Status-Production_v1.0.0-emerald?style=flat-square)](https://github.com/egga-fx/xdownloader)
+[![Platform](https://img.shields.io/badge/Platform-Windows_x64-blue?style=flat-square)](https://github.com/egga-fx/xdownloader)
+[![Desktop Shell](https://img.shields.io/badge/Shell-Tauri_v2-black?style=flat-square&logo=tauri)](https://tauri.app/)
+[![Frontend](https://img.shields.io/badge/Frontend-Vite_6_%7C_React_19_%7C_Tailwind_v4-blueviolet?style=flat-square)](https://vitejs.dev/)
+[![Backend Engine](https://img.shields.io/badge/Backend-Rust_2021_%7C_Tokio-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![Database](https://img.shields.io/badge/Database-SQLite_(rusqlite_WAL)-lightblue?style=flat-square&logo=sqlite)](https://sqlite.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 
-<p align="center">
-  <b>xDownloader</b> is a high-speed, lightweight desktop media studio built with <b>Tauri v2</b>, <b>React 19</b>, <b>Vite</b>, <b>Tailwind CSS v4</b>, and a native <b>Rust Core IPC</b>. 100% self-contained, offline-capable, and designed for content creators and editors.
-</p>
+**xDownloader** adalah aplikasi studio desktop berkinerja tinggi (*high-performance media studio downloader & processor*) yang dirancang khusus untuk mengunduh, mengekstrak, memotong (*trimming*), dan memecah (*splitting*) media dari berbagai platform sosial dan web modern secara instan, aman, dan 100% lokal di mesin pengguna.
 
 ---
 
-## ⚡ Key Features
+## 🎯 Ringkasan Eksekutif & Nilai Utama
 
-- 🎯 **Multi-Platform Universal Extraction**: Seamlessly extracts high-resolution video and audio from YouTube (Videos, Shorts, Playlists), TikTok, Instagram (Reels, Posts), X / Twitter, Pinterest, and direct MP4/WebM URLs.
-- ✂️ **Built-in Video Splitter & Shorts Cutter**:
-  - Multi-part chunk generator (e.g. 60s for YouTube Shorts / TikTok, custom durations, or manual timecodes).
-  - Stream-based fast split directly from online media URLs without downloading the whole video first.
-  - Local lossless split powered by native FFmpeg stream copying.
-- 📋 **Zero-Layer Smart Clipboard Integration**: Automatic clipboard monitoring with animated detection badges and a 1-click *"Download from Clipboard"* quick action.
-- 🗄️ **SQLite WAL Media Vault**:
-  - Dual view modes: **Compact Table View** and **Media Card Grid View**.
-  - Track download status, file sizes, author info, and exact disk paths.
-  - In-app media player modal for quick verification.
-  - Smart physical file verification (shows "NOT FOUND" badge if a file was moved or deleted externally).
-- 🔧 **In-App Self-Healing Binary Installer**: Automatically checks for `yt-dlp` and `ffmpeg` in `./bin` or system `PATH`. If missing, installs the latest official binaries with a single click.
-- 🔄 **Cryptographic In-App Auto Updater**: Minisign-signed automatic updates directly from GitHub Releases via Tauri v2 updater plugin.
-- 🎨 **Masagi Zinc Dark Theme**: Premium, clutter-free dark aesthetic with glassmorphic accents, fluid transitions, and zero visual noise.
+xDownloader dibangun untuk mengatasi keterbatasan alat download web berbasis cloud yang lambat, dipenuhi iklan berbahaya, membatasi resolusi, atau berisiko membocorkan data pengguna.
+
+1. **Local-First & Privasi Mutlak**:
+   - Seluruh pemrosesan stream video, ekstraksi audio, dan pemotongan berlangsung 100% lokal di komputer pengguna. Tidak ada data media atau metadata yang dikirimkan ke server pihak ketiga.
+2. **Kinerja Tinggi Native Desktop (Tauri v2 + Rust)**:
+   - Konsumsi memori RAM minimal (<60 MB saat idle) dibandingkan software berbasis Electron.
+   - Pemanfaatan *Tokio async runtime* dan `ProcessManager` native untuk pemantauan unduhan multi-thread berkecepatan tinggi tanpa membebani thread antarmuka (zero UI lag).
+3. **Studio Media Tools Terintegrasi**:
+   - Tidak hanya sekadar pengunduh (*downloader*), xDownloader dilengkapi dengan **Exact Video Trimmer** (pemotong durasi presisi milidetik) dan **Multi-Segment Video Splitter** (pemecah video otomatis per 30/60 detik untuk konten TikTok, Instagram Reels, dan YouTube Shorts).
+4. **Desain Pro-Grade *Masagi Zinc Dark Precision***:
+   - Antarmuka modern berdensitas informasi tinggi menggunakan TailwindCSS v4, aksen aurora kinetik, dan palet warna hitam pekat yang nyaman untuk kerja studio intensif.
 
 ---
 
-## 📥 Download & Installation
+## 🚀 Fitur-Fitur Utama
 
-Visit the [**Latest Releases**](https://github.com/egga-fx/xdownloader/releases/latest) page to grab the standalone Windows installer:
-
-| Platform | Format | Installer File |
-| :--- | :--- | :--- |
-| **Windows 10/11 (64-bit)** | NSIS Installer | `xDownloader_<version>_x64-setup.exe` |
-
-*Portable execution mode: Run the executable or extract it into any directory with a `./bin` and `./data` folder for 100% portable usage.*
+| Modul Fitur | Deskripsi Fungsional |
+| :--- | :--- |
+| 🌐 **Universal Media Ingest** | Mendukung **YouTube** (Video, Shorts, Livestream VOD, Subtitel), **TikTok** (Video tanpa watermark & foto carousel), **Instagram** (Reels, Posts, Stories), **X / Twitter** (Video, GIF, Foto HD), **Pinterest** (Video & Foto CDN original), dan tautan langsung media web (`.mp4`, `.mp3`, `.m3u8`). |
+| 🎚️ **Format & Quality Matrix** | Pilihan resolusi video fleksibel dari **4K (2160p)**, 1440p, 1080p, 720p, hingga 360p. Ekstraksi audio murni ke format **MP3 (320kbps)**, **M4A**, **WAV Lossless**, atau **FLAC**. Subtitel otomatis dalam format **SRT** dan **VTT**. |
+| ✂️ **In-App Video Trimmer** | Pemotongan durasi video presisi berbasis FFmpeg native. Mendukung file lokal maupun pemotongan langsung dari URL stream online dengan preview visual interaktif. |
+| 🪓 **Multi-Segment Video Splitter** | Memecah video panjang menjadi beberapa segmen berdasarkan durasi tetap (misal: tiap 60 detik), jumlah bagian merata (*equal parts*), atau rentang kustom dengan opsi pembuatan subfolder otomatis. |
+| 🗄️ **Embedded Media Vault** | Riwayat unduhan lokal berbasis SQLite embedded (`rusqlite` mode WAL). Dilengkapi tampilan **Grid View** dan **Table View**, pencarian instan, filter platform, pemutar media bawaan (*In-App Preview*), dan reveal di Windows Explorer. |
+| 📋 **Smart Clipboard Listener** | Mendeteksi tautan video yang disalin ke clipboard secara otomatis dan menampilkan banner kontekstual *"Paste & Fetch"* dalam satu klik. |
+| 🛡️ **Zero-Zombie Process Safety** | Backend `ProcessManager` mencatat PID setiap subprocess `yt-dlp` dan `ffmpeg`. Tombol pembatalan mematikan seluruh process tree seketika (`taskkill /F /T /PID`), menjamin zero background process leak. |
+| ⚙️ **One-Click Engine Auto-Setup** | Pemeriksaan otomatis keberadaan binary `yt-dlp` dan `ffmpeg`. Tersedia tombol auto-install langsung dari GitHub Releases resmi serta tombol engine updater in-app (`yt-dlp -U`). |
 
 ---
 
-## 🚀 Getting Started (Development)
+## 🏛️ Arsitektur & Teknologi
 
-### Prerequisites
-- [Bun](https://bun.sh/) (or Node.js 20+)
-- [Rust Toolchain](https://www.rust-lang.org/tools/install) (stable `x86_64-pc-windows-msvc`)
-- Visual Studio C++ Build Tools (Windows)
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                 Desktop Shell (Tauri v2)                    │
+│     Native Windows Window • Tray Icon • System Dialogs      │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (Typed IPC via invoke & emit)
+┌──────────────────────────────▼──────────────────────────────┐
+│           Frontend Layer (Vite 6 + React 19)                │
+│    TypeScript (Strict) • TailwindCSS v4 • Lucide React      │
+│    Masagi Zinc Dark Theme • In-App Media Preview Player     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────┐
+│           Backend Core Layer (src-tauri / Rust)             │
+│    Tokio Async Runtime • ProcessManager (PID Tracking)      │
+│    rusqlite SQLite (WAL Mode) • Reqwest Image Scraper       │
+└──────────────┬──────────────────────────────┬───────────────┘
+               │                              │
+┌──────────────▼─────────────┐ ┌──────────────▼───────────────┐
+│ Managed CLI Binaries       │ │ Local Persistence Layer     │
+│ yt-dlp (Stream & Metadata) │ │ vault.db (SQLite Embedded)  │
+│ ffmpeg (Trim & Split)      │ │ Portable ./data/ or AppData │
+└────────────────────────────┘ └─────────────────────────────┘
+```
 
-### 1. Clone & Install Dependencies
+---
+
+## 💻 Panduan Pengembangan & Cara Menjalankan
+
+### 1. Prasyarat Sistem
+- **Node/Bun Runtime**: [Bun v1.2+](https://bun.sh/) (disarankan) atau Node.js 20+.
+- **Rust Toolchain**: [Rust & Cargo](https://www.rust-lang.org/) (edisi 2021).
+- **OS**: Windows 10/11 x64.
+- *(Opsional)* Binary `yt-dlp` dan `ffmpeg` di PATH sistem, atau gunakan tombol **One-Click Setup** di dalam aplikasi.
+
+### 2. Instalasi Dependensi
 ```bash
+# Clone repositori
 git clone https://github.com/egga-fx/xdownloader.git
-cd xdownloader
+cd tools/xdownloader
+
+# Instal dependensi frontend
 bun install
 ```
 
-### 2. Run in Web Browser Dev Mode
-Quick UI and layout debugging without native Rust runtime:
+### 3. Menjalankan Mode Pengembangan
+
+#### A. Web Preview Mode (Pengembangan UI Cepat)
+Menjalankan antarmuka studio di browser web pada `http://localhost:1420` dengan simulasi download interaktif:
 ```bash
 bun run dev
 ```
 
-### 3. Run in Full Tauri v2 Desktop Mode
-Runs the live native window with hot-reloading for both React and Rust:
+#### B. Native Desktop Mode (Full Tauri Desktop Shell)
+Menjalankan aplikasi desktop Windows native lengkap dengan koneksi Rust backend, SQLite, dan subprocess binary:
 ```bash
-bun run tauri dev
+bun run tauri:dev
 ```
 
-### 4. Build Production Desktop Executable
-Compiles the optimized Rust backend and packages the standalone NSIS installer in `src-tauri/target/release/bundle/nsis/`:
+### 4. Pengujian & Validasi Kualitas Kode
+```bash
+# 1. Typecheck TypeScript (Frontend)
+bun x tsc --noEmit
+
+# 2. Build Bundle Vite (Frontend)
+bun run build
+
+# 3. Pemeriksaan Sintaks & Borrow Checker Rust (Backend)
+cd src-tauri
+cargo check
+
+# 4. Menjalankan Unit Tests Rust (Extractor & Utils)
+cargo test --lib
+```
+
+### 5. Kompilasi Installer Produksi
+Untuk menghasilkan file installer `.exe` native Windows yang siap didistribusikan:
 ```bash
 bun run tauri:build
 ```
+Hasil installer akan tersedia di direktori `src-tauri/target/release/bundle/nsis/`.
 
 ---
 
-## 📂 Project Architecture
+## 📂 Struktur Direktori Proyek
 
-```
+```text
 xdownloader/
-├── .github/workflows/
-│   └── release.yml            # Automated GitHub Actions build & release pipeline
-├── package.json               # React 19, Vite, Tailwind v4, Tauri v2 plugins
-├── vite.config.ts             # Vite configuration with Tauri port binding (1420)
-├── index.html                 # App shell with Plus Jakarta Sans typography
-├── src/
-│   ├── index.css              # Masagi Zinc Dark design tokens & Tailwind v4
-│   ├── types.ts               # Core TypeScript data contracts & models
-│   ├── lib/
-│   │   ├── tauri-api.ts       # Typed Tauri IPC command & event wrapper
-│   │   └── utils.ts           # Helpers: duration, file size, smart delete logic
-│   └── components/
-│       ├── Header.tsx                 # Output folder picker & vault toggle
-│       ├── UrlInputSection.tsx        # Zero-layer input + clipboard smart button
-│       ├── MetadataPreviewCard.tsx    # Format & quality selection
-│       ├── VideoSplitterModal.tsx     # Shorts & multi-part video cutter modal
-│       ├── MediaVaultDrawer.tsx       # Side drawer with Table & Grid view
-│       ├── VaultHistoryTable.tsx      # Tabular history with NOT FOUND badges
-│       ├── VaultHistoryGrid.tsx       # Card grid history
-│       ├── DeleteConfirmDialog.tsx    # Safe confirm modal for real disk files
-│       ├── BinarySetupModal.tsx       # In-app yt-dlp & ffmpeg installer
-│       ├── MediaPreviewModal.tsx      # Media preview player & detail modal
-│       ├── SettingsModal.tsx          # Preferences & auto-update toggles
-│       └── AboutModal.tsx             # Studio version & developer credits
-└── src-tauri/
-    ├── Cargo.toml             # Rust dependencies (tauri, rusqlite, tokio, reqwest)
-    ├── tauri.conf.json        # Window & bundle configuration
-    ├── icons/                 # Desktop application icons
-    └── src/
-        ├── main.rs            # Application entrypoint
-        ├── lib.rs             # Tauri command registrations
-        ├── models.rs          # Serde data structs
-        ├── db.rs              # SQLite database engine (WAL mode)
-        ├── binaries.rs        # Binary resolver & GitHub release downloader
-        ├── downloader.rs      # Child process runner & stdout progress parser
-        └── metadata.rs        # Fast media metadata fetcher
+├── src/                      # Frontend Studio (React 19 + TypeScript + Tailwind v4)
+│   ├── components/           # Reusable Studio UI (Header, UrlInput, Vault, Modals)
+│   ├── lib/                  # Utilities (tauri-api.ts, utils.ts, icons.tsx)
+│   ├── App.tsx               # Root State Controller
+│   ├── index.css             # Masagi Zinc Dark Theme Tokens
+│   └── types.ts              # TypeScript Data Contracts
+├── src-tauri/                # Backend Desktop Native (Rust 2021)
+│   ├── src/
+│   │   ├── binaries.rs       # Binary locator & GitHub auto-installer
+│   │   ├── db.rs             # rusqlite SQLite repository (WAL mode)
+│   │   ├── downloader.rs     # yt-dlp runner, FFmpeg trim/split, ProcessManager
+│   │   ├── image_extractor.rs# Multi-platform high-res photo scraper
+│   │   ├── lib.rs            # Tauri command dispatcher & AppState
+│   │   ├── metadata.rs       # Fast yt-dlp metadata JSON probe
+│   │   └── models.rs         # Serde shared data structures
+│   ├── Cargo.toml            # Rust dependencies & metadata
+│   └── tauri.conf.json       # Window layout, updater, & plugin config
+├── CODING_PREF.md            # Standar penulisan kode & konvensi proyek
+├── DESIGN.md                 # Desain visual, palet warna, & tata letak UI
+├── FEATURES.md               # Katalog lengkap fitur & pipeline media
+├── GEMINI.md                 # Aturan Co-Leader & agentic workflow
+├── STACKS.md                 # Rincian dependensi & topologi arsitektur
+├── package.json              # Script build frontend & dependensi npm
+├── tsconfig.json             # Konfigurasi TypeScript strict
+└── vite.config.ts            # Konfigurasi bundler Vite
 ```
 
 ---
 
-## 🔒 Security & Privacy
+## 📚 Hubungan Dokumentasi Proyek
 
-- **100% Local & Private**: All media downloads, video slicing, and file conversions occur directly on your machine via local child processes (`yt-dlp` and `ffmpeg`). No media or personal telemetry is transmitted to third-party servers.
-- **Minisign Cryptographic Verification**: Auto-update payloads are verified using Minisign public key cryptography to guarantee installer integrity before execution.
+Untuk memahami standar spesifik dan rincian arsitektur lebih lanjut, silakan merujuk ke dokumen pelengkap:
+- [STACKS.md](./STACKS.md) — Rincian lapisan teknologi, library, dan topologi runtime.
+- [FEATURES.md](./FEATURES.md) — Spesifikasi teknis setiap fitur media dan format matrix.
+- [DESIGN.md](./DESIGN.md) — Panduan visual, token warna TailwindCSS v4, dan layout studio.
+- [CODING_PREF.md](./CODING_PREF.md) — Standar penulisan kode, IPC contracts, dan process safety.
+- [GEMINI.md](./GEMINI.md) — Protokol operasional dan panduan AI pair-programming Masagi.
 
 ---
 
-## 📄 License
+## 📄 Lisensi
 
-This project is licensed under the [MIT License](LICENSE) — see the [LICENSE](LICENSE) file for details.
+Proyek ini didistribusikan di bawah lisensi terbuka **MIT License**. Silakan baca file [LICENSE](./LICENSE) untuk ketentuan lengkapnya.
 
-Developed with ❤️ by [Egga](https://github.com/egga-fx).
+---
+
+*xDownloader Studio v1.0.0 — Crafted for High-Performance Desktop Media Processing.*
