@@ -17,6 +17,7 @@ interface BinarySetupModalProps {
   open: boolean;
   onClose: () => void;
   status: BinariesStatus | null;
+  checking?: boolean;
   onRefresh: () => void;
 }
 
@@ -24,6 +25,7 @@ export const BinarySetupModal: React.FC<BinarySetupModalProps> = ({
   open,
   onClose,
   status,
+  checking = false,
   onRefresh,
 }) => {
   const [installingType, setInstallingType] = useState<string | null>(null);
@@ -104,118 +106,130 @@ export const BinarySetupModal: React.FC<BinarySetupModalProps> = ({
         )}
 
         {/* Binary Status List */}
-        <div className="flex flex-col gap-3">
-          {/* yt-dlp */}
-          <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-[#27272a] flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              {status?.ytdlp_installed ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-              ) : (
-                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
-              )}
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-xs text-white">yt-dlp</span>
-                  <span className="text-[10px] text-[#71717a]">Media Extractor</span>
+        {checking || status === null ? (
+          <div className="p-8 rounded-xl bg-[#0e0e11] border border-[#27272a] flex flex-col items-center justify-center gap-3 text-center animate-in fade-in">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
+            <div className="flex flex-col gap-1">
+              <p className="font-bold text-sm text-white">Memeriksa Download Engines...</p>
+              <p className="text-xs text-[#71717a]">
+                Memverifikasi ketersediaan dan versi binary yt-dlp dan ffmpeg
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {/* yt-dlp */}
+            <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-[#27272a] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {status.ytdlp_installed ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                )}
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-xs text-white">yt-dlp</span>
+                    <span className="text-[10px] text-[#71717a]">Media Extractor</span>
+                  </div>
+                  <p className="text-[11px] text-[#71717a]">
+                    {status.ytdlp_installed
+                      ? `Version: ${status.ytdlp_version}`
+                      : "Not found in bin/ or system PATH"}
+                  </p>
                 </div>
-                <p className="text-[11px] text-[#71717a]">
-                  {status?.ytdlp_installed
-                    ? `Version: ${status.ytdlp_version}`
-                    : "Not found in bin/ or system PATH"}
-                </p>
               </div>
+
+              {status.ytdlp_installed ? (
+                <button
+                  onClick={handleUpdateEngine}
+                  disabled={updatingEngine || installingType !== null}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#27272a] hover:bg-[#3f3f46] text-white flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                  title="Update yt-dlp to latest release"
+                >
+                  {updatingEngine ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                      <span>Updating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Update Engine</span>
+                    </>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleInstall("ytdlp")}
+                  disabled={installingType !== null}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white flex items-center gap-1.5 transition-colors shadow-sm ${
+                    installingType !== null
+                      ? "bg-blue-600/50 !cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-500 cursor-pointer"
+                  }`}
+                >
+                  {installingType === "ytdlp" ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Downloading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Auto Install</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
-            {status?.ytdlp_installed ? (
-              <button
-                onClick={handleUpdateEngine}
-                disabled={updatingEngine || installingType !== null}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#27272a] hover:bg-[#3f3f46] text-white flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                title="Update yt-dlp to latest release"
-              >
-                {updatingEngine ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
-                    <span>Updating...</span>
-                  </>
+            {/* ffmpeg */}
+            <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-[#27272a] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {status.ffmpeg_installed ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
                 ) : (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
-                    <span>Update Engine</span>
-                  </>
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
                 )}
-              </button>
-            ) : (
-              <button
-                onClick={() => handleInstall("ytdlp")}
-                disabled={installingType !== null}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white flex items-center gap-1.5 transition-colors shadow-sm ${
-                  installingType !== null
-                    ? "bg-blue-600/50 !cursor-not-allowed"
-                    : "bg-blue-600 hover:bg-blue-500 cursor-pointer"
-                }`}
-              >
-                {installingType === "ytdlp" ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Downloading...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Auto Install</span>
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-
-          {/* ffmpeg */}
-          <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-[#27272a] flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              {status?.ffmpeg_installed ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-              ) : (
-                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
-              )}
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-xs text-white">ffmpeg</span>
-                  <span className="text-[10px] text-[#71717a]">Video & Audio Multiplexer</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-xs text-white">ffmpeg</span>
+                    <span className="text-[10px] text-[#71717a]">Video & Audio Multiplexer</span>
+                  </div>
+                  <p className="text-[11px] text-[#71717a]">
+                    {status.ffmpeg_installed
+                      ? `Version: ${status.ffmpeg_version}`
+                      : "Not found in bin/ or system PATH"}
+                  </p>
                 </div>
-                <p className="text-[11px] text-[#71717a]">
-                  {status?.ffmpeg_installed
-                    ? `Version: ${status.ffmpeg_version}`
-                    : "Not found in bin/ or system PATH"}
-                </p>
               </div>
-            </div>
 
-            {!status?.ffmpeg_installed && (
-              <button
-                onClick={() => handleInstall("ffmpeg")}
-                disabled={installingType !== null}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white flex items-center gap-1.5 transition-colors shadow-sm ${
-                  installingType !== null
-                    ? "bg-blue-600/50 !cursor-not-allowed"
-                    : "bg-blue-600 hover:bg-blue-500 cursor-pointer"
-                }`}
-              >
-                {installingType === "ffmpeg" ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Downloading...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Auto Install</span>
-                  </>
-                )}
-              </button>
-            )}
+              {!status.ffmpeg_installed && (
+                <button
+                  onClick={() => handleInstall("ffmpeg")}
+                  disabled={installingType !== null}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white flex items-center gap-1.5 transition-colors shadow-sm ${
+                    installingType !== null
+                      ? "bg-blue-600/50 !cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-500 cursor-pointer"
+                  }`}
+                >
+                  {installingType === "ffmpeg" ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Downloading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Auto Install</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {successMsg && (
           <p className="text-xs text-emerald-400 font-medium px-1 flex items-center gap-1.5">

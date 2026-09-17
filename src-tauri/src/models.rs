@@ -163,4 +163,17 @@ pub struct TrimStreamRequest {
     pub author: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogEntry {
+    pub id: i64,
+    pub task_id: String,
+    pub level: String,
+    pub category: String,
+    pub message: String,
+    pub details: Option<String>,
+    pub created_at: String,
+}
+
+
 

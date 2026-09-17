@@ -12,6 +12,7 @@ import {
   DownloaderFormatType,
   DownloaderQuality,
   DownloadRecord,
+  LogEntry,
   SplitLocalRequest,
   SplitStreamRequest,
   SplitProgressEvent,
@@ -37,6 +38,68 @@ type BinaryProgressCallback = (data: { binaryType: string; percent: number }) =>
 const browserDownloadListeners = new Set<DownloadProgressCallback>();
 const browserBinaryListeners = new Set<BinaryProgressCallback>();
 const browserActiveSimulations = new Map<string, number>();
+
+// In-memory storage fallback for headless/Node/Bun testing and browser sandboxes
+const inMemoryFallbackStorage = new Map<string, string>();
+
+export function getStorageItem(key: string): string | null {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      return window.localStorage.getItem(key);
+    }
+    if (typeof localStorage !== "undefined") {
+      return localStorage.getItem(key);
+    }
+  } catch {
+    // fallback to in-memory
+  }
+  return inMemoryFallbackStorage.get(key) ?? null;
+}
+
+export function setStorageItem(key: string, value: string): void {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(key, value);
+      return;
+    }
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(key, value);
+      return;
+    }
+  } catch {
+    // fallback to in-memory
+  }
+  inMemoryFallbackStorage.set(key, value);
+}
+
+export function removeStorageItem(key: string): void {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem(key);
+      return;
+    }
+  } catch {
+    // fallback to in-memory
+  }
+  inMemoryFallbackStorage.delete(key);
+}
+
+export function resetMockStorage(): void {
+  inMemoryFallbackStorage.clear();
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.clear();
+    } else if (typeof localStorage !== "undefined") {
+      localStorage.clear();
+    }
+  } catch {
+    // ignore
+  }
+}
 
 let cachedBackendUrl: string | null | undefined = undefined;
 
@@ -76,7 +139,7 @@ export async function checkBinariesStatus(): Promise<BinariesStatus> {
   }
 
   // Fallback: Browser Preview Mode
-  const stored = localStorage.getItem("xdownloader_mock_binaries");
+  const stored = getStorageItem("xdownloader_mock_binaries");
   if (stored) {
     try {
       return JSON.parse(stored);
@@ -112,7 +175,7 @@ export async function installBinary(binaryType: "ytdlp" | "ffmpeg"): Promise<boo
         // Update mock state in localStorage
         const cur: BinariesStatus = (() => {
           try {
-            return JSON.parse(localStorage.getItem("xdownloader_mock_binaries") || "{}");
+            return JSON.parse(getStorageItem("xdownloader_mock_binaries") || "{}");
           } catch {
             return {
               ytdlp_installed: false,
@@ -132,7 +195,7 @@ export async function installBinary(binaryType: "ytdlp" | "ffmpeg"): Promise<boo
           cur.ffmpeg_version = "7.1 (Web Preview)";
         }
         cur.bin_dir = "./bin (Web Preview)";
-        localStorage.setItem("xdownloader_mock_binaries", JSON.stringify(cur));
+        setStorageItem("xdownloader_mock_binaries", JSON.stringify(cur));
 
         resolve(true);
       }
@@ -554,7 +617,7 @@ export async function cancelDownload(taskId: string): Promise<boolean> {
 // --- 4. MEDIA VAULT & RECORDS ---
 
 function getBrowserMockRecords(): DownloadRecord[] {
-  const stored = localStorage.getItem("xdownloader_mock_records");
+  const stored = getStorageItem("xdownloader_mock_records");
   if (stored) {
     try {
       return JSON.parse(stored);
@@ -601,7 +664,7 @@ function getBrowserMockRecords(): DownloadRecord[] {
     },
   ];
 
-  localStorage.setItem("xdownloader_mock_records", JSON.stringify(demoRecords));
+  setStorageItem("xdownloader_mock_records", JSON.stringify(demoRecords));
   return demoRecords;
 }
 
@@ -638,7 +701,7 @@ export async function deleteDownloadRecord(id: string): Promise<boolean> {
   }
 
   const existing = getBrowserMockRecords().filter((r) => r.id !== id);
-  localStorage.setItem("xdownloader_mock_records", JSON.stringify(existing));
+  setStorageItem("xdownloader_mock_records", JSON.stringify(existing));
   return true;
 }
 
@@ -753,7 +816,7 @@ export async function getAppSettings(): Promise<AppSettings> {
     }
   }
 
-  const stored = localStorage.getItem("xdownloader_mock_settings");
+  const stored = getStorageItem("xdownloader_mock_settings");
   if (stored) {
     try {
       return JSON.parse(stored);
@@ -778,7 +841,7 @@ export async function saveAppSettings(settings: Partial<AppSettings>): Promise<b
 
   const cur = await getAppSettings();
   const merged = { ...cur, ...settings };
-  localStorage.setItem("xdownloader_mock_settings", JSON.stringify(merged));
+  setStorageItem("xdownloader_mock_settings", JSON.stringify(merged));
   return true;
 }
 
@@ -976,5 +1039,100 @@ export async function trimStreamVideoExact(req: TrimStreamRequest): Promise<stri
   }
   return `trim_task_${Date.now()}`;
 }
+
+// --- 11. LOGGING & DIAGNOSTICS ---
+
+export async function getRecentLogs(limit: number = 100, level?: string): Promise<LogEntry[]> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<LogEntry[]>("get_recent_logs", { limit, level });
+    } catch (err) {
+      console.warn("Failed to get recent logs via Tauri IPC:", err);
+    }
+  }
+
+  // Web Preview fallback
+  const stored = getStorageItem("xdownloader_mock_logs");
+  if (stored) {
+    try {
+      const parsed: LogEntry[] = JSON.parse(stored);
+      if (level && level !== "ALL") {
+        return parsed.filter((l) => l.level.toUpperCase() === level.toUpperCase());
+      }
+      return parsed.slice(0, limit);
+    } catch {
+      // ignore
+    }
+  }
+
+  return [
+    {
+      id: 1,
+      taskId: "sys_init",
+      level: "INFO",
+      category: "GENERAL",
+      message: "xDownloader Web Preview initialized",
+      details: "Running in browser mock mode",
+      createdAt: new Date().toISOString(),
+    },
+  ];
+}
+
+export function appendMockLog(entry: {
+  taskId?: string | null;
+  level: "INFO" | "WARN" | "ERROR";
+  category: string;
+  message: string;
+  details?: string | null;
+}): void {
+  const stored = getStorageItem("xdownloader_mock_logs");
+  let list: LogEntry[] = [];
+  if (stored) {
+    try {
+      list = JSON.parse(stored);
+    } catch {
+      list = [];
+    }
+  }
+  const nextEntry: LogEntry = {
+    id: list.length + 1,
+    taskId: entry.taskId ?? null,
+    level: entry.level,
+    category: entry.category,
+    message: entry.message,
+    details: entry.details ?? null,
+    createdAt: new Date().toISOString(),
+  };
+  list.unshift(nextEntry);
+  setStorageItem("xdownloader_mock_logs", JSON.stringify(list));
+}
+
+export async function clearAppLogs(): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<boolean>("clear_app_logs");
+    } catch (err) {
+      console.warn("Failed to clear app logs via Tauri IPC:", err);
+      return false;
+    }
+  }
+
+  removeStorageItem("xdownloader_mock_logs");
+  return true;
+}
+
+export async function openLogsFolder(): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<boolean>("open_logs_folder");
+    } catch (err) {
+      console.warn("Failed to open logs folder via Tauri IPC:", err);
+      return false;
+    }
+  }
+
+  return true;
+}
+
 
 

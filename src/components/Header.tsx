@@ -7,6 +7,7 @@ import {
   Settings,
   Info,
   Scissors,
+  Loader2,
 } from "lucide-react";
 import { BinariesStatus } from "../types";
 import { isTauriEnvironment } from "../lib/tauri-api";
@@ -16,6 +17,7 @@ interface HeaderProps {
   onPickFolder: () => void;
   onOpenFolder: () => void;
   binariesStatus: BinariesStatus | null;
+  checkingBinaries?: boolean;
   onOpenBinarySetup: () => void;
   vaultOpen: boolean;
   onToggleVault: () => void;
@@ -33,6 +35,7 @@ export const Header: React.FC<HeaderProps> = ({
   onPickFolder,
   onOpenFolder,
   binariesStatus,
+  checkingBinaries = false,
   onOpenBinarySetup,
   vaultOpen,
   onToggleVault,
@@ -44,8 +47,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAbout,
   hasUpdate = false,
 }) => {
+  const isChecking = checkingBinaries || binariesStatus === null;
   const isBinariesReady =
-    binariesStatus?.ytdlp_installed && binariesStatus?.ffmpeg_installed;
+    !isChecking && binariesStatus?.ytdlp_installed && binariesStatus?.ffmpeg_installed;
 
   const triggerTrimmer = onOpenTrimmer || onOpenSplitter;
 
@@ -56,21 +60,30 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Controls: Folder path, Binary status, Media Vault, Settings, About */}
       <div className="flex items-center gap-2">
-        {/* Binary Status Warning / Ready */}
+        {/* Binary Status: Checking / Ready / Setup Needed */}
         <button
           onClick={onOpenBinarySetup}
           className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-md border cursor-pointer transition-all ${
-            isBinariesReady
+            isChecking
+              ? "bg-zinc-800/60 border-zinc-700/60 text-zinc-300 hover:bg-zinc-800"
+              : isBinariesReady
               ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/15"
               : "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 animate-pulse"
           }`}
           title={
-            isBinariesReady
+            isChecking
+              ? "Memeriksa status download engines..."
+              : isBinariesReady
               ? "yt-dlp & ffmpeg are installed and ready"
               : "Click to download missing yt-dlp or ffmpeg binaries"
           }
         >
-          {isBinariesReady ? (
+          {isChecking ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+              <span className="hidden sm:inline">Checking Engines...</span>
+            </>
+          ) : isBinariesReady ? (
             <>
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
               <span className="hidden sm:inline">Engines Ready</span>

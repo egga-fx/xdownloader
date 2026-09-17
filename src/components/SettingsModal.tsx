@@ -4,6 +4,7 @@ import {
   X,
   HardDrive,
   FolderSearch,
+  FolderOpen,
   Check,
   RotateCcw,
   Sparkles,
@@ -16,6 +17,7 @@ import {
   ChevronDown,
   Cpu,
   Info,
+  Activity,
 } from "lucide-react";
 import { AppSettings, AppUpdateInfo, DownloaderQuality } from "../types";
 import {
@@ -24,7 +26,9 @@ import {
   downloadAndInstallAppUpdate,
   updateEngine,
   checkBinariesStatus,
+  openLogsFolder,
 } from "../lib/tauri-api";
+import { LogViewerModal } from "./LogViewerModal";
 import { getErrorMessage } from "../lib/utils";
 
 interface SettingsModalProps {
@@ -251,6 +255,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [engineVersion, setEngineVersion] = useState<string>("");
   const [updatingEngine, setUpdatingEngine] = useState<boolean>(false);
   const [engineStatusMsg, setEngineStatusMsg] = useState<string | null>(null);
+
+  // Diagnostics & Logs modal state
+  const [isLogViewerOpen, setIsLogViewerOpen] = useState<boolean>(false);
+
+  const handleOpenLogsFolder = async () => {
+    try {
+      await openLogsFolder();
+    } catch (err) {
+      console.error("Failed to open logs folder:", err);
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -641,6 +656,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* 7. DIAGNOSTICS & SYSTEM LOGS */}
+            <div className="flex flex-col gap-2.5 pt-2 border-t border-[#27272a]">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-xs text-white flex items-center gap-1.5">
+                  <Activity className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Diagnostics & System Logs</span>
+                </span>
+                <span className="text-[11px] font-mono text-[#71717a]">
+                  SQLite & File Sink
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#18181b] border border-[#27272a] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0 pr-2">
+                  <p className="font-bold text-xs text-white">Application Event Logs</p>
+                  <p className="text-[11px] text-[#71717a]">
+                    Review download traces, subprocess errors, and system events
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleOpenLogsFolder}
+                    className="px-3 py-1.5 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    title="Buka folder log aplikasi di file explorer"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 text-zinc-400" />
+                    <span>Buka Folder</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsLogViewerOpen(true)}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm shadow-blue-600/30"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Lihat Log Aktivitas</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -691,6 +749,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Sub-modal: Log Viewer */}
+      <LogViewerModal
+        open={isLogViewerOpen}
+        onClose={() => setIsLogViewerOpen(false)}
+      />
     </div>
   );
 };

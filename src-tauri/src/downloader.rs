@@ -50,6 +50,7 @@ impl ProcessManager {
     pub fn cancel(&self, task_id: &str) -> bool {
         if let Ok(mut map) = self.children.lock() {
             if let Some(pid) = map.remove(task_id) {
+                crate::logger::write_file_log("WARN", "PROCESS", task_id, &format!("Killed process PID: {}", pid));
                 #[cfg(target_os = "windows")]
                 {
                     let _ = Command::new("taskkill")
@@ -121,6 +122,14 @@ pub async fn run_download(
         _ => get_default_download_dir(),
     };
     let _ = std::fs::create_dir_all(&out_dir);
+
+    let _ = db.log_event(
+        &task_id,
+        "INFO",
+        "DOWNLOAD",
+        &format!("Initiating download: {} (format: {}, quality: {})", url, format_type, quality),
+        None,
+    );
 
     // 1. Direct Image Extraction Interceptor
     if format_type == "image" {
@@ -376,6 +385,14 @@ pub async fn run_download(
             None,
         );
 
+        let _ = db.log_event(
+            &task_id,
+            "INFO",
+            "DOWNLOAD",
+            &format!("Download completed: {}", downloaded_path),
+            Some(&format!("fileSizeBytes: {}", file_size)),
+        );
+
         let final_task = ActiveDownloadTask {
             task_id: task_id.clone(),
             url: url.clone(),
@@ -417,6 +434,13 @@ pub async fn run_download(
 
         let err_msg = format!("Download exited with code {:?}", status.code());
         let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
+        let _ = db.log_event(
+            &task_id,
+            "ERROR",
+            "DOWNLOAD",
+            &format!("Download failed for URL: {}. Reason: {}", url, err_msg),
+            None,
+        );
 
         let err_task = ActiveDownloadTask {
             task_id: task_id.clone(),

@@ -7,8 +7,8 @@ import {
   Globe,
 } from "lucide-react";
 import { DownloaderPlatform } from "../types";
-import { detectPlatform, isSupportedMediaUrl } from "../lib/utils";
-import { getClipboardUrl } from "../lib/tauri-api";
+import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls } from "../lib/utils";
+import { getClipboardUrl, isTauriEnvironment } from "../lib/tauri-api";
 import {
   YoutubeIcon,
   InstagramIcon,
@@ -43,12 +43,17 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
 
   // Check clipboard periodically on window focus and visibility change
   const checkClipboard = async () => {
+    // Only auto-poll in native desktop shell to avoid browser security permission popups
+    if (!isTauriEnvironment()) return;
+
     try {
       const text = await getClipboardUrl();
       const trimmed = (text || "").trim();
-      if (trimmed && isSupportedMediaUrl(trimmed)) {
-        setClipboardUrl(trimmed);
-        setClipboardPlatform(detectPlatform(trimmed));
+      const extracted = extractMultipleUrls(trimmed);
+      const cleanCandidate = extracted.length > 0 ? extracted[0] : cleanMediaUrl(trimmed);
+      if (cleanCandidate && isSupportedMediaUrl(cleanCandidate)) {
+        setClipboardUrl(cleanCandidate);
+        setClipboardPlatform(detectPlatform(cleanCandidate));
       } else {
         setClipboardUrl("");
       }
@@ -58,6 +63,9 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   };
 
   useEffect(() => {
+    // Auto-polling is only active in native desktop shell
+    if (!isTauriEnvironment()) return;
+
     let active = true;
     const runCheck = async () => {
       if (active) await checkClipboard();

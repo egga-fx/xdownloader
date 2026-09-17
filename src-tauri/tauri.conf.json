@@ -14,12 +14,13 @@
       {
         "label": "main",
         "title": "xDownloader",
-        "width": 1120,
-        "height": 760,
-        "minWidth": 860,
-        "minHeight": 620,
+        "width": 960,
+        "height": 660,
+        "minWidth": 780,
+        "minHeight": 540,
         "resizable": true,
         "fullscreen": false,
+        "maximized": false,
         "center": true
       }
     ],

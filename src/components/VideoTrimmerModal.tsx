@@ -24,6 +24,7 @@ import {
   formatDuration,
   secondsToTimestamp,
   getErrorMessage,
+  validateTrimRange,
 } from "../lib/utils";
 import {
   trimLocalVideoExact,
@@ -367,6 +368,13 @@ export const VideoTrimmerModal: React.FC<VideoTrimmerModalProps> = ({
     if (trimming || videoDetails.type === "none") return;
     setErrorMsg(null);
     setCompletedFilePath(null);
+
+    const rangeCheck = validateTrimRange(startSec, endSec, duration);
+    if (!rangeCheck.valid) {
+      setErrorMsg(rangeCheck.error || "Invalid trim range.");
+      return;
+    }
+
     setTrimming(true);
 
     try {

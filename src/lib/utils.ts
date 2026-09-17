@@ -13,17 +13,76 @@ export function detectPlatform(inputUrl: string): DownloaderPlatform {
   if (/tiktok\.com/i.test(trimmed)) return "tiktok";
   if (/instagram\.com/i.test(trimmed)) return "instagram";
   if (/twitter\.com|x\.com/i.test(trimmed)) return "x";
-  if (/pinterest\.com|pin\.it/i.test(trimmed)) return "pinterest";
+  if (/pinterest\.com|pin\.it|pinimg\.com/i.test(trimmed)) return "pinterest";
   if (/^https?:\/\//i.test(trimmed)) return "web_media";
   return "generic";
 }
 
+export function stripWrappingPunctuation(str: string): string {
+  return str.trim().replace(/^[<(\[\"']+|[>),.;:!\]\"']+$/g, "");
+}
+
 export function isSupportedMediaUrl(inputUrl: string): boolean {
   if (!inputUrl) return false;
-  const trimmed = inputUrl.trim();
+  const trimmed = stripWrappingPunctuation(inputUrl);
   if (!/^https?:\/\/.+/i.test(trimmed)) return false;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return false;
+  }
+
+  const path = parsed.pathname.replace(/\/+$/, "");
+  const hasParams = Boolean(parsed.search && parsed.search.length > 1);
+
+  // Reject bare root domains (e.g. https://pinterest.com, https://youtube.com)
+  if (!path && !hasParams) {
+    return false;
+  }
+
   const platform = detectPlatform(trimmed);
-  return platform !== "generic";
+  if (platform === "generic") return false;
+
+  // Platform-specific media validations:
+  if (platform === "pinterest") {
+    // pin.it must have shortcode
+    if (parsed.hostname.includes("pin.it")) {
+      const code = parsed.pathname.replace(/^\//, "").trim();
+      return Boolean(code);
+    }
+    // pinterest.com must be a pin or media path
+    if (/pinterest\./i.test(parsed.hostname)) {
+      if (/\/pin\/[0-9]+/i.test(parsed.pathname)) return true;
+      if (/\/sent\/?$/i.test(parsed.pathname)) return false;
+      return Boolean(path && path !== "/");
+    }
+    if (parsed.hostname.includes("pinimg.com")) {
+      return Boolean(path);
+    }
+  }
+
+  if (platform === "youtube") {
+    if (parsed.hostname.includes("youtu.be")) {
+      return Boolean(path);
+    }
+    return Boolean(parsed.searchParams.get("v") || /\/(?:shorts|live)\/[a-zA-Z0-9_-]+/i.test(path));
+  }
+
+  if (platform === "tiktok") {
+    return Boolean(path && path !== "/");
+  }
+
+  if (platform === "instagram") {
+    return Boolean(path && path !== "/");
+  }
+
+  if (platform === "x") {
+    return Boolean(path && path !== "/");
+  }
+
+  return true;
 }
 
 export function formatDuration(sec: number): string {
@@ -177,7 +236,19 @@ export function getRecordThumbnail(item: { thumbnailUrl?: string; url?: string; 
  */
 export function cleanMediaUrl(rawUrl: string): string {
   if (!rawUrl) return "";
-  const trimmed = rawUrl.trim();
+  let trimmed = rawUrl.trim();
+
+  // If text contains surrounding words/labels, extract the URL substring first
+  if (!/^https?:\/\//i.test(trimmed)) {
+    const match = trimmed.match(/https?:\/\/[^\s]+/i);
+    if (match) {
+      trimmed = match[0];
+    }
+  }
+
+  // Strip wrapping punctuation e.g. "(https://...)" or "https://...)"
+  trimmed = stripWrappingPunctuation(trimmed);
+
   try {
     const parsed = new URL(trimmed);
 
@@ -207,7 +278,32 @@ export function cleanMediaUrl(rawUrl: string): string {
       return parsed.toString();
     }
 
-    // 2. TikTok / Instagram / X / Pinterest
+    // 2. Pinterest
+    if (/pinterest\.com|pin\.it|pinimg\.com/i.test(parsed.hostname)) {
+      // pin.it shortlink: https://pin.it/XXXX
+      if (parsed.hostname.includes("pin.it")) {
+        const pinId = parsed.pathname.replace(/^\//, "").split(/[/?#]/)[0];
+        if (pinId) return `https://pin.it/${pinId}`;
+      }
+
+      // pinterest.com/pin/123456...
+      const pinMatch = parsed.pathname.match(/\/pin\/([0-9]+)/i);
+      if (pinMatch) {
+        return `https://www.pinterest.com/pin/${pinMatch[1]}/`;
+      }
+
+      // Strip common tracking queries from other pinterest URLs
+      const trackingParams = [
+        "si", "utm_source", "utm_medium", "utm_campaign",
+        "utm_term", "utm_content", "fbclid", "nic_v3", "invite_code", "sender"
+      ];
+      for (const param of trackingParams) {
+        parsed.searchParams.delete(param);
+      }
+      return parsed.toString();
+    }
+
+    // 3. TikTok / Instagram / X
     // Strip common tracking queries
     const trackingParams = [
       "si", "igsh", "utm_source", "utm_medium", "utm_campaign",
@@ -227,11 +323,11 @@ export function cleanMediaUrl(rawUrl: string): string {
  */
 export function extractMultipleUrls(text: string): string[] {
   if (!text) return [];
-  const lines = text.split(/[\r\n\s]+/);
+  const urlMatches = text.match(/https?:\/\/[^\s]+/gi) || [];
   const validUrls: string[] = [];
   const seen = new Set<string>();
 
-  for (const raw of lines) {
+  for (const raw of urlMatches) {
     const cleaned = cleanMediaUrl(raw);
     if (cleaned && isSupportedMediaUrl(cleaned) && !seen.has(cleaned)) {
       seen.add(cleaned);
@@ -309,5 +405,70 @@ export function getErrorMessage(err: unknown): string {
     return (err as { message: string }).message;
   }
   return String(err);
+}
+
+/**
+ * Validates start and end boundaries for video trimming
+ */
+export function validateTrimRange(
+  startSec: number,
+  endSec: number,
+  totalDuration?: number
+): { valid: boolean; error?: string } {
+  if (isNaN(startSec) || isNaN(endSec)) {
+    return { valid: false, error: "Timecodes must be valid numbers" };
+  }
+  if (startSec < 0) {
+    return { valid: false, error: "Start time cannot be negative" };
+  }
+  if (endSec <= startSec) {
+    return { valid: false, error: "End time must be greater than start time" };
+  }
+  if (endSec - startSec < 0.1) {
+    return { valid: false, error: "Trim duration must be at least 0.1 seconds" };
+  }
+  if (typeof totalDuration === "number" && totalDuration > 0) {
+    if (startSec >= totalDuration) {
+      return { valid: false, error: "Start time cannot exceed or equal total video duration" };
+    }
+    if (endSec > totalDuration + 0.5) {
+      return { valid: false, error: "End time cannot exceed total video duration" };
+    }
+  }
+  return { valid: true };
+}
+
+/**
+ * Validates an array of split segments for duration and ordering
+ */
+export function validateSplitSegments(
+  segments: { partIndex?: number; start: string; end: string }[],
+  totalDuration?: number
+): { valid: boolean; error?: string } {
+  if (!segments || segments.length === 0) {
+    return { valid: false, error: "At least one segment is required" };
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const startSec = timestampToSeconds(s.start);
+    const endSec = timestampToSeconds(s.end);
+
+    if (endSec <= startSec) {
+      return {
+        valid: false,
+        error: `Segment ${s.partIndex ?? i + 1} has invalid range: start (${s.start}) must be before end (${s.end})`,
+      };
+    }
+
+    if (typeof totalDuration === "number" && totalDuration > 0 && endSec > totalDuration + 1) {
+      return {
+        valid: false,
+        error: `Segment ${s.partIndex ?? i + 1} end (${s.end}) exceeds total duration (${secondsToTimestamp(totalDuration)})`,
+      };
+    }
+  }
+
+  return { valid: true };
 }
 

@@ -181,4 +181,15 @@ export interface TrimStreamRequest {
   author?: string;
 }
 
+export interface LogEntry {
+  id: number;
+  taskId?: string | null;
+  level: "INFO" | "WARN" | "ERROR" | string;
+  category: string;
+  message: string;
+  details?: string | null;
+  createdAt: string;
+}
+
+
 

@@ -2,6 +2,7 @@ pub mod binaries;
 pub mod db;
 pub mod downloader;
 pub mod image_extractor;
+pub mod logger;
 pub mod metadata;
 pub mod models;
 
@@ -10,7 +11,7 @@ use tauri::{AppHandle, State};
 use db::Database;
 use downloader::ProcessManager;
 use models::{
-    AppSettings, BinariesStatus, DownloadRecord, SplitLocalRequest, SplitStreamRequest, TimeRange,
+    AppSettings, BinariesStatus, DownloadRecord, LogEntry, SplitLocalRequest, SplitStreamRequest, TimeRange,
     TrimStreamRequest, TrimVideoRequest, VideoInfo,
 };
 
@@ -167,6 +168,26 @@ async fn trim_stream_video(
     downloader::trim_stream_video_exact(app, state.db.clone(), state.process_mgr.clone(), req).await
 }
 
+#[tauri::command]
+fn get_recent_logs(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+    level: Option<String>,
+) -> Result<Vec<LogEntry>, String> {
+    state.db.get_recent_logs(limit.unwrap_or(100), level.as_deref())
+}
+
+#[tauri::command]
+fn clear_app_logs(state: State<'_, AppState>) -> Result<bool, String> {
+    state.db.clear_logs().map(|_| true)
+}
+
+#[tauri::command]
+fn open_logs_folder() -> bool {
+    let logs_dir = logger::get_logs_dir();
+    open_in_explorer(logs_dir.to_string_lossy().to_string())
+}
+
 fn uuid_short() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
@@ -211,6 +232,9 @@ pub fn run() {
             split_stream_video,
             trim_local_video,
             trim_stream_video,
+            get_recent_logs,
+            clear_app_logs,
+            open_logs_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xDownloader application");

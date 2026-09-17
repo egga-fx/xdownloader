@@ -30,6 +30,7 @@ import {
   detectPlatform,
   isSupportedMediaUrl,
   getErrorMessage,
+  validateSplitSegments,
 } from "../lib/utils";
 import {
   splitLocalVideo,
@@ -243,6 +244,12 @@ export const VideoSplitterModal: React.FC<VideoSplitterModalProps> = ({
   const handleStartSplit = async () => {
     if (segmentsToProcess.length === 0) {
       setErrorMsg("No segments specified to split.");
+      return;
+    }
+
+    const validation = validateSplitSegments(segmentsToProcess, totalDurationSec);
+    if (!validation.valid) {
+      setErrorMsg(validation.error || "Invalid split segments.");
       return;
     }
 

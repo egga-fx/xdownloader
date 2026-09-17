@@ -46,28 +46,13 @@ fn sanitize_name(name: &str) -> String {
 }
 
 /// 1. Pinterest Image Extractor
-pub async fn extract_pinterest_image(url: &str) -> Result<ImageMediaBundle, String> {
-    let client = create_http_client();
-    let resp = client
-        .get(url)
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        )
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-        .header("Accept-Language", "en-US,en;q=0.9")
-        .send()
-        .await
-        .map_err(|e| format!("Pinterest request failed: {}", e))?;
-
-    let html = resp.text().await.map_err(|e| format!("Failed to read Pinterest HTML: {}", e))?;
-
+pub fn parse_pinterest_html(html: &str, url: &str) -> Result<ImageMediaBundle, String> {
     // Extract original / high-resolution image URL from HTML / embedded script
     let mut found_img: Option<String> = None;
 
     // 1. Check embedded JSON for images_orig
     let orig_re = Regex::new(r#""images_orig"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)""#).unwrap();
-    if let Some(caps) = orig_re.captures(&html) {
+    if let Some(caps) = orig_re.captures(html) {
         if let Some(m) = caps.get(1) {
             found_img = Some(m.as_str().to_string());
         }
@@ -76,7 +61,7 @@ pub async fn extract_pinterest_image(url: &str) -> Result<ImageMediaBundle, Stri
     // 2. Check imageLargeUrl
     if found_img.is_none() {
         let large_re = Regex::new(r#""imageLargeUrl"\s*:\s*"([^"]+)""#).unwrap();
-        if let Some(caps) = large_re.captures(&html) {
+        if let Some(caps) = large_re.captures(html) {
             if let Some(m) = caps.get(1) {
                 found_img = Some(m.as_str().to_string());
             }
@@ -85,11 +70,9 @@ pub async fn extract_pinterest_image(url: &str) -> Result<ImageMediaBundle, Stri
 
     // 3. Check link rel="preload" as="image"
     if found_img.is_none() {
-        let link_re = Regex::new(r#"<link\s+[^>]*rel="preload"[^>]*href="([^"]+)"[^>]*as="image""#)
-            .or_else(|_| Regex::new(r#"<link\s+[^>]*href="([^"]+)"[^>]*rel="preload""#))
-            .unwrap();
-        if let Some(caps) = link_re.captures(&html) {
-            if let Some(m) = caps.get(1) {
+        let link_re = Regex::new(r#"<link\s+[^>]*href="([^"]+)"[^>]*rel="preload"|<link\s+[^>]*rel="preload"[^>]*href="([^"]+)""#).unwrap();
+        if let Some(caps) = link_re.captures(html) {
+            if let Some(m) = caps.get(1).or_else(|| caps.get(2)) {
                 let s = m.as_str();
                 if s.contains("pinimg.com") {
                     found_img = Some(s.to_string());
@@ -100,11 +83,9 @@ pub async fn extract_pinterest_image(url: &str) -> Result<ImageMediaBundle, Stri
 
     // 4. Check og:image or twitter:image
     if found_img.is_none() {
-        let meta_re = Regex::new(r#"(?:property|name)="(?:og:image|twitter:image)"\s+content="([^"]+)""#)
-            .or_else(|_| Regex::new(r#"content="([^"]+)"\s+(?:property|name)="(?:og:image|twitter:image)""#))
-            .unwrap();
-        if let Some(caps) = meta_re.captures(&html) {
-            if let Some(m) = caps.get(1) {
+        let meta_re = Regex::new(r#"(?:property|name)="(?:og:image|twitter:image)"\s+content="([^"]+)"|content="([^"]+)"\s+(?:property|name)="(?:og:image|twitter:image)""#).unwrap();
+        if let Some(caps) = meta_re.captures(html) {
+            if let Some(m) = caps.get(1).or_else(|| caps.get(2)) {
                 found_img = Some(m.as_str().to_string());
             }
         }
@@ -113,7 +94,7 @@ pub async fn extract_pinterest_image(url: &str) -> Result<ImageMediaBundle, Stri
     // 5. Fallback: Any i.pinimg.com image URL in the page
     if found_img.is_none() {
         let general_re = Regex::new(r#"(https://i\.pinimg\.com/(?:originals|1200x|736x|564x|474x)/[a-zA-Z0-9/_.-]+\.(?:jpg|png|webp))"#).unwrap();
-        if let Some(caps) = general_re.captures(&html) {
+        if let Some(caps) = general_re.captures(html) {
             if let Some(m) = caps.get(1) {
                 found_img = Some(m.as_str().to_string());
             }
@@ -131,13 +112,19 @@ pub async fn extract_pinterest_image(url: &str) -> Result<ImageMediaBundle, Stri
         .replace("/236x/", "/originals/");
 
     // Extract Title from seoTitle or og:title
-    let title_re = Regex::new(r#""seoTitle"\s*:\s*"([^"]+)""#)
-        .or_else(|_| Regex::new(r#"property="og:title"\s+content="([^"]+)""#))
-        .unwrap();
-    let title = title_re
-        .captures(&html)
+    let title = Regex::new(r#""seoTitle"\s*:\s*"([^"]+)""#)
+        .unwrap()
+        .captures(html)
         .and_then(|c| c.get(1))
-        .map(|m| m.as_str().replace("&amp;", "&").replace("&quot;", "\"").to_string())
+        .map(|m| m.as_str().to_string())
+        .or_else(|| {
+            Regex::new(r#"(?:property="og:title"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:title")"#)
+                .unwrap()
+                .captures(html)
+                .and_then(|c| c.get(1).or_else(|| c.get(2)))
+                .map(|m| m.as_str().to_string())
+        })
+        .map(|s| s.replace("&amp;", "&").replace("&quot;", "\""))
         .unwrap_or_else(|| "Pinterest Pin".to_string());
 
     // Extract Pin ID from URL
@@ -166,104 +153,94 @@ pub async fn extract_pinterest_image(url: &str) -> Result<ImageMediaBundle, Stri
     })
 }
 
-/// 2. X (Twitter) Photo Extractor via VxTwitter & FxTwitter APIs
-pub async fn extract_x_photos(url: &str) -> Result<ImageMediaBundle, String> {
+pub async fn extract_pinterest_image(url: &str) -> Result<ImageMediaBundle, String> {
     let client = create_http_client();
-
-    // Extract status ID from X URL
-    let status_re = Regex::new(r"(?:twitter\.com|x\.com)/(?:#!/)?(\w+)/status/(\d+)").unwrap();
-    let caps = status_re
-        .captures(url)
-        .ok_or_else(|| "Invalid X/Twitter status URL".to_string())?;
-
-    let user = caps[1].to_string();
-    let tweet_id = caps[2].to_string();
-
-    // Try 1: VxTwitter API
-    let vx_url = format!("https://api.vxtwitter.com/{}/status/{}", user, tweet_id);
-    if let Ok(resp) = client
-        .get(&vx_url)
-        .header("Accept", "application/json")
+    let resp = client
+        .get(url)
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+        .header("Accept-Language", "en-US,en;q=0.9")
         .send()
         .await
-    {
-        if resp.status().is_success() {
-            if let Ok(json_val) = resp.json::<serde_json::Value>().await {
-                let text = json_val["text"].as_str().unwrap_or("X Photo").to_string();
-                let author_name = json_val["user_name"].as_str().unwrap_or(&user).to_string();
-                let screen_name = json_val["user_screen_name"].as_str().unwrap_or(&user).to_string();
+        .map_err(|e| format!("Pinterest request failed: {}", e))?;
 
-                let mut image_items: Vec<ImageMediaItem> = Vec::new();
-                if let Some(media_urls) = json_val["mediaURLs"].as_array() {
-                    for (idx, u) in media_urls.iter().enumerate() {
-                        if let Some(photo_url) = u.as_str() {
-                            let mut orig_url = photo_url.to_string();
-                            if orig_url.contains("name=") {
-                                orig_url = Regex::new(r"name=\w+")
-                                    .unwrap()
-                                    .replace(&orig_url, "name=orig")
-                                    .to_string();
-                            } else if !orig_url.contains("?") {
-                                orig_url.push_str("?name=orig");
-                            }
+    let html = resp.text().await.map_err(|e| format!("Failed to read Pinterest HTML: {}", e))?;
+    parse_pinterest_html(&html, url)
+}
 
-                            let ext = if orig_url.contains(".png") { "png" } else { "jpg" };
-                            let filename = format!("{}_photo_{:02}.{}", tweet_id, idx + 1, ext);
-                            image_items.push(ImageMediaItem {
-                                url: orig_url,
-                                filename,
-                            });
-                        }
-                    }
+/// 2. X (Twitter) Photo Extractor via VxTwitter & FxTwitter APIs
+pub fn parse_x_vxtwitter_json(
+    json_val: &serde_json::Value,
+    url: &str,
+    user: &str,
+    tweet_id: &str,
+) -> Option<ImageMediaBundle> {
+    let text = json_val["text"].as_str().unwrap_or("X Photo").to_string();
+    let author_name = json_val["user_name"].as_str().unwrap_or(user).to_string();
+    let screen_name = json_val["user_screen_name"].as_str().unwrap_or(user).to_string();
+
+    let mut image_items: Vec<ImageMediaItem> = Vec::new();
+    if let Some(media_urls) = json_val["mediaURLs"].as_array() {
+        for (idx, u) in media_urls.iter().enumerate() {
+            if let Some(photo_url) = u.as_str() {
+                let mut orig_url = photo_url.to_string();
+                if orig_url.contains("name=") {
+                    orig_url = Regex::new(r"name=\w+")
+                        .unwrap()
+                        .replace(&orig_url, "name=orig")
+                        .to_string();
+                } else if !orig_url.contains("?") {
+                    orig_url.push_str("?name=orig");
                 }
 
-                if !image_items.is_empty() {
-                    let thumb = image_items[0].url.clone();
-                    let title = if text.trim().is_empty() {
-                        format!("X Photo by @{}", screen_name)
-                    } else {
-                        text.chars().take(80).collect()
-                    };
-
-                    return Ok(ImageMediaBundle {
-                        id: format!("x_{}", tweet_id),
-                        source_url: url.to_string(),
-                        title,
-                        author: format!("{} (@{})", author_name, screen_name),
-                        platform: "x".to_string(),
-                        thumbnail: thumb,
-                        images: image_items,
-                        audio_url: None,
-                    });
-                }
+                let ext = if orig_url.contains(".png") { "png" } else { "jpg" };
+                let filename = format!("{}_photo_{:02}.{}", tweet_id, idx + 1, ext);
+                image_items.push(ImageMediaItem {
+                    url: orig_url,
+                    filename,
+                });
             }
         }
     }
 
-    // Try 2: FxTwitter API Fallback
-    let fx_url = format!("https://api.fxtwitter.com/{}/status/{}", user, tweet_id);
-    let resp = client
-        .get(&fx_url)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to query tweet details: {}", e))?;
+    if !image_items.is_empty() {
+        let thumb = image_items[0].url.clone();
+        let title = if text.trim().is_empty() {
+            format!("X Photo by @{}", screen_name)
+        } else {
+            text.chars().take(80).collect()
+        };
 
-    if !resp.status().is_success() {
-        return Err(format!("Tweet API returned HTTP {}", resp.status()));
+        return Some(ImageMediaBundle {
+            id: format!("x_{}", tweet_id),
+            source_url: url.to_string(),
+            title,
+            author: format!("{} (@{})", author_name, screen_name),
+            platform: "x".to_string(),
+            thumbnail: thumb,
+            images: image_items,
+            audio_url: None,
+        });
     }
 
-    let json_val: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse tweet JSON: {}", e))?;
+    None
+}
 
+pub fn parse_x_fxtwitter_json(
+    json_val: &serde_json::Value,
+    url: &str,
+    user: &str,
+    tweet_id: &str,
+) -> Result<ImageMediaBundle, String> {
     let tweet = &json_val["tweet"];
     let text = tweet["text"].as_str().unwrap_or("X Photo").to_string();
     let author_name = tweet["author"]["name"]
         .as_str()
         .or_else(|| tweet["author"]["screen_name"].as_str())
-        .unwrap_or(&user)
+        .unwrap_or(user)
         .to_string();
 
     let photos = tweet["media"]["photos"].as_array();
@@ -315,57 +292,94 @@ pub async fn extract_x_photos(url: &str) -> Result<ImageMediaBundle, String> {
     })
 }
 
-/// 3. TikTok Photo Mode & Carousel Extractor
-#[derive(Deserialize)]
-struct TikWmData {
-    title: Option<String>,
-    images: Option<Vec<String>>,
-    music: Option<String>,
-    author: Option<TikWmAuthor>,
-}
-
-#[derive(Deserialize)]
-struct TikWmAuthor {
-    unique_id: Option<String>,
-    nickname: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct TikWmResponse {
-    code: i32,
-    data: Option<TikWmData>,
-}
-
-pub async fn extract_tiktok_photos(url: &str) -> Result<ImageMediaBundle, String> {
+pub async fn extract_x_photos(url: &str) -> Result<ImageMediaBundle, String> {
     let client = create_http_client();
-    let api_url = format!("https://www.tikwm.com/api/?url={}", url);
 
-    let resp = client
-        .get(&api_url)
+    // Extract status ID from X URL
+    let status_re = Regex::new(r"(?:twitter\.com|x\.com)/(?:#!/)?(\w+)/status/(\d+)").unwrap();
+    let caps = status_re
+        .captures(url)
+        .ok_or_else(|| "Invalid X/Twitter status URL".to_string())?;
+
+    let user = caps[1].to_string();
+    let tweet_id = caps[2].to_string();
+
+    // Try 1: VxTwitter API
+    let vx_url = format!("https://api.vxtwitter.com/{}/status/{}", user, tweet_id);
+    if let Ok(resp) = client
+        .get(&vx_url)
+        .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch TikTok details: {}", e))?;
+    {
+        if resp.status().is_success() {
+            if let Ok(json_val) = resp.json::<serde_json::Value>().await {
+                if let Some(bundle) = parse_x_vxtwitter_json(&json_val, url, &user, &tweet_id) {
+                    return Ok(bundle);
+                }
+            }
+        }
+    }
 
-    let res_obj: TikWmResponse = resp
+    // Try 2: FxTwitter API Fallback
+    let fx_url = format!("https://api.fxtwitter.com/{}/status/{}", user, tweet_id);
+    let resp = client
+        .get(&fx_url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to query tweet details: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Tweet API returned HTTP {}", resp.status()));
+    }
+
+    let json_val: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("Failed to parse TikTok photo response: {}", e))?;
+        .map_err(|e| format!("Failed to parse tweet JSON: {}", e))?;
 
+    parse_x_fxtwitter_json(&json_val, url, &user, &tweet_id)
+}
+
+/// 3. TikTok Photo Mode & Carousel Extractor
+#[derive(Deserialize)]
+pub struct TikWmData {
+    pub title: Option<String>,
+    pub images: Option<Vec<String>>,
+    pub music: Option<String>,
+    pub author: Option<TikWmAuthor>,
+}
+
+#[derive(Deserialize)]
+pub struct TikWmAuthor {
+    pub unique_id: Option<String>,
+    pub nickname: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct TikWmResponse {
+    pub code: i32,
+    pub data: Option<TikWmData>,
+}
+
+pub fn parse_tiktok_response(res_obj: &TikWmResponse, url: &str) -> Result<ImageMediaBundle, String> {
     if res_obj.code != 0 || res_obj.data.is_none() {
         return Err("TikTok did not return any media. The post might be private or removed.".to_string());
     }
 
-    let data = res_obj.data.unwrap();
-    let image_urls = data.images.unwrap_or_default();
+    let data = res_obj.data.as_ref().unwrap();
+    let image_urls = data.images.as_ref().cloned().unwrap_or_default();
 
     if image_urls.is_empty() {
         return Err("No photos found in this TikTok post.".to_string());
     }
 
-    let title = data.title.unwrap_or_else(|| "TikTok Photo Mode".to_string());
+    let title = data.title.clone().unwrap_or_else(|| "TikTok Photo Mode".to_string());
     let author_name = data
         .author
-        .and_then(|a| a.unique_id.or(a.nickname))
+        .as_ref()
+        .and_then(|a| a.unique_id.clone().or_else(|| a.nickname.clone()))
         .unwrap_or_else(|| "TikTok Creator".to_string());
 
     let mut images = Vec::new();
@@ -387,34 +401,37 @@ pub async fn extract_tiktok_photos(url: &str) -> Result<ImageMediaBundle, String
         platform: "tiktok".to_string(),
         thumbnail: thumb,
         images,
-        audio_url: data.music,
+        audio_url: data.music.clone(),
     })
 }
 
-/// 4. Instagram Image / Carousel Extractor via OpenGraph
-pub async fn extract_instagram_image(url: &str) -> Result<ImageMediaBundle, String> {
+pub async fn extract_tiktok_photos(url: &str) -> Result<ImageMediaBundle, String> {
     let client = create_http_client();
+    let api_url = format!("https://www.tikwm.com/api/?url={}", url);
 
-    // Use Facebook crawler User-Agent to bypass Instagram client-side rendering
     let resp = client
-        .get(url)
-        .header(
-            "User-Agent",
-            "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-        )
+        .get(&api_url)
         .send()
         .await
-        .map_err(|e| format!("Instagram request failed: {}", e))?;
+        .map_err(|e| format!("Failed to fetch TikTok details: {}", e))?;
 
-    let html = resp.text().await.map_err(|e| format!("Failed to read Instagram HTML: {}", e))?;
+    let res_obj: TikWmResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse TikTok photo response: {}", e))?;
 
+    parse_tiktok_response(&res_obj, url)
+}
+
+/// 4. Instagram Image / Carousel Extractor via OpenGraph
+pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, String> {
     // Extract og:image
     let img_re = Regex::new(r#"property="og:image"\s+content="([^"]+)""#)
         .or_else(|_| Regex::new(r#"content="([^"]+)"[^>]*property="og:image""#))
         .unwrap();
 
     let image_url = img_re
-        .captures(&html)
+        .captures(html)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().replace("&amp;", "&"))
         .ok_or_else(|| "Could not locate high-resolution image in this Instagram post".to_string())?;
@@ -422,7 +439,7 @@ pub async fn extract_instagram_image(url: &str) -> Result<ImageMediaBundle, Stri
     // Extract Title
     let title_re = Regex::new(r#"property="og:title"\s+content="([^"]+)""#).unwrap();
     let title = title_re
-        .captures(&html)
+        .captures(html)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().replace("&amp;", "&").replace("&quot;", "\""))
         .unwrap_or_else(|| "Instagram Post".to_string());
@@ -449,6 +466,24 @@ pub async fn extract_instagram_image(url: &str) -> Result<ImageMediaBundle, Stri
         }],
         audio_url: None,
     })
+}
+
+pub async fn extract_instagram_image(url: &str) -> Result<ImageMediaBundle, String> {
+    let client = create_http_client();
+
+    // Use Facebook crawler User-Agent to bypass Instagram client-side rendering
+    let resp = client
+        .get(url)
+        .header(
+            "User-Agent",
+            "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+        )
+        .send()
+        .await
+        .map_err(|e| format!("Instagram request failed: {}", e))?;
+
+    let html = resp.text().await.map_err(|e| format!("Failed to read Instagram HTML: {}", e))?;
+    parse_instagram_html(&html, url)
 }
 
 /// Main Dispatcher for fallback image extraction
@@ -639,7 +674,113 @@ pub async fn download_image_bundle(
 mod tests {
     use super::*;
 
+    // --- 1. Offline Deterministic Pure Parsing Tests ---
+
+    #[test]
+    fn test_parse_pinterest_html_offline() {
+        let mock_html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <link rel="preload" href="https://i.pinimg.com/736x/ab/cd/ef12345.jpg" as="image">
+                <meta property="og:title" content="Minimalist Architecture Design &amp; Ideas">
+            </head>
+            <body></body>
+            </html>
+        "#;
+        let url = "https://www.pinterest.com/pin/123456789012345678/";
+        let res = parse_pinterest_html(mock_html, url);
+        assert!(res.is_ok(), "Failed to parse Pinterest HTML: {:?}", res.err());
+        let bundle = res.unwrap();
+        assert_eq!(bundle.platform, "pinterest");
+        assert_eq!(bundle.title, "Minimalist Architecture Design & Ideas");
+        assert_eq!(bundle.images.len(), 1);
+        assert_eq!(bundle.images[0].url, "https://i.pinimg.com/originals/ab/cd/ef12345.jpg");
+    }
+
+    #[test]
+    fn test_parse_x_vxtwitter_json_offline() {
+        let json_val = serde_json::json!({
+            "text": "Stunning sunset in Kyoto #japan",
+            "user_name": "Kyoto Explorer",
+            "user_screen_name": "kyoto_exp",
+            "mediaURLs": [
+                "https://pbs.twimg.com/media/GAbc123.jpg?name=large",
+                "https://pbs.twimg.com/media/GAbc456.jpg?name=medium"
+            ]
+        });
+        let url = "https://x.com/kyoto_exp/status/123456789";
+        let res = parse_x_vxtwitter_json(&json_val, url, "kyoto_exp", "123456789");
+        assert!(res.is_some(), "VxTwitter parser returned None");
+        let bundle = res.unwrap();
+        assert_eq!(bundle.platform, "x");
+        assert_eq!(bundle.images.len(), 2);
+        assert!(bundle.images[0].url.ends_with("name=orig"));
+        assert!(bundle.images[1].url.ends_with("name=orig"));
+    }
+
+    #[test]
+    fn test_parse_tiktok_response_offline() {
+        let res_obj = TikWmResponse {
+            code: 0,
+            data: Some(TikWmData {
+                title: Some("Day in Tokyo Photolog".to_string()),
+                images: Some(vec![
+                    "https://p16-sign.tiktokcdn.com/obj/slide1.jpg".to_string(),
+                    "https://p16-sign.tiktokcdn.com/obj/slide2.jpg".to_string(),
+                    "https://p16-sign.tiktokcdn.com/obj/slide3.jpg".to_string(),
+                ]),
+                music: Some("https://sf16.tiktokcdn.com/music.mp3".to_string()),
+                author: Some(TikWmAuthor {
+                    unique_id: Some("traveler_tokyo".to_string()),
+                    nickname: Some("Tokyo Guide".to_string()),
+                }),
+            }),
+        };
+        let url = "https://www.tiktok.com/@traveler_tokyo/photo/7123456789";
+        let res = parse_tiktok_response(&res_obj, url);
+        assert!(res.is_ok(), "Failed to parse TikTok response: {:?}", res.err());
+        let bundle = res.unwrap();
+        assert_eq!(bundle.platform, "tiktok");
+        assert_eq!(bundle.images.len(), 3);
+        assert_eq!(bundle.title, "Day in Tokyo Photolog");
+        assert_eq!(bundle.author, "@traveler_tokyo");
+        assert!(bundle.audio_url.is_some());
+    }
+
+    #[test]
+    fn test_parse_instagram_html_offline() {
+        let mock_html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta property="og:image" content="https://scontent.cdninstagram.com/v/t51.2885-15/photo_highres.jpg?_nc_cat=1&amp;token=abc">
+                <meta property="og:title" content="Art Gallery Exhibition &quot;Moments&quot;">
+            </head>
+            <body></body>
+            </html>
+        "#;
+        let url = "https://www.instagram.com/p/Cxyz1234567/";
+        let res = parse_instagram_html(mock_html, url);
+        assert!(res.is_ok(), "Failed to parse Instagram HTML: {:?}", res.err());
+        let bundle = res.unwrap();
+        assert_eq!(bundle.platform, "instagram");
+        assert_eq!(bundle.title, "Art Gallery Exhibition \"Moments\"");
+        assert_eq!(bundle.images.len(), 1);
+        assert_eq!(bundle.images[0].url, "https://scontent.cdninstagram.com/v/t51.2885-15/photo_highres.jpg?_nc_cat=1&token=abc");
+    }
+
     #[tokio::test]
+    async fn test_dispatcher_routing_unsupported() {
+        let unsupported_url = "https://example.com/not_supported/photo.jpg";
+        let res = try_extract_image_media(unsupported_url).await;
+        assert!(res.is_err(), "Expected unsupported domain to return Err");
+    }
+
+    // --- 2. Live Network Integration Tests (Marked with #[ignore]) ---
+
+    #[tokio::test]
+    #[ignore = "requires external live network connectivity"]
     async fn test_extract_pinterest_image() {
         let url = "https://id.pinterest.com/pin/2040762329258273/";
         let result = extract_pinterest_image(url).await;
@@ -651,6 +792,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires external live network connectivity"]
     async fn test_extract_x_photos() {
         let url = "https://x.com/anggarasamvdr/status/2099374138796507472/photo/1";
         let result = extract_x_photos(url).await;
@@ -662,6 +804,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires external live network connectivity"]
     async fn test_extract_tiktok_photos() {
         let url = "https://www.tiktok.com/@ra_yuthk/photo/7509108491907239176";
         let result = extract_tiktok_photos(url).await;
@@ -672,6 +815,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires external live network connectivity"]
     async fn test_extract_instagram_image() {
         let url = "https://www.instagram.com/p/DdRWIrXmji_/?img_index=1";
         let result = extract_instagram_image(url).await;
@@ -683,7 +827,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatcher_routing() {
+    #[ignore = "requires external live network connectivity"]
+    async fn test_dispatcher_routing_live() {
         let pin_url = "https://id.pinterest.com/pin/2040762329258273/";
         let res = try_extract_image_media(pin_url).await;
         assert!(res.is_ok());

@@ -97,6 +97,7 @@ export function App() {
   // Settings & Native Binaries
   const [outputFolder, setOutputFolder] = useState<string>("");
   const [binariesStatus, setBinariesStatus] = useState<BinariesStatus | null>(null);
+  const [checkingBinaries, setCheckingBinaries] = useState<boolean>(true);
   const [setupModalOpen, setSetupModalOpen] = useState<boolean>(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
   const [aboutModalOpen, setAboutModalOpen] = useState<boolean>(false);
@@ -165,9 +166,11 @@ export function App() {
 
   // 1. Initial Load: Binaries, Settings, Vault records & Updater check
   const loadInitialData = useCallback(async () => {
+    setCheckingBinaries(true);
     try {
       const status = await checkBinariesStatus();
       setBinariesStatus(status);
+      setCheckingBinaries(false);
       if (!status.ytdlp_installed || !status.ffmpeg_installed) {
         setSetupModalOpen(true);
       }
@@ -196,6 +199,7 @@ export function App() {
       }
     } catch (err) {
       console.error("Initial load error:", err);
+      setCheckingBinaries(false);
     }
   }, []);
 
@@ -246,18 +250,17 @@ export function App() {
 
   // 3. Handle URL Change & Auto-fetch Info
   const handleUrlChange = (newUrl: string) => {
-    const multiUrls = extractMultipleUrls(newUrl);
-    if (multiUrls.length > 1) {
-      // Multiple URLs pasted at once! Queue all of them sequentially
-      setUrl("");
-      showToast(`Batch queued: ${multiUrls.length} videos`);
-      for (const itemUrl of multiUrls) {
-        handleStartDownload(itemUrl);
-      }
-      return;
+    // If text contains a valid media URL (or multiple), extract the target media URL
+    const extracted = extractMultipleUrls(newUrl);
+    let target = newUrl.trim();
+    if (extracted.length === 1) {
+      target = extracted[0];
+    } else if (extracted.length > 1) {
+      target = extracted[0];
+      showToast(`Detected ${extracted.length} media links. Displaying first link.`);
     }
 
-    const clean = cleanMediaUrl(newUrl);
+    const clean = cleanMediaUrl(target);
     setUrl(clean);
     currentUrlRef.current = clean;
     setError(null);
@@ -551,6 +554,7 @@ export function App() {
         onPickFolder={handlePickFolder}
         onOpenFolder={() => handleOpenFolder()}
         binariesStatus={binariesStatus}
+        checkingBinaries={checkingBinaries}
         onOpenBinarySetup={() => setSetupModalOpen(true)}
         vaultOpen={vaultOpen}
         onToggleVault={() => setVaultOpen(!vaultOpen)}
@@ -564,15 +568,15 @@ export function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-grow overflow-y-auto flex flex-col items-center justify-start px-4 py-8 sm:py-12">
-        <div className="w-full max-w-3xl flex flex-col items-center gap-6 my-auto">
+      <main className="flex-grow overflow-y-auto flex flex-col items-center justify-start px-4 py-4 sm:py-6">
+        <div className="w-full max-w-2xl flex flex-col items-center gap-4 sm:gap-5 my-auto">
           {/* Display Title with Kinetic Aurora & Ambient Flare */}
-          <div className="relative text-center flex flex-col items-center select-none py-2 group">
+          <div className="relative text-center flex flex-col items-center select-none py-1 group">
             {/* Ambient Cosmic Flare Aura */}
             <div className="absolute -inset-x-16 -inset-y-10 bg-gradient-to-r from-blue-600/25 via-indigo-500/30 to-cyan-400/25 rounded-full title-glow-aura pointer-events-none group-hover:opacity-75 transition-opacity duration-700" />
 
             {/* Kinetic Aurora Wordmark */}
-            <h1 className="relative text-5xl sm:text-6xl font-black tracking-tight title-animated-gradient cursor-default">
+            <h1 className="relative text-4xl sm:text-5xl font-black tracking-tight title-animated-gradient cursor-default">
               xDownloader
             </h1>
           </div>
@@ -705,6 +709,7 @@ export function App() {
         open={setupModalOpen}
         onClose={() => setSetupModalOpen(false)}
         status={binariesStatus}
+        checking={checkingBinaries}
         onRefresh={loadInitialData}
       />
 

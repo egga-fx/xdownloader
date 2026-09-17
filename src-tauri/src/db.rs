@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use crate::models::{AppSettings, DownloadRecord};
+use crate::models::{AppSettings, DownloadRecord, LogEntry};
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -80,6 +80,20 @@ impl Database {
             [],
         )
         .map_err(|e| format!("Failed to create settings table: {}", e))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS task_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                level TEXT NOT NULL,
+                category TEXT NOT NULL,
+                message TEXT NOT NULL,
+                details TEXT,
+                created_at TEXT NOT NULL
+            );",
+            [],
+        )
+        .map_err(|e| format!("Failed to create task_logs table: {}", e))?;
 
         // Auto-migration: ensure time_range columns exist for partial clips
         let _ = conn.execute("ALTER TABLE downloads ADD COLUMN time_range_start TEXT;", []);
@@ -294,6 +308,79 @@ impl Database {
         )
         .map_err(|e| format!("Failed to save settings: {}", e))?;
 
+        Ok(())
+    }
+
+    pub fn log_event(
+        &self,
+        task_id: &str,
+        level: &str,
+        category: &str,
+        message: &str,
+        details: Option<&str>,
+    ) -> Result<(), String> {
+        // 1. Dual-Sink: Write to disk file
+        crate::logger::write_file_log(level, category, task_id, message);
+
+        // 2. Dual-Sink: Write to SQLite table
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        let now_str = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO task_logs (task_id, level, category, message, details, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![task_id, level, category, message, details, now_str],
+        )
+        .map_err(|e| format!("Failed to insert log entry: {}", e))?;
+
+        Ok(())
+    }
+
+    pub fn get_recent_logs(
+        &self,
+        limit: u32,
+        level_filter: Option<&str>,
+    ) -> Result<Vec<LogEntry>, String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        let limit_val = if limit == 0 { 100 } else { limit };
+
+        let mut query = "SELECT id, task_id, level, category, message, details, created_at FROM task_logs".to_string();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(level) = level_filter {
+            if !level.is_empty() && level != "ALL" {
+                query.push_str(" WHERE level = ?1");
+                params_vec.push(Box::new(level.to_uppercase()));
+            }
+        }
+
+        query.push_str(&format!(" ORDER BY id DESC LIMIT {}", limit_val));
+
+        let params_slice: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = conn.prepare(&query).map_err(|e| format!("Failed to prepare logs query: {}", e))?;
+
+        let entries = stmt
+            .query_map(params_slice.as_slice(), |row| {
+                Ok(LogEntry {
+                    id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    level: row.get(2)?,
+                    category: row.get(3)?,
+                    message: row.get(4)?,
+                    details: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query logs: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(entries)
+    }
+
+    pub fn clear_logs(&self) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        conn.execute("DELETE FROM task_logs", [])
+            .map_err(|e| format!("Failed to clear task logs: {}", e))?;
         Ok(())
     }
 }
