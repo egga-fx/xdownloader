@@ -1,6 +1,6 @@
 [package]
 name = "xdownloader"
-version = "1.0.1"
+version = "1.0.2"
 description = "xDownloader — Fast, Multi-Platform Desktop Media Studio Downloader"
 authors = ["efx", "Masagi"]
 edition = "2021"
