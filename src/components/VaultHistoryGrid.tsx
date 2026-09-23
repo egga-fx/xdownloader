@@ -1,17 +1,14 @@
 import {
-  Play,
-  FolderOpen,
-  Copy,
-  Trash2,
   XCircle,
   Film,
   Music,
   Clock,
   Loader2,
   AlertTriangle,
-  Scissors,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
+import { VaultItemActions } from "./VaultItemActions";
+import { CarouselThumbnailStack, getCarouselSlideCount } from "./CarouselThumbnailStack";
 import {
   formatDuration,
   formatFileSize,
@@ -29,6 +26,7 @@ interface VaultHistoryGridProps {
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
   onSplitRecord?: (record: DownloadRecord) => void;
+  onRetryRecord?: (record: DownloadRecord) => void;
 }
 
 export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
@@ -40,6 +38,7 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
   onCopyPath,
   onDeleteRecord,
   onSplitRecord,
+  onRetryRecord,
 }) => {
   return (
     <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -103,66 +102,88 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 : "border-[#27272a] hover:border-[#3f3f46]"
             }`}
           >
-            {/* Thumbnail */}
-            <div
-              onClick={() => !corruptOrMissing && onSelectRecord(item)}
-              className={`relative w-full aspect-video bg-[#09090b] rounded-t-md overflow-hidden transition-all ${
-                corruptOrMissing
-                  ? "grayscale saturate-0 opacity-50 contrast-75 cursor-not-allowed"
-                  : "cursor-pointer"
-              }`}
-            >
-              {thumb ? (
-                <img
-                  src={thumb}
-                  alt={item.title}
-                  referrerPolicy="no-referrer"
-                  className={`w-full h-full object-cover ${
-                    corruptOrMissing ? "grayscale saturate-0" : ""
-                  }`}
-                />
-              ) : (
+            {/* Thumbnail (Stacked for carousel, standard single for other formats) */}
+            {(() => {
+              const slideCount = getCarouselSlideCount(item);
+              if (slideCount) {
+                return (
+                  <div
+                    onClick={() => !corruptOrMissing && onSelectRecord(item)}
+                    className={`relative w-full aspect-video rounded-t-md overflow-hidden transition-all ${
+                      corruptOrMissing ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                    }`}
+                  >
+                    <CarouselThumbnailStack
+                      record={item}
+                      slideCount={slideCount}
+                      corruptOrMissing={corruptOrMissing}
+                    />
+                  </div>
+                );
+              }
+
+              return (
                 <div
-                  className={`w-full h-full flex items-center justify-center text-[#71717a] ${
-                    corruptOrMissing ? "grayscale saturate-0" : ""
+                  onClick={() => !corruptOrMissing && onSelectRecord(item)}
+                  className={`relative w-full aspect-video bg-[#09090b] rounded-t-md overflow-hidden transition-all ${
+                    corruptOrMissing
+                      ? "grayscale saturate-0 opacity-50 contrast-75 cursor-not-allowed"
+                      : "cursor-pointer"
                   }`}
                 >
-                  {item.formatType === "audio" ? (
-                    <Music className="w-6 h-6" />
+                  {thumb ? (
+                    <img
+                      src={thumb}
+                      alt={item.title}
+                      referrerPolicy="no-referrer"
+                      className={`w-full h-full object-cover ${
+                        corruptOrMissing ? "grayscale saturate-0" : ""
+                      }`}
+                    />
                   ) : (
-                    <Film className="w-6 h-6" />
+                    <div
+                      className={`w-full h-full flex items-center justify-center text-[#71717a] ${
+                        corruptOrMissing ? "grayscale saturate-0" : ""
+                      }`}
+                    >
+                      {item.formatType === "audio" ? (
+                        <Music className="w-6 h-6" />
+                      ) : (
+                        <Film className="w-6 h-6" />
+                      )}
+                    </div>
                   )}
-                </div>
-              )}
 
-              {/* Status Badge in bottom-right corner */}
-              <div
-                className={`absolute bottom-2 right-2 px-1.5 py-0.5 rounded text-[10px] font-extrabold flex items-center gap-1 ${
-                  corruptOrMissing
-                    ? "bg-red-600/90 text-white"
-                    : "bg-black/80 backdrop-blur-sm text-white"
-                }`}
-              >
-                {!item.exists ? (
-                  <>
-                    <AlertTriangle className="w-3 h-3 text-white" />
-                    <span>NOT FOUND</span>
-                  </>
-                ) : item.status === "error" ? (
-                  <>
-                    <AlertTriangle className="w-3 h-3 text-white" />
-                    <span>ERROR</span>
-                  </>
-                ) : item.durationSec > 0 ? (
-                  <>
-                    <Clock className="w-3 h-3 text-blue-400" />
-                    <span>{formatDuration(item.durationSec)}</span>
-                  </>
-                ) : (
-                  item.formatType.toUpperCase()
-                )}
-              </div>
-            </div>
+                  {/* Status Badge in bottom-right corner */}
+                  <div
+                    className={`absolute bottom-2 right-2 px-1.5 py-0.5 rounded text-[10px] font-extrabold flex items-center gap-1 ${
+                      corruptOrMissing
+                        ? "bg-red-600/90 text-white"
+                        : "bg-black/80 backdrop-blur-sm text-white"
+                    }`}
+                  >
+                    {!item.exists ? (
+                      <>
+                        <AlertTriangle className="w-3 h-3 text-white" />
+                        <span>NOT FOUND</span>
+                      </>
+                    ) : item.status === "error" ? (
+                      <>
+                        <AlertTriangle className="w-3 h-3 text-white" />
+                        <span>ERROR</span>
+                      </>
+                    ) : item.durationSec > 0 ? (
+                      <>
+                        <Clock className="w-3 h-3 text-blue-400" />
+                        <span>{formatDuration(item.durationSec)}</span>
+                      </>
+                    ) : (
+                      item.formatType.toUpperCase()
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Info Card Content */}
             <div className="p-3 flex flex-col flex-grow justify-between gap-2.5">
@@ -193,60 +214,17 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 </div>
               </div>
 
-              {/* Action Bar */}
-              <div className="pt-2 border-t border-[#27272a] flex items-center justify-between">
-                <div className="flex items-center gap-1">
-                  {item.exists && (
-                    <button
-                      onClick={() => onSelectRecord(item)}
-                      className="w-7 h-7 rounded-md text-[#71717a] hover:text-blue-400 hover:bg-blue-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                      title="Preview Media"
-                    >
-                      <Play className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  {item.exists && onSplitRecord && (
-                    <button
-                      onClick={() => onSplitRecord(item)}
-                      className="w-7 h-7 rounded-md text-[#71717a] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                      title="Split Video"
-                    >
-                      <Scissors className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  {item.exists && (
-                    <button
-                      onClick={() => onOpenFolder(item)}
-                      className="w-7 h-7 rounded-md text-[#71717a] hover:text-[#a1a1aa] hover:bg-[#27272a] flex items-center justify-center cursor-pointer transition-colors"
-                      title="Open Folder"
-                    >
-                      <FolderOpen className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  {item.exists && item.filePath && (
-                    <button
-                      onClick={() => onCopyPath(item.filePath)}
-                      className="w-7 h-7 rounded-md text-[#71717a] hover:text-[#a1a1aa] hover:bg-[#27272a] flex items-center justify-center cursor-pointer transition-colors"
-                      title="Copy File Path"
-                    >
-                      <Copy className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Delete button: bypasses dialog if corrupt or missing */}
-                <button
-                  onClick={() => onDeleteRecord(item)}
-                  className={`w-7 h-7 rounded-md flex items-center justify-center cursor-pointer transition-colors ${
-                    corruptOrMissing
-                      ? "text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                      : "text-[#71717a] hover:text-red-400 hover:bg-red-500/10"
-                  }`}
-                  title={corruptOrMissing ? "Remove broken record" : "Delete"}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
+              {/* Consolidated Action Bar: Play + Show in Folder / Download direct on left, other actions in More menu on right */}
+              <VaultItemActions
+                record={item}
+                onSelectRecord={onSelectRecord}
+                onOpenFolder={onOpenFolder}
+                onCopyPath={onCopyPath}
+                onDeleteRecord={onDeleteRecord}
+                onSplitRecord={onSplitRecord}
+                onRetry={onRetryRecord}
+                layout="split"
+              />
             </div>
           </div>
         );

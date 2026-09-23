@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use regex::Regex;
@@ -212,18 +212,32 @@ pub async fn run_download(
             let clean = sanitize_filename(name.trim());
             out_dir.join(format!("{}.%(ext)s", clean))
         }
-        _ => out_dir.join("%(title)s [%(id)s].%(ext)s"),
+        _ => {
+            if url.contains("instagram.com") {
+                out_dir.join("%(upload_date>%Y%m%d_%H%M%S|upload_date)s_%(id)s.%(ext)s")
+            } else {
+                out_dir.join("%(title)s [%(id)s].%(ext)s")
+            }
+        }
     };
+
+    // Authoritative final file path detection via --print-to-file after_move:filepath
+    let meta_file_path = std::env::temp_dir().join(format!("xdownloader_{}.meta", task_id));
+    let _ = std::fs::remove_file(&meta_file_path);
 
     let mut cmd = Command::new(&ytdlp_path);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
+    cmd.current_dir(&out_dir);
     cmd.arg("--newline")
         .arg("--no-playlist")
         .arg("--no-warnings")
         .arg("-o")
-        .arg(out_template.to_string_lossy().to_string());
+        .arg(out_template.to_string_lossy().to_string())
+        .arg("--print-to-file")
+        .arg("after_move:filepath")
+        .arg(&meta_file_path);
 
     // Pass --ffmpeg-location so yt-dlp can reliably merge separate audio and video streams into a single mp4
     if let Some(ref ff_path) = ffmpeg_path {
@@ -279,11 +293,10 @@ pub async fn run_download(
         cmd.arg("--merge-output-format").arg("mp4");
     }
 
-    // Comprehensive Subtitles (manual + auto-generated AI captions)
+    // Subtitles: only request manual sub tracks without wildcard auto-subs to prevent HTTP 429 rate-limiting
     if download_subtitles {
         cmd.arg("--write-sub")
-            .arg("--write-auto-sub")
-            .arg("--sub-lang").arg("en,id,en.*,id.*")
+            .arg("--sub-lang").arg("en,id")
             .arg("--convert-subs").arg("srt");
         if format_type == "video" {
             cmd.arg("--embed-subs");
@@ -362,6 +375,29 @@ pub async fn run_download(
     let already_downloaded_regex = Regex::new(r"\[download\]\s+(.+)\s+has already been downloaded").unwrap();
 
     let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take();
+
+    let stderr_lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let stderr_lines_clone = stderr_lines.clone();
+
+    // Drain stderr in background thread to prevent pipe deadlock on Windows (4KB OS pipe buffer)
+    let stderr_handle = std::thread::spawn(move || {
+        if let Some(err_stream) = stderr {
+            let r = BufReader::new(err_stream);
+            for l in r.lines().flatten() {
+                let trimmed = l.trim().to_string();
+                if !trimmed.is_empty() {
+                    if let Ok(mut lock) = stderr_lines_clone.lock() {
+                        if lock.len() >= 50 {
+                            lock.remove(0);
+                        }
+                        lock.push(trimmed);
+                    }
+                }
+            }
+        }
+    });
+
     let reader = BufReader::new(stdout);
 
     let mut downloaded_path = String::new();
@@ -405,9 +441,67 @@ pub async fn run_download(
     }
 
     let status = child.wait().map_err(|e| format!("Process wait failed: {}", e))?;
+    let _ = stderr_handle.join();
     process_mgr.remove(&task_id);
 
     if status.success() {
+        // 1. Authoritative resolution: read exact path written by yt-dlp --print-to-file
+        if meta_file_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&meta_file_path) {
+                for line in content.lines() {
+                    let candidate = line.trim();
+                    if !candidate.is_empty() {
+                        let pb = PathBuf::from(candidate);
+                        if pb.exists() {
+                            downloaded_path = pb.to_string_lossy().to_string();
+                            break;
+                        }
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(&meta_file_path);
+        }
+
+        // 2. Fallback: resolve relative path against out_dir if needed
+        if downloaded_path.is_empty() || !Path::new(&downloaded_path).exists() {
+            if !downloaded_path.is_empty() {
+                let relative_candidate = out_dir.join(&downloaded_path);
+                if relative_candidate.exists() {
+                    downloaded_path = relative_candidate.to_string_lossy().to_string();
+                }
+            }
+        }
+
+        // 3. Fallback: locate by video ID or title if still unresolved
+        if downloaded_path.is_empty() || !Path::new(&downloaded_path).exists() {
+            if let Ok(entries) = std::fs::read_dir(&out_dir) {
+                let mut matched_file: Option<PathBuf> = None;
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_file() {
+                        let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                        if ["mp4", "webm", "mkv", "mp3", "m4a", "wav", "flac"].contains(&ext.as_str()) {
+                            let filename = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                            if let Some(ref custom) = custom_name {
+                                if filename.contains(custom) {
+                                    matched_file = Some(p);
+                                    break;
+                                }
+                            } else if let Some(yt_id) = extract_youtube_id(&url) {
+                                if filename.contains(&yt_id) {
+                                    matched_file = Some(p);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(found) = matched_file {
+                    downloaded_path = found.to_string_lossy().to_string();
+                }
+            }
+        }
+
         let file_size = if !downloaded_path.is_empty() {
             std::fs::metadata(&downloaded_path).map(|m| m.len() as i64).unwrap_or(0)
         } else {
@@ -450,6 +544,8 @@ pub async fn run_download(
         let _ = app.emit("download-progress", &final_task);
         Ok(())
     } else {
+        let _ = std::fs::remove_file(&meta_file_path);
+
         // Fallback: If yt-dlp failed (e.g. "No video formats found" on photo post), attempt native image extraction
         if format_type != "audio" {
             if let Ok(bundle) = crate::image_extractor::try_extract_image_media(&url).await {
@@ -470,7 +566,23 @@ pub async fn run_download(
             }
         }
 
-        let err_msg = format!("Download exited with code {:?}", status.code());
+        let last_err_line = {
+            let lock = stderr_lines.lock().ok();
+            lock.and_then(|lines| {
+                lines
+                    .iter()
+                    .rev()
+                    .find(|l| l.contains("ERROR:") || l.contains("Error") || l.contains("HTTP Error"))
+                    .cloned()
+                    .or_else(|| lines.last().cloned())
+            })
+        };
+
+        let err_msg = match last_err_line {
+            Some(msg) => format!("{}: {}", status.code().map(|c| format!("Code {}", c)).unwrap_or_else(|| "Error".to_string()), msg),
+            None => format!("Download exited with code {:?}", status.code()),
+        };
+
         let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
         let _ = db.log_event(
             &task_id,

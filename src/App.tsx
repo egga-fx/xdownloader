@@ -228,10 +228,12 @@ export function App() {
       setActiveTasks((prev) => {
         const next = new Map(prev);
         if (task.status === "completed" || task.status === "error") {
-          // If completed, refresh records from SQLite
+          // If completed or error, refresh records from SQLite
           loadRecords();
           if (task.status === "completed") {
             showToast(`Download finished: "${task.title}"`);
+          } else if (task.status === "error") {
+            showToast(`Download failed: "${task.title}"${task.error ? ` (${task.error})` : ""}`);
           }
           next.delete(task.taskId);
           // Auto-trigger next item from queue if slots available
@@ -293,7 +295,8 @@ export function App() {
       // Ensure user hasn't changed url while request was in-flight
       if (currentUrlRef.current.trim() === cleanTarget) {
         setVideoInfo(info);
-        setCustomName(info.title);
+        const cleanTitle = info.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
+        setCustomName(cleanTitle);
         if (info.description === "image") {
           setFormatType("image");
           setQuality("best");
@@ -365,7 +368,8 @@ export function App() {
         matchedInfo = freshInfo;
         if (currentUrlRef.current.trim() === targetUrl) {
           setVideoInfo(freshInfo);
-          setCustomName(freshInfo.title);
+          const cleanFreshTitle = freshInfo.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
+          setCustomName(cleanFreshTitle);
           if (freshInfo.description === "image") {
             setFormatType("image");
             setQuality("best");
@@ -516,6 +520,21 @@ export function App() {
       }
     } catch (err) {
       console.error("Failed to delete record:", err);
+    }
+  };
+
+  // 6b. Retry download for failed, error, or removed records
+  const handleRetryRecord = async (record: DownloadRecord) => {
+    try {
+      // 1. Delete old failed/missing record from vault database
+      await handleDeleteRecordDirectly(record.id, record.title);
+
+      // 2. Trigger fresh download in background
+      await handleStartDownload(record.url);
+      setVaultOpen(true);
+    } catch (err) {
+      console.error("Failed to retry download:", err);
+      showToast("Gagal memulai unduh ulang");
     }
   };
 
@@ -672,6 +691,7 @@ export function App() {
         onOpenFolder={(rec) => handleOpenFolder(rec)}
         onCopyPath={handleCopyPath}
         onDeleteRecordDirectly={handleDeleteRecordDirectly}
+        onRetryRecord={handleRetryRecord}
         onSplitRecord={(rec) =>
           handleOpenTrimmer({
             type: "local",

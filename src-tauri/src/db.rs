@@ -217,15 +217,39 @@ impl Database {
                     _ => None,
                 };
 
+                let mut title: String = row.get(3)?;
+                let format_type: String = row.get(7)?;
+
+                // Auto-detect multi-image carousel from sibling files if not in title
+                if format_type == "image" && !title.contains("[Carousel:") && (file_path.contains("_01.") || file_path.contains("_1.")) {
+                    let mut count = 1;
+                    if let Some((base, ext)) = file_path.rsplit_once('.') {
+                        if base.ends_with("_01") {
+                            let prefix = &base[..base.len() - 3];
+                            while Path::new(&format!("{}_{:02}.{}", prefix, count + 1, ext)).exists() {
+                                count += 1;
+                            }
+                        } else if base.ends_with("_1") {
+                            let prefix = &base[..base.len() - 2];
+                            while Path::new(&format!("{}_{}.{}", prefix, count + 1, ext)).exists() {
+                                count += 1;
+                            }
+                        }
+                    }
+                    if count > 1 {
+                        title = format!("{} [Carousel: {} Images]", title, count);
+                    }
+                }
+
                 Ok(DownloadRecord {
                     id: row.get(0)?,
                     platform: row.get(1)?,
                     url: row.get(2)?,
-                    title: row.get(3)?,
+                    title,
                     author: row.get(4)?,
                     duration_sec: row.get(5)?,
                     thumbnail_url: row.get(6)?,
-                    format_type: row.get(7)?,
+                    format_type,
                     quality: row.get(8)?,
                     file_path,
                     file_size_bytes: row.get(10)?,

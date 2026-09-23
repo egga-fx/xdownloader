@@ -345,9 +345,19 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
     const initialSlideIdx = imgIndexMatch ? Math.max(0, parseInt(imgIndexMatch[1], 10) - 1) : 0;
     const safeIdx = Math.min(initialSlideIdx, mockImages.length - 1);
 
+    const idMatch = cleanUrl.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
+    const postId = idMatch ? idMatch[1] : `ig_${Date.now().toString(36)}`;
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const tsStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+    const previewTitle = platform === "instagram"
+      ? `${tsStr}_${postId} [Carousel: 5 Images]`
+      : `${platform.toUpperCase()} Post [Carousel: 5 Images]`;
+
     return {
       id: `mock-${Date.now().toString(36)}`,
-      title: `${platform.toUpperCase()} Post [Carousel: 5 Images]`,
+      title: previewTitle,
       webpageUrl: cleanUrl,
       duration: 0,
       thumbnail: mockImages[safeIdx],
@@ -358,9 +368,19 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
     };
   }
 
+  const idMatch = cleanUrl.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
+  const postId = idMatch ? idMatch[1] : `ig_${Date.now().toString(36)}`;
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const tsStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+  const videoTitle = platform === "instagram"
+    ? `${tsStr}_${postId}`
+    : `Amazing ${platform.toUpperCase()} Viral Showcase (Preview Mode)`;
+
   return {
     id: `mock-${Date.now().toString(36)}`,
-    title: `Amazing ${platform.toUpperCase()} Viral Showcase (Preview Mode)`,
+    title: videoTitle,
     webpageUrl: cleanUrl,
     duration: 186,
     thumbnail:

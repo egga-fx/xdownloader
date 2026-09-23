@@ -464,6 +464,155 @@ pub async fn extract_tiktok_photos(url: &str) -> Result<ImageMediaBundle, String
     parse_tiktok_response(&res_obj, url)
 }
 
+/// Cleans raw text into a standard post caption/title.
+/// Strips quotes, hashtags, illegal filename characters, and collapses whitespace.
+pub fn clean_instagram_caption(raw: &str) -> Option<String> {
+    let mut text = raw
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">");
+
+    // If text is wrapped in pattern like: Username on Instagram: "Caption" or ...: "Caption"
+    if let Ok(quote_pattern) = Regex::new(r#"(?:on Instagram|likes?|comments?|Instagram photo by [^:]+)?:\s*["“]([^"”]+)["”]"#) {
+        if let Some(caps) = quote_pattern.captures(&text) {
+            if let Some(m) = caps.get(1) {
+                text = m.as_str().to_string();
+            }
+        }
+    }
+
+    // Take first line (before newline)
+    let first_line = text.lines().next().unwrap_or("").trim();
+    if first_line.is_empty() {
+        return None;
+    }
+
+    // Strip hashtags (e.g. #travel #bali)
+    let without_hashtags = if let Ok(hashtag_re) = Regex::new(r"#\S+") {
+        hashtag_re.replace_all(first_line, "").to_string()
+    } else {
+        first_line.to_string()
+    };
+
+    // Sanitize invalid filesystem characters
+    let sanitized: String = without_hashtags
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\n' | '\r' | '\t' => ' ',
+            _ => c,
+        })
+        .collect();
+
+    // Collapse multiple spaces into single space
+    let clean = if let Ok(ws_re) = Regex::new(r"\s+") {
+        ws_re.replace_all(&sanitized, " ").trim().to_string()
+    } else {
+        sanitized.trim().to_string()
+    };
+
+    // Filter out generic placeholders
+    let lower = clean.to_lowercase();
+    if lower.is_empty()
+        || lower.len() < 2
+        || lower == "instagram"
+        || lower == "instagram post"
+        || lower == "instagram video"
+        || lower == "instagram photo"
+        || lower == "instagram reel"
+        || lower == "untitled"
+        || lower == "untitled media"
+        || lower.starts_with("video by")
+        || lower.starts_with("post by")
+        || lower.starts_with("photo by")
+        || lower.starts_with("instagram photo by")
+        || lower.starts_with("instagram post by")
+        || lower.starts_with("instagram video by")
+    {
+        return None;
+    }
+
+    // Ensure at least 2 alphanumeric characters exist
+    let alnum_count = clean.chars().filter(|c| c.is_alphanumeric()).count();
+    if alnum_count < 2 {
+        return None;
+    }
+
+    // Limit length to max 50 characters to prevent excessive path lengths
+    let truncated: String = clean.chars().take(50).collect();
+    let final_clean = truncated.trim().to_string();
+    if final_clean.is_empty() {
+        None
+    } else {
+        Some(final_clean)
+    }
+}
+
+pub fn extract_instagram_html_timestamp(html: &str) -> String {
+    // 1. ISO 8601 timestamps in meta or JSON-LD
+    if let Ok(iso_re) = Regex::new(r#"(?:article:published_time|uploadDate|datePublished)"\s*(?::\s*"|content=")([^"T]+T[^"Z]+Z?)"#) {
+        if let Some(caps) = iso_re.captures(html) {
+            if let Some(m) = caps.get(1) {
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(m.as_str()) {
+                    return dt.format("%Y%m%d_%H%M%S").to_string();
+                }
+            }
+        }
+    }
+
+    // 2. UNIX timestamp in embedded json
+    if let Ok(ts_re) = Regex::new(r#""(?:taken_at_timestamp|upload_date)"\s*:\s*(\d{9,11})"#) {
+        if let Some(caps) = ts_re.captures(html) {
+            if let Some(m) = caps.get(1) {
+                if let Ok(ts) = m.as_str().parse::<i64>() {
+                    if let Some(dt) = chrono::DateTime::from_timestamp(ts, 0) {
+                        return dt.format("%Y%m%d_%H%M%S").to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: local now timestamp
+    chrono::Local::now().format("%Y%m%d_%H%M%S").to_string()
+}
+
+pub fn extract_instagram_json_timestamp(json_val: &serde_json::Value) -> String {
+    if let Some(ts) = json_val["timestamp"].as_i64() {
+        if let Some(dt) = chrono::DateTime::from_timestamp(ts, 0) {
+            return dt.format("%Y%m%d_%H%M%S").to_string();
+        }
+    }
+    if let Some(upload_date) = json_val["upload_date"].as_str() {
+        let clean = upload_date.trim();
+        if clean.len() == 8 && clean.chars().all(|c| c.is_ascii_digit()) {
+            return clean.to_string();
+        }
+    }
+    chrono::Local::now().format("%Y%m%d_%H%M%S").to_string()
+}
+
+pub fn format_instagram_standard_title(
+    timestamp_str: &str,
+    candidate_title: Option<&str>,
+    candidate_desc: Option<&str>,
+    post_id: &str,
+) -> String {
+    let clean_ts = timestamp_str.trim();
+
+    // Check candidate_desc first, then candidate_title
+    let maybe_clean = candidate_desc
+        .and_then(clean_instagram_caption)
+        .or_else(|| candidate_title.and_then(clean_instagram_caption));
+
+    match maybe_clean {
+        Some(title) if !title.is_empty() => format!("{}_{}", clean_ts, title),
+        _ => format!("{}_{}", clean_ts, post_id.trim()),
+    }
+}
+
 /// 4. Instagram Image / Carousel Extractor via OpenGraph & Embedded JSON
 pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, String> {
     let mut image_urls: Vec<String> = Vec::new();
@@ -535,28 +684,46 @@ pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
         return Err("Could not locate high-resolution image in this Instagram post".to_string());
     }
 
-    // Extract Title
-    let title_re = Regex::new(r#"property="og:title"\s+content="([^"]+)""#).unwrap();
-    let title = title_re
-        .captures(html)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().replace("&amp;", "&").replace("&quot;", "\""))
-        .unwrap_or_else(|| "Instagram Post".to_string());
-
-    let post_id_re = Regex::new(r"/(?:p|reel)/([A-Za-z0-9_-]+)").unwrap();
+    // Extract Post ID
+    let post_id_re = Regex::new(r"/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)").unwrap();
     let post_id = post_id_re
         .captures(url)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis().to_string());
 
+    let timestamp_str = extract_instagram_html_timestamp(html);
+
+    // Extract title / caption candidates
+    let title_re = Regex::new(r#"(?:property|name)="og:title"\s+content="([^"]+)"|content="([^"]+)"\s+(?:property|name)="og:title""#).unwrap();
+    let candidate_title = title_re
+        .captures(html)
+        .and_then(|c| c.get(1).or_else(|| c.get(2)))
+        .map(|m| m.as_str());
+
+    let desc_re = Regex::new(r#"(?:property|name)="(?:og:description|description)"\s+content="([^"]+)"|content="([^"]+)"\s+(?:property|name)="(?:og:description|description)""#).unwrap();
+    let candidate_desc = desc_re
+        .captures(html)
+        .and_then(|c| c.get(1).or_else(|| c.get(2)))
+        .map(|m| m.as_str());
+
+    let json_caption_re = Regex::new(r#""edge_media_to_caption"\s*:\s*\{.*?"text"\s*:\s*"([^"]+)""#).ok();
+    let json_desc = json_caption_re.as_ref().and_then(|re| re.captures(html)).and_then(|c| c.get(1)).map(|m| m.as_str());
+
+    let standard_title = format_instagram_standard_title(
+        &timestamp_str,
+        candidate_title,
+        json_desc.or(candidate_desc),
+        &post_id,
+    );
+
     let is_carousel = image_urls.len() > 1;
     let mut images: Vec<ImageMediaItem> = Vec::new();
     for (idx, u) in image_urls.iter().enumerate() {
         let filename = if is_carousel {
-            format!("instagram_{}_{:02}.jpg", post_id, idx + 1)
+            format!("{}_{:02}.jpg", standard_title, idx + 1)
         } else {
-            format!("instagram_{}.jpg", post_id)
+            format!("{}.jpg", standard_title)
         };
         images.push(ImageMediaItem {
             url: u.clone(),
@@ -569,7 +736,7 @@ pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
     Ok(ImageMediaBundle {
         id: format!("ig_{}", post_id),
         source_url: url.to_string(),
-        title,
+        title: standard_title,
         author: "Instagram".to_string(),
         platform: "instagram".to_string(),
         thumbnail,
@@ -693,11 +860,10 @@ pub async fn download_image_bundle(
 ) -> Result<String, String> {
     let client = create_http_client();
 
-    let clean_base_name = sanitize_name(
-        custom_name
-            .as_deref()
-            .unwrap_or(&bundle.title)
-    );
+    let raw_name = custom_name.as_deref().unwrap_or(&bundle.title);
+    let carousel_badge_re = Regex::new(r"(?i)\s*\[carousel:?\s*\d+\s*images?\]").unwrap();
+    let stripped = carousel_badge_re.replace_all(raw_name, "");
+    let clean_base_name = sanitize_name(stripped.trim());
 
     // Save directly into output_folder with sequential filenames without creating extra subfolders
     let target_dir = output_folder.to_path_buf();
@@ -802,12 +968,19 @@ pub async fn download_image_bundle(
         target_dir.to_string_lossy().to_string()
     };
 
+    let count = items_to_download.len();
+    let display_title = if count > 1 && !raw_name.contains("[Carousel:") {
+        format!("{} [Carousel: {} Images]", clean_base_name, count)
+    } else {
+        clean_base_name.to_string()
+    };
+
     // Save final record in SQLite database
     let record = DownloadRecord {
         id: task_id.to_string(),
         platform: bundle.platform.clone(),
         url: bundle.source_url.clone(),
-        title: bundle.title.clone(),
+        title: display_title,
         author: bundle.author.clone(),
         duration_sec: 0,
         thumbnail_url: bundle.thumbnail.clone(),
@@ -927,11 +1100,51 @@ mod tests {
     }
 
     #[test]
+    fn test_clean_instagram_caption() {
+        assert_eq!(
+            clean_instagram_caption("Art Gallery Exhibition \"Moments\""),
+            Some("Art Gallery Exhibition Moments".to_string())
+        );
+        assert_eq!(
+            clean_instagram_caption("User on Instagram: \"Amazing Tokyo sunset! #japan #travel\""),
+            Some("Amazing Tokyo sunset!".to_string())
+        );
+        // Generic titles rejected
+        assert_eq!(clean_instagram_caption("Video by username"), None);
+        assert_eq!(clean_instagram_caption("Instagram post by user"), None);
+        assert_eq!(clean_instagram_caption("Instagram"), None);
+        assert_eq!(clean_instagram_caption("#sunset #holiday"), None);
+        assert_eq!(clean_instagram_caption("❤️✨"), None);
+    }
+
+    #[test]
+    fn test_format_instagram_standard_title() {
+        // With meaningful caption
+        let res1 = format_instagram_standard_title(
+            "20240315_120000",
+            Some("Instagram post"),
+            Some("Exploring Mount Bromo at dawn #bromo"),
+            "Cxyz1234567",
+        );
+        assert_eq!(res1, "20240315_120000_Exploring Mount Bromo at dawn");
+
+        // Without caption or with generic title -> fallbacks to post_id
+        let res2 = format_instagram_standard_title(
+            "20240315_120000",
+            Some("Video by user"),
+            None,
+            "Cxyz1234567",
+        );
+        assert_eq!(res2, "20240315_120000_Cxyz1234567");
+    }
+
+    #[test]
     fn test_parse_instagram_html_offline() {
         let mock_html = r#"
             <!DOCTYPE html>
             <html>
             <head>
+                <meta property="article:published_time" content="2024-03-15T10:00:00Z">
                 <meta property="og:image" content="https://scontent.cdninstagram.com/v/t51.2885-15/photo_highres.jpg?_nc_cat=1&amp;token=abc">
                 <meta property="og:title" content="Art Gallery Exhibition &quot;Moments&quot;">
             </head>
@@ -943,9 +1156,31 @@ mod tests {
         assert!(res.is_ok(), "Failed to parse Instagram HTML: {:?}", res.err());
         let bundle = res.unwrap();
         assert_eq!(bundle.platform, "instagram");
-        assert_eq!(bundle.title, "Art Gallery Exhibition \"Moments\"");
+        assert_eq!(bundle.title, "20240315_100000_Art Gallery Exhibition Moments");
         assert_eq!(bundle.images.len(), 1);
         assert_eq!(bundle.images[0].url, "https://scontent.cdninstagram.com/v/t51.2885-15/photo_highres.jpg?_nc_cat=1&token=abc");
+        assert_eq!(bundle.images[0].filename, "20240315_100000_Art Gallery Exhibition Moments.jpg");
+    }
+
+    #[test]
+    fn test_parse_instagram_html_fallback_to_id() {
+        let mock_html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta property="article:published_time" content="2024-03-15T10:00:00Z">
+                <meta property="og:image" content="https://scontent.cdninstagram.com/v/t51.2885-15/photo_highres.jpg?_nc_cat=1&amp;token=abc">
+                <meta property="og:title" content="Instagram">
+            </head>
+            <body></body>
+            </html>
+        "#;
+        let url = "https://www.instagram.com/p/Cxyz1234567/";
+        let res = parse_instagram_html(mock_html, url);
+        assert!(res.is_ok());
+        let bundle = res.unwrap();
+        assert_eq!(bundle.title, "20240315_100000_Cxyz1234567");
+        assert_eq!(bundle.images[0].filename, "20240315_100000_Cxyz1234567.jpg");
     }
 
     #[test]
@@ -973,6 +1208,7 @@ mod tests {
             <!DOCTYPE html>
             <html>
             <head>
+                <meta property="article:published_time" content="2024-03-15T10:00:00Z">
                 <meta property="og:title" content="Tokyo City Walk Highlights">
                 <script type="application/json">
                     {
@@ -994,11 +1230,14 @@ mod tests {
         assert!(res.is_ok(), "Failed to parse Instagram Carousel: {:?}", res.err());
         let bundle = res.unwrap();
         assert_eq!(bundle.platform, "instagram");
+        assert_eq!(bundle.title, "20240315_100000_Tokyo City Walk Highlights");
         assert_eq!(bundle.images.len(), 3);
         assert_eq!(bundle.images[0].url, "https://scontent.cdninstagram.com/slide1.jpg?token=1&v=1");
         assert_eq!(bundle.images[1].url, "https://scontent.cdninstagram.com/slide2.jpg?token=2&v=2");
         assert_eq!(bundle.images[2].url, "https://scontent.cdninstagram.com/slide3.jpg?token=3&v=3");
-        assert_eq!(bundle.images[0].filename, "instagram_Tokyo123456_01.jpg");
+        assert_eq!(bundle.images[0].filename, "20240315_100000_Tokyo City Walk Highlights_01.jpg");
+        assert_eq!(bundle.images[1].filename, "20240315_100000_Tokyo City Walk Highlights_02.jpg");
+        assert_eq!(bundle.images[2].filename, "20240315_100000_Tokyo City Walk Highlights_03.jpg");
     }
 
     #[test]

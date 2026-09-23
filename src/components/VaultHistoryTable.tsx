@@ -1,18 +1,13 @@
 import {
-  Play,
-  Download,
-  FolderOpen,
-  Copy,
-  Trash2,
   XCircle,
   Film,
   Music,
   Loader2,
   AlertTriangle,
-  Scissors,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
-import { triggerDirectBrowserDownload } from "../lib/tauri-api";
+import { VaultItemActions } from "./VaultItemActions";
+import { CarouselThumbnailStack, getCarouselSlideCount } from "./CarouselThumbnailStack";
 import {
   formatFileSize,
   getSourceAccount,
@@ -29,6 +24,7 @@ interface VaultHistoryTableProps {
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
   onSplitRecord?: (record: DownloadRecord) => void;
+  onRetryRecord?: (record: DownloadRecord) => void;
 }
 
 export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
@@ -40,6 +36,7 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
   onCopyPath,
   onDeleteRecord,
   onSplitRecord,
+  onRetryRecord,
 }) => {
   return (
     <div className="flex flex-col divide-y divide-[#1f1f23]">
@@ -105,45 +102,69 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
           >
             {/* Thumbnail & Title */}
             <div className="flex items-center gap-3.5 min-w-0 flex-grow">
-              {/* Thumbnail */}
-              <div
-                onClick={() => !corruptOrMissing && onSelectRecord(item)}
-                className={`relative w-20 h-13 sm:w-24 sm:h-15 rounded-md overflow-hidden bg-[#09090b] border shrink-0 transition-all ${
-                  corruptOrMissing
-                    ? "border-red-500/30 grayscale saturate-0 opacity-50 contrast-75 cursor-not-allowed"
-                    : "border-[#27272a] cursor-pointer hover:border-blue-500/50"
-                }`}
-              >
-                {thumb ? (
-                  <img
-                    src={thumb}
-                    alt={item.title}
-                    referrerPolicy="no-referrer"
-                    className={`w-full h-full object-cover ${
-                      corruptOrMissing ? "grayscale saturate-0" : ""
-                    }`}
-                  />
-                ) : (
+              {/* Thumbnail (Stacked for carousel, standard single for other formats) */}
+              {(() => {
+                const slideCount = getCarouselSlideCount(item);
+                if (slideCount) {
+                  return (
+                    <div
+                      onClick={() => !corruptOrMissing && onSelectRecord(item)}
+                      className={`relative w-20 h-13 sm:w-24 sm:h-15 rounded-md shrink-0 transition-all ${
+                        corruptOrMissing
+                          ? "cursor-not-allowed opacity-60"
+                          : "cursor-pointer hover:scale-102"
+                      }`}
+                    >
+                      <CarouselThumbnailStack
+                        record={item}
+                        slideCount={slideCount}
+                        corruptOrMissing={corruptOrMissing}
+                      />
+                    </div>
+                  );
+                }
+
+                return (
                   <div
-                    className={`w-full h-full flex items-center justify-center text-[#71717a] ${
-                      corruptOrMissing ? "grayscale saturate-0" : ""
+                    onClick={() => !corruptOrMissing && onSelectRecord(item)}
+                    className={`relative w-20 h-13 sm:w-24 sm:h-15 rounded-md overflow-hidden bg-[#09090b] border shrink-0 transition-all ${
+                      corruptOrMissing
+                        ? "border-red-500/30 grayscale saturate-0 opacity-50 contrast-75 cursor-not-allowed"
+                        : "border-[#27272a] cursor-pointer hover:border-blue-500/50"
                     }`}
                   >
-                    {item.formatType === "audio" ? (
-                      <Music className="w-4 h-4" />
+                    {thumb ? (
+                      <img
+                        src={thumb}
+                        alt={item.title}
+                        referrerPolicy="no-referrer"
+                        className={`w-full h-full object-cover ${
+                          corruptOrMissing ? "grayscale saturate-0" : ""
+                        }`}
+                      />
                     ) : (
-                      <Film className="w-4 h-4" />
+                      <div
+                        className={`w-full h-full flex items-center justify-center text-[#71717a] ${
+                          corruptOrMissing ? "grayscale saturate-0" : ""
+                        }`}
+                      >
+                        {item.formatType === "audio" ? (
+                          <Music className="w-4 h-4" />
+                        ) : (
+                          <Film className="w-4 h-4" />
+                        )}
+                      </div>
+                    )}
+
+                    {/* Broken / Missing Visual Overlay */}
+                    {corruptOrMissing && (
+                      <div className="absolute inset-0 bg-black/45 backdrop-blur-[0.5px] flex items-center justify-center">
+                        <AlertTriangle className="w-4 h-4 text-red-400 drop-shadow" />
+                      </div>
                     )}
                   </div>
-                )}
-
-                {/* Broken / Missing Visual Overlay */}
-                {corruptOrMissing && (
-                  <div className="absolute inset-0 bg-black/45 backdrop-blur-[0.5px] flex items-center justify-center">
-                    <AlertTriangle className="w-4 h-4 text-red-400 drop-shadow" />
-                  </div>
-                )}
-              </div>
+                );
+              })()}
 
               {/* Info Column */}
               <div className="flex flex-col min-w-0 flex-grow gap-1">
@@ -188,66 +209,17 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
               </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex items-center gap-1 shrink-0">
-              {item.exists && (
-                <button
-                  onClick={() => onSelectRecord(item)}
-                  className="w-7 h-7 rounded-md text-[#71717a] hover:text-blue-400 hover:bg-blue-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                  title="Preview Media"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                </button>
-              )}
-              {item.exists && onSplitRecord && (
-                <button
-                  onClick={() => onSplitRecord(item)}
-                  className="w-7 h-7 rounded-md text-[#71717a] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                  title="Split Video"
-                >
-                  <Scissors className="w-3.5 h-3.5" />
-                </button>
-              )}
-              {item.exists && (
-                <button
-                  onClick={() => triggerDirectBrowserDownload(item)}
-                  className="w-7 h-7 rounded-md text-[#71717a] hover:text-emerald-400 hover:bg-emerald-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                  title="Download File to Browser"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                </button>
-              )}
-              {item.exists && (
-                <button
-                  onClick={() => onOpenFolder(item)}
-                  className="w-7 h-7 rounded-md text-[#71717a] hover:text-[#a1a1aa] hover:bg-[#27272a] flex items-center justify-center cursor-pointer transition-colors"
-                  title="Open Folder"
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                </button>
-              )}
-              {item.exists && item.filePath && (
-                <button
-                  onClick={() => onCopyPath(item.filePath)}
-                  className="w-7 h-7 rounded-md text-[#71717a] hover:text-[#a1a1aa] hover:bg-[#27272a] flex items-center justify-center cursor-pointer transition-colors"
-                  title="Copy File Path"
-                >
-                  <Copy className="w-3 h-3" />
-                </button>
-              )}
-              {/* Delete Button: Bypasses confirm dialog if corrupt/missing */}
-              <button
-                onClick={() => onDeleteRecord(item)}
-                className={`w-7 h-7 rounded-md flex items-center justify-center cursor-pointer transition-colors ${
-                  corruptOrMissing
-                    ? "text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                    : "text-[#71717a] hover:text-red-400 hover:bg-red-500/10"
-                }`}
-                title={corruptOrMissing ? "Remove broken record" : "Delete"}
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            {/* Consolidated Action Buttons: Play + Show in Folder / Download direct, other actions in More menu */}
+            <VaultItemActions
+              record={item}
+              onSelectRecord={onSelectRecord}
+              onOpenFolder={onOpenFolder}
+              onCopyPath={onCopyPath}
+              onDeleteRecord={onDeleteRecord}
+              onSplitRecord={onSplitRecord}
+              onRetry={onRetryRecord}
+              layout="row"
+            />
           </div>
         );
       })}

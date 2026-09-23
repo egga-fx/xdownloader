@@ -155,10 +155,35 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         None
     };
 
-    let title = if is_carousel {
-        format!("{} [Carousel: {} Images]", raw_title, extracted_images.len())
+    let effective_title = if url.contains("instagram.com") {
+        let ts_str = crate::image_extractor::extract_instagram_json_timestamp(&json_val);
+        let post_id = if !id.is_empty() {
+            id.clone()
+        } else {
+            regex::Regex::new(r"/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)")
+                .ok()
+                .and_then(|re| re.captures(url))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "instagram_media".to_string())
+        };
+
+        let desc_candidate = json_val["description"].as_str();
+        let title_candidate = json_val["title"].as_str();
+        crate::image_extractor::format_instagram_standard_title(
+            &ts_str,
+            title_candidate,
+            desc_candidate,
+            &post_id,
+        )
     } else {
         raw_title
+    };
+
+    let title = if is_carousel {
+        format!("{} [Carousel: {} Images]", effective_title, extracted_images.len())
+    } else {
+        effective_title
     };
 
     // If a specific ?img_index=N is in the URL, target that slide as the primary preview thumbnail
