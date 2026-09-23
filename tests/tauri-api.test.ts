@@ -64,7 +64,7 @@ describe("AI Spec-First Contract Tests: src/lib/tauri-api.ts", () => {
       const settings = await getAppSettings();
       expect(settings).toBeDefined();
       expect(settings.outputFolder).toBe("Videos\\xDownloader");
-      expect(settings.defaultVideoQuality).toBe("1080p");
+      expect(settings.defaultVideoQuality).toBe("best");
       expect(settings.defaultAudioQuality).toBe("mp3");
       expect(settings.autoClipboardDetect).toBe(true);
     });

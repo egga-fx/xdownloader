@@ -775,6 +775,13 @@ export async function openInExplorer(path: string): Promise<boolean> {
   return true;
 }
 
+export async function openMediaFile(path: string): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    return await invoke<boolean>("open_media_file", { path });
+  }
+  return true;
+}
+
 // --- 4b. PLAYBACK RESOLUTION ---
 
 export function getYouTubeEmbedUrl(url: string): string | null {
@@ -885,7 +892,7 @@ export async function getAppSettings(): Promise<AppSettings> {
 
   return {
     outputFolder: "Videos\\xDownloader",
-    defaultVideoQuality: "1080p",
+    defaultVideoQuality: "best",
     defaultAudioQuality: "mp3",
     autoClipboardDetect: true,
     downloadSubtitles: false,

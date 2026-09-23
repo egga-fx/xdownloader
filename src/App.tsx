@@ -80,7 +80,7 @@ export function App() {
 
   // Format & Quality Config
   const [formatType, setFormatType] = useState<DownloaderFormatType>("video");
-  const [quality, setQuality] = useState<DownloaderQuality>("1080p");
+  const [quality, setQuality] = useState<DownloaderQuality>("best");
   const [customName, setCustomName] = useState<string>("");
   const [timeRange, setTimeRange] = useState<TimeRange | undefined>(undefined);
 
@@ -184,6 +184,8 @@ export function App() {
       }
       if (settings.defaultVideoQuality) {
         setQuality(settings.defaultVideoQuality);
+      } else {
+        setQuality("best");
       }
 
       await loadRecords();
@@ -302,7 +304,7 @@ export function App() {
           setQuality("best");
         } else {
           setFormatType("video");
-          setQuality((appSettings.defaultVideoQuality as DownloaderQuality) || "1080p");
+          setQuality((appSettings.defaultVideoQuality as DownloaderQuality) || "best");
         }
       }
     } catch (err: unknown) {
@@ -375,7 +377,7 @@ export function App() {
             setQuality("best");
           } else {
             setFormatType("video");
-            setQuality((appSettings.defaultVideoQuality as DownloaderQuality) || "1080p");
+            setQuality((appSettings.defaultVideoQuality as DownloaderQuality) || "best");
           }
         }
       } catch {

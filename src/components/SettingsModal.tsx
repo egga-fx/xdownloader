@@ -48,8 +48,8 @@ interface QualityOption {
 }
 
 const VIDEO_QUALITIES: QualityOption[] = [
+  { id: "best", label: "Original HD (Best Available)", badge: "ORIGINAL", desc: "Native highest available resolution (4K/2K/1080p)" },
   { id: "1080p", label: "1080p Full HD", badge: "1080p", desc: "Standard recommended quality" },
-  { id: "best", label: "Best Available", badge: "MAX", desc: "Highest resolution (4K/2K/1080p)" },
   { id: "1440p", label: "1440p 2K QHD", badge: "1440p", desc: "High-definition 2K video" },
   { id: "720p", label: "720p HD", badge: "720p", desc: "Faster download, smaller file size" },
   { id: "480p", label: "480p SD", badge: "480p", desc: "Standard definition for slow networks" },
@@ -235,7 +235,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onPickFolder,
   onOpenAbout,
 }) => {
-  const [defaultVideoQuality, setDefaultVideoQuality] = useState<DownloaderQuality>("1080p");
+  const [defaultVideoQuality, setDefaultVideoQuality] = useState<DownloaderQuality>("best");
   const [defaultAudioQuality, setDefaultAudioQuality] = useState<DownloaderQuality>("mp3");
   const [outputFolder, setOutputFolder] = useState<string>("");
   const [autoClipboardDetect, setAutoClipboardDetect] = useState<boolean>(true);
@@ -269,7 +269,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   useEffect(() => {
     if (open) {
-      setDefaultVideoQuality(settings.defaultVideoQuality || "1080p");
+      setDefaultVideoQuality(settings.defaultVideoQuality || "best");
       setDefaultAudioQuality(settings.defaultAudioQuality || "mp3");
       setOutputFolder(settings.outputFolder || "");
       setAutoClipboardDetect(settings.autoClipboardDetect ?? true);
@@ -349,7 +349,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleReset = () => {
-    setDefaultVideoQuality("1080p");
+    setDefaultVideoQuality("best");
     setDefaultAudioQuality("mp3");
     setAutoClipboardDetect(true);
     setDownloadSubtitles(false);

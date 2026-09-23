@@ -127,6 +127,14 @@ fn open_in_explorer(path: String) -> bool {
 }
 
 #[tauri::command]
+fn open_media_file(path: String) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    open::that(&path).is_ok()
+}
+
+#[tauri::command]
 fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
     state.db.get_settings()
 }
@@ -230,6 +238,7 @@ pub fn run() {
             get_download_records,
             delete_download_record,
             open_in_explorer,
+            open_media_file,
             get_app_settings,
             save_app_settings,
             split_local_video,

@@ -48,8 +48,13 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
     cmd.arg("--dump-single-json")
         .arg("--ignore-no-formats-error")
         .arg("--no-warnings")
-        .arg("--skip-download")
-        .arg(url);
+        .arg("--skip-download");
+
+    if let Some((runtime, path)) = crate::binaries::find_js_runtime() {
+        cmd.arg("--js-runtimes").arg(format!("{}:{}", runtime, path.to_string_lossy()));
+    }
+
+    cmd.arg(url);
 
     // Run async command with 20 seconds safety timeout to prevent UI freezes
     let output = match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {

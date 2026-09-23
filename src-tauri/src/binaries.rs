@@ -113,6 +113,55 @@ pub fn find_binary(binary_name: &str) -> Option<PathBuf> {
     None
 }
 
+pub fn find_js_runtime() -> Option<(String, PathBuf)> {
+    // 1. Check Node.js
+    if let Some(p) = find_binary("node") {
+        return Some(("node".to_string(), p));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let standard_paths = [
+            PathBuf::from(r"C:\Program Files\nodejs\node.exe"),
+            PathBuf::from(r"C:\Program Files (x86)\nodejs\node.exe"),
+        ];
+        for sp in standard_paths {
+            if sp.exists() {
+                return Some(("node".to_string(), sp));
+            }
+        }
+        if let Some(local_app) = dirs::data_local_dir() {
+            let p = local_app.join("Programs").join("node").join("node.exe");
+            if p.exists() {
+                return Some(("node".to_string(), p));
+            }
+        }
+    }
+
+    // 2. Check Bun
+    if let Some(p) = find_binary("bun") {
+        return Some(("bun".to_string(), p));
+    }
+    if let Some(home) = dirs::home_dir() {
+        let bun_p = home.join(".bun").join("bin").join(if cfg!(windows) { "bun.exe" } else { "bun" });
+        if bun_p.exists() {
+            return Some(("bun".to_string(), bun_p));
+        }
+    }
+
+    // 3. Check Deno
+    if let Some(p) = find_binary("deno") {
+        return Some(("deno".to_string(), p));
+    }
+    if let Some(home) = dirs::home_dir() {
+        let deno_p = home.join(".deno").join("bin").join(if cfg!(windows) { "deno.exe" } else { "deno" });
+        if deno_p.exists() {
+            return Some(("deno".to_string(), deno_p));
+        }
+    }
+
+    None
+}
+
 pub fn check_binaries() -> BinariesStatus {
     let bin_dir = get_app_bin_dir();
     let ytdlp_path = find_binary("yt-dlp");

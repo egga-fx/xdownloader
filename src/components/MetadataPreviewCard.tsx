@@ -40,7 +40,7 @@ interface MetadataPreviewCardProps {
   onOpenTrimmer?: () => void;
 }
 
-const VIDEO_QUALITIES: DownloaderQuality[] = ["1080p", "720p", "480p", "360p", "best"];
+const VIDEO_QUALITIES: DownloaderQuality[] = ["best", "1080p", "720p", "480p", "360p"];
 const AUDIO_QUALITIES: DownloaderQuality[] = ["mp3", "m4a", "wav", "flac"];
 
 export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
@@ -99,7 +99,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
       setQuality("best");
     } else if (info.description !== "image" && formatType === "image") {
       setFormatType("video");
-      setQuality("1080p");
+      setQuality("best");
     }
   }, [info.description]);
 
@@ -304,7 +304,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                   <button
                     onClick={() => {
                       setFormatType("video");
-                      setQuality("1080p");
+                      setQuality("best");
                     }}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
                       formatType === "video"
@@ -429,7 +429,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                     : "bg-[#18181c] text-[#71717a] hover:text-[#a1a1aa] border border-[#27272a]"
                 }`}
               >
-                {q}
+                {q === "best" ? "Original HD" : q}
               </button>
             ))
           )}

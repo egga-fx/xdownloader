@@ -239,6 +239,16 @@ pub async fn run_download(
         .arg("after_move:filepath")
         .arg(&meta_file_path);
 
+    // Pass detected JavaScript runtime (Node/Bun/Deno) to solve YouTube extraction challenges without delay
+    if let Some((runtime, path)) = crate::binaries::find_js_runtime() {
+        cmd.arg("--js-runtimes").arg(format!("{}:{}", runtime, path.to_string_lossy()));
+    }
+
+    // High throughput connection optimizations for DASH & HLS video streams
+    cmd.arg("--concurrent-fragments").arg("4")
+        .arg("--retries").arg("10")
+        .arg("--fragment-retries").arg("10");
+
     // Pass --ffmpeg-location so yt-dlp can reliably merge separate audio and video streams into a single mp4
     if let Some(ref ff_path) = ffmpeg_path {
         if ff_path.is_file() {
@@ -267,27 +277,29 @@ pub async fn run_download(
     } else {
         match quality.as_str() {
             "4k" | "2160p" => {
-                cmd.arg("-f").arg("bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best");
-                cmd.arg("-S").arg("res:2160,fps");
+                cmd.arg("-f").arg("bestvideo[height<=2160][protocol^=http][ext=mp4]+bestaudio[protocol^=http][ext=m4a]/bestvideo[height<=2160][protocol^=http]+bestaudio[protocol^=http]/bestvideo[height<=2160]+bestaudio/best");
+                cmd.arg("-S").arg("res:2160,fps,proto:https,ext:mp4:m4a");
             }
             "1440p" => {
-                cmd.arg("-f").arg("bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best");
-                cmd.arg("-S").arg("res:1440,fps");
+                cmd.arg("-f").arg("bestvideo[height<=1440][protocol^=http][ext=mp4]+bestaudio[protocol^=http][ext=m4a]/bestvideo[height<=1440][protocol^=http]+bestaudio[protocol^=http]/bestvideo[height<=1440]+bestaudio/best");
+                cmd.arg("-S").arg("res:1440,fps,proto:https,ext:mp4:m4a");
             }
             "1080p" => {
-                cmd.arg("-f").arg("bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best");
-                cmd.arg("-S").arg("res:1080,fps");
+                cmd.arg("-f").arg("bestvideo[height<=1080][protocol^=http][ext=mp4]+bestaudio[protocol^=http][ext=m4a]/bestvideo[height<=1080][protocol^=http]+bestaudio[protocol^=http]/bestvideo[height<=1080]+bestaudio/best");
+                cmd.arg("-S").arg("res:1080,fps,proto:https,ext:mp4:m4a");
             }
             "720p" => {
-                cmd.arg("-f").arg("bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best");
-                cmd.arg("-S").arg("res:720,fps");
+                cmd.arg("-f").arg("bestvideo[height<=720][protocol^=http][ext=mp4]+bestaudio[protocol^=http][ext=m4a]/bestvideo[height<=720][protocol^=http]+bestaudio[protocol^=http]/bestvideo[height<=720]+bestaudio/best");
+                cmd.arg("-S").arg("res:720,fps,proto:https,ext:mp4:m4a");
             }
             "480p" => {
-                cmd.arg("-f").arg("bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best");
-                cmd.arg("-S").arg("res:480,fps");
+                cmd.arg("-f").arg("bestvideo[height<=480][protocol^=http][ext=mp4]+bestaudio[protocol^=http][ext=m4a]/bestvideo[height<=480][protocol^=http]+bestaudio[protocol^=http]/bestvideo[height<=480]+bestaudio/best");
+                cmd.arg("-S").arg("res:480,fps,proto:https,ext:mp4:m4a");
             }
             _ => {
-                cmd.arg("-f").arg("bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best");
+                // "best" / Original HD: Download top native resolution without artificial cap, prioritizing direct HTTPS DASH streams
+                cmd.arg("-f").arg("bestvideo[protocol^=http][ext=mp4]+bestaudio[protocol^=http][ext=m4a]/bestvideo[protocol^=http]+bestaudio[protocol^=http]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best");
+                cmd.arg("-S").arg("res,fps,proto:https,ext:mp4:m4a");
             }
         }
         cmd.arg("--merge-output-format").arg("mp4");
@@ -369,7 +381,33 @@ pub async fn run_download(
     };
     let _ = db.add_record(&initial_record);
 
-    let progress_regex = Regex::new(r"\[download\]\s+([0-9.]+)% of\s+~?([0-9.]+[A-Za-z]+)\s+at\s+([0-9.]+[A-Za-z/]+)\s+ETA\s+([0-9:]+)").unwrap();
+    // Emit initial active task progress immediately so UI does not remain stuck on "Connecting..."
+    let startup_task = ActiveDownloadTask {
+        task_id: task_id.clone(),
+        url: url.clone(),
+        title: initial_record.title.clone(),
+        platform: initial_record.platform.clone(),
+        format_type: format_type.clone(),
+        quality: quality.clone(),
+        status: "downloading".to_string(),
+        progress: TaskProgress {
+            percent: 0.5,
+            speed_str: "Starting engine...".to_string(),
+            eta_str: String::new(),
+            downloaded_bytes: None,
+            total_bytes: None,
+        },
+        error: None,
+    };
+    let _ = app.emit("download-progress", &startup_task);
+
+    // Robust regex supporting space after '~' e.g. '[download] 5.2% of ~ 780.14MiB at 2.45MiB/s ETA 05:12'
+    let progress_regex = Regex::new(
+        r"\[download\]\s+([0-9.]+)%\s+of\s+~?\s*([0-9.]+[A-Za-z]+)\s+at\s+([0-9.]+[A-Za-z/]+|\S+)\s+ETA\s+([0-9:]+)"
+    ).unwrap();
+    let progress_simple_regex = Regex::new(
+        r"\[download\]\s+([0-9.]+)%"
+    ).unwrap();
     let merger_regex = Regex::new(r#"\[Merger\] Merging formats into "(?P<path>[^"]+)""#).unwrap();
     let destination_regex = Regex::new(r"\[(?:download|ExtractAudio)\] Destination:\s+(.+)").unwrap();
     let already_downloaded_regex = Regex::new(r"\[download\]\s+(.+)\s+has already been downloaded").unwrap();
@@ -428,12 +466,49 @@ pub async fn run_download(
                 };
 
                 let _ = app.emit("download-progress", &task_update);
+            } else if let Some(caps) = progress_simple_regex.captures(&line) {
+                let percent: f64 = caps[1].parse().unwrap_or(0.0);
+                let task_update = ActiveDownloadTask {
+                    task_id: task_id.clone(),
+                    url: url.clone(),
+                    title: initial_record.title.clone(),
+                    platform: initial_record.platform.clone(),
+                    format_type: format_type.clone(),
+                    quality: quality.clone(),
+                    status: "downloading".to_string(),
+                    progress: TaskProgress {
+                        percent,
+                        speed_str: "Downloading...".to_string(),
+                        eta_str: String::new(),
+                        downloaded_bytes: None,
+                        total_bytes: None,
+                    },
+                    error: None,
+                };
+                let _ = app.emit("download-progress", &task_update);
             }
 
             if let Some(caps) = merger_regex.captures(&line) {
                 downloaded_path = caps["path"].trim().to_string();
             } else if let Some(caps) = destination_regex.captures(&line) {
                 downloaded_path = caps[1].trim().to_string();
+                let _ = app.emit("download-progress", &ActiveDownloadTask {
+                    task_id: task_id.clone(),
+                    url: url.clone(),
+                    title: initial_record.title.clone(),
+                    platform: initial_record.platform.clone(),
+                    format_type: format_type.clone(),
+                    quality: quality.clone(),
+                    status: "downloading".to_string(),
+                    progress: TaskProgress {
+                        percent: 1.0,
+                        speed_str: "Receiving stream...".to_string(),
+                        eta_str: String::new(),
+                        downloaded_bytes: None,
+                        total_bytes: None,
+                    },
+                    error: None,
+                });
             } else if let Some(caps) = already_downloaded_regex.captures(&line) {
                 downloaded_path = caps[1].trim().to_string();
             }

@@ -9,14 +9,15 @@ import {
   RotateCcw,
   Volume2,
   Scissors,
+  Play,
 } from "lucide-react";
 import { DownloadRecord } from "../types";
 import { formatDuration, formatFileSize, getSourceAccount } from "../lib/utils";
 import {
   resolvePlaybackUrl,
-  getYouTubeEmbedUrl,
   triggerDirectBrowserDownload,
   isTauriEnvironment,
+  openMediaFile,
 } from "../lib/tauri-api";
 
 interface MediaPreviewModalProps {
@@ -58,7 +59,6 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   if (!record) return null;
 
   const src = getSourceAccount(record);
-  const ytEmbedUrl = getYouTubeEmbedUrl(record.url);
   const isAudio = record.formatType === "audio";
   const isImage = record.formatType === "image";
 
@@ -158,30 +158,21 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
               onError={() => setVideoError(true)}
               className="w-full h-full object-contain"
             />
-          ) : ytEmbedUrl ? (
-            /* 4. YOUTUBE EMBED FALLBACK */
-            <iframe
-              src={ytEmbedUrl}
-              title={record.title}
-              className="w-full h-full border-0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-            />
           ) : (
-            /* 5. ERROR / POSTER FALLBACK */
+            /* 4. ERROR / POSTER FALLBACK */
             <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-[#09090b] relative">
               {record.thumbnailUrl ? (
                 <img
                   src={record.thumbnailUrl}
                   alt={record.title}
-                  className="w-full h-full object-contain opacity-40 absolute inset-0"
+                  className="w-full h-full object-contain opacity-35 absolute inset-0"
                 />
               ) : null}
               <div className="relative z-10 bg-black/85 p-5 rounded-xl border border-[#27272a] max-w-sm flex flex-col items-center gap-2 backdrop-blur-xs">
                 <Film className="w-8 h-8 text-blue-400 mb-1" />
-                <p className="text-xs text-white font-bold">Video Stream Preview</p>
+                <p className="text-xs text-white font-bold">Tidak Dapat Memutar Video</p>
                 <p className="text-[11px] text-[#71717a]">
-                  Stream video offline atau format belum ter-decode. Anda dapat mengunduh langsung ke browser.
+                  Format video tidak didukung oleh browser bawaan atau file telah dipindahkan dari lokasi aslinya.
                 </p>
                 <div className="flex items-center gap-2 mt-2">
                   <button
@@ -191,18 +182,41 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                         setStreamUrl(u);
                       });
                     }}
-                    className="px-3 py-1 rounded bg-[#27272a] hover:bg-[#3f3f46] text-white text-xs flex items-center gap-1 cursor-pointer transition-colors"
+                    className="px-3 py-1.5 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
                   >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>Retry</span>
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Coba Lagi</span>
                   </button>
-                  <button
-                    onClick={() => triggerDirectBrowserDownload(record)}
-                    className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
-                  >
-                    <Download className="w-3 h-3" />
-                    <span>Download</span>
-                  </button>
+                  {isTauriEnvironment() ? (
+                    <>
+                      {record.filePath && (
+                        <button
+                          onClick={() => openMediaFile(record.filePath)}
+                          className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                          title="Buka langsung di aplikasi pemutar media Windows/OS"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Player OS</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={() => onOpenFolder(record)}
+                        className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                        title="Buka folder lokasi file"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        <span>Folder</span>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => triggerDirectBrowserDownload(record)}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -249,22 +263,35 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                 <span>Trim Video</span>
               </button>
             )}
-            <button
-              onClick={() => triggerDirectBrowserDownload(record)}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-              title="Download file to computer"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Download File</span>
-            </button>
-            {isTauriEnvironment() && (
+            {isTauriEnvironment() ? (
+              <>
+                {record.filePath && (
+                  <button
+                    onClick={() => openMediaFile(record.filePath)}
+                    className="px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 hover:text-white font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    title="Buka file dengan aplikasi pemutar media bawaan sistem (VLC, Media Player, dll.)"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Play di OS Player</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => onOpenFolder(record)}
+                  className="px-3 py-1.5 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                  title="Show in File Explorer"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>Show in Folder</span>
+                </button>
+              </>
+            ) : (
               <button
-                onClick={() => onOpenFolder(record)}
-                className="px-3 py-1.5 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                title="Show in File Explorer"
+                onClick={() => triggerDirectBrowserDownload(record)}
+                className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Download file to computer"
               >
-                <FolderOpen className="w-3.5 h-3.5" />
-                <span>Show in Folder</span>
+                <Download className="w-3.5 h-3.5" />
+                <span>Download File</span>
               </button>
             )}
           </div>
