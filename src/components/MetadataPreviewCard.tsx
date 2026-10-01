@@ -8,7 +8,6 @@ import {
   ExternalLink,
   Loader2,
   FileEdit,
-  Scissors,
   Image as ImageIcon,
   Images,
   Layers,
@@ -18,7 +17,6 @@ import {
 import {
   DownloaderFormatType,
   DownloaderQuality,
-  TimeRange,
   VideoInfo,
 } from "../types";
 import { formatDuration } from "../lib/utils";
@@ -32,12 +30,8 @@ interface MetadataPreviewCardProps {
   setQuality: (quality: DownloaderQuality) => void;
   customName: string;
   setCustomName: (name: string) => void;
-  timeRange?: TimeRange;
-  setTimeRange?: (tr: TimeRange | undefined) => void;
   onDownload: (selectedIndices?: number[]) => void;
   isDownloadingCurrentUrl: boolean;
-  onOpenSplitter?: () => void;
-  onOpenTrimmer?: () => void;
 }
 
 const VIDEO_QUALITIES: DownloaderQuality[] = ["best", "1080p", "720p", "480p", "360p"];
@@ -51,12 +45,8 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   setQuality,
   customName,
   setCustomName,
-  timeRange,
-  setTimeRange,
   onDownload,
   isDownloadingCurrentUrl,
-  onOpenSplitter,
-  onOpenTrimmer,
 }) => {
   const isImage = info.description === "image";
   const carouselImages: string[] =
@@ -82,7 +72,6 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   };
 
   const [activeImageIndex, setActiveImageIndex] = useState<number>(getInitialIndex());
-  const [showTrimmer, setShowTrimmer] = useState<boolean>(Boolean(timeRange));
   const [isSelectionModalOpen, setIsSelectionModalOpen] = useState<boolean>(false);
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   const [aspectRatios, setAspectRatios] = useState<Record<number, number>>({});
@@ -348,64 +337,6 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
         </div>
       </div>
 
-      {/* Time Range Trimming Toggle & Inputs (Videos/Audio only) */}
-      {!isImage && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => {
-                const next = !showTrimmer;
-                setShowTrimmer(next);
-                if (!next && setTimeRange) setTimeRange(undefined);
-                else if (next && setTimeRange && !timeRange) {
-                  setTimeRange({ start: "00:00:00", end: formatDuration(info.duration) });
-                }
-              }}
-              className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
-                showTrimmer
-                  ? "bg-blue-500/15 border-blue-500/30 text-blue-400"
-                  : "bg-[#18181c] border-[#27272a] text-[#a1a1aa] hover:text-white"
-              }`}
-            >
-              <Scissors className="w-3.5 h-3.5" />
-              <span>Clip Segment {showTrimmer ? "(Active)" : "(Optional)"}</span>
-            </button>
-
-            {showTrimmer && (
-              <span className="text-[11px] text-[#71717a]">
-                Downloads section only via yt-dlp
-              </span>
-            )}
-          </div>
-
-          {showTrimmer && setTimeRange && (
-            <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-[#18181c] border border-[#27272a] animate-in fade-in">
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-[#a1a1aa]">Start Time (HH:MM:SS)</label>
-                <input
-                  type="text"
-                  value={timeRange?.start || "00:00:00"}
-                  onChange={(e) => setTimeRange({ start: e.target.value, end: timeRange?.end || formatDuration(info.duration) })}
-                  placeholder="00:00:00"
-                  className="bg-[#121215] border border-[#27272a] rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-[#a1a1aa]">End Time (HH:MM:SS)</label>
-                <input
-                  type="text"
-                  value={timeRange?.end || formatDuration(info.duration)}
-                  onChange={(e) => setTimeRange({ start: timeRange?.start || "00:00:00", end: e.target.value })}
-                  placeholder="00:01:30"
-                  className="bg-[#121215] border border-[#27272a] rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Quality Options & Action Buttons Toolbar */}
       <div className="pt-3 border-t border-[#27272a] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         {/* Quality Section: Direct buttons/badge without label, matching h-10 height */}
@@ -437,18 +368,6 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
 
         {/* Action Buttons: Proportionate, single-line, aligned */}
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-end">
-          {(onOpenTrimmer || onOpenSplitter) && !isImage && (
-            <button
-              type="button"
-              onClick={onOpenTrimmer || onOpenSplitter}
-              disabled={isDownloadingCurrentUrl}
-              className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
-              title="Potong video secara visual"
-            >
-              <Scissors className="w-3.5 h-3.5 text-zinc-300" />
-              <span>Trim Video</span>
-            </button>
-          )}
 
           {isCarousel && (
             <>

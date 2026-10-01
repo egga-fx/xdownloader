@@ -9,7 +9,6 @@ import {
   extractMultipleUrls,
   secondsToTimestamp,
   timestampToSeconds,
-  generatePresetSegments,
   getErrorMessage,
 } from "../src/lib/utils";
 
@@ -30,7 +29,12 @@ describe("AI Spec-First Audit: src/lib/utils.ts", () => {
       expect(isSupportedMediaUrl("https://youtu.be/dQw4w9WgXcQ")).toBe(true);
     });
 
-    it("should accurately detect TikTok, Instagram, X/Twitter, and Pinterest", () => {
+    it("should accurately detect Threads, TikTok, Instagram, X/Twitter, and Pinterest", () => {
+      expect(detectPlatform("https://www.threads.com/@mirasammm/post/Dd7qshgk7ev")).toBe("threads");
+      expect(detectPlatform("https://www.threads.net/@digitalbynonnanii/post/Dd6hc6HGKSS/media")).toBe("threads");
+      expect(detectPlatform("https://www.threads.com/share/D5iSbKNRg/")).toBe("threads");
+      expect(isSupportedMediaUrl("https://www.threads.com/@mirasammm/post/Dd7qshgk7ev")).toBe(true);
+      expect(isSupportedMediaUrl("https://www.threads.com/share/D5iSbKNRg/")).toBe(true);
       expect(detectPlatform("https://www.tiktok.com/@user/video/123456789")).toBe("tiktok");
       expect(detectPlatform("https://www.instagram.com/reel/C8xyz123/")).toBe("instagram");
       expect(detectPlatform("https://x.com/username/status/1234567890")).toBe("x");
@@ -207,34 +211,7 @@ describe("AI Spec-First Audit: src/lib/utils.ts", () => {
     });
   });
 
-  // --- 7. generatePresetSegments ---
-  describe("generatePresetSegments() [Invariant Partitioning]", () => {
-    it("should return empty array for non-positive total duration or chunk duration", () => {
-      expect(generatePresetSegments(0, 60)).toHaveLength(0);
-      expect(generatePresetSegments(-100, 60)).toHaveLength(0);
-      expect(generatePresetSegments(120, 0)).toHaveLength(0);
-      expect(generatePresetSegments(120, -30)).toHaveLength(0);
-    });
-
-    it("should generate a single segment if chunk duration exceeds total duration", () => {
-      const segments = generatePresetSegments(45, 60);
-      expect(segments).toHaveLength(1);
-      expect(segments[0].start).toBe("00:00:00");
-      expect(segments[0].end).toBe("00:00:45");
-      expect(segments[0].partIndex).toBe(1);
-    });
-
-    it("should partition duration with exact boundary coverage without gaps", () => {
-      // 130 seconds total, chunk 60s -> Part 1: 0-60, Part 2: 60-120, Part 3: 120-130
-      const segments = generatePresetSegments(130, 60);
-      expect(segments).toHaveLength(3);
-      expect(segments[0]).toEqual({ partIndex: 1, start: "00:00:00", end: "00:01:00", label: "Part 1" });
-      expect(segments[1]).toEqual({ partIndex: 2, start: "00:01:00", end: "00:02:00", label: "Part 2" });
-      expect(segments[2]).toEqual({ partIndex: 3, start: "00:02:00", end: "00:02:10", label: "Part 3" });
-    });
-  });
-
-  // --- 8. getErrorMessage ---
+  // --- 7. getErrorMessage ---
   describe("getErrorMessage() [Type Polymorphism]", () => {
     it("should extract message from standard Error instances", () => {
       expect(getErrorMessage(new Error("Database locked"))).toBe("Database locked");

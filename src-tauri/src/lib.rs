@@ -11,8 +11,7 @@ use tauri::{AppHandle, State};
 use db::Database;
 use downloader::ProcessManager;
 use models::{
-    AppSettings, BinariesStatus, DownloadRecord, LogEntry, SplitLocalRequest, SplitStreamRequest, TimeRange,
-    TrimStreamRequest, TrimVideoRequest, VideoInfo,
+    AppSettings, BinariesStatus, DownloadRecord, LogEntry, TimeRange, VideoInfo,
 };
 
 pub struct AppState {
@@ -145,42 +144,6 @@ fn save_app_settings(state: State<'_, AppState>, settings: AppSettings) -> Resul
 }
 
 #[tauri::command]
-async fn split_local_video(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    req: SplitLocalRequest,
-) -> Result<Vec<String>, String> {
-    downloader::split_local_video(app, state.db.clone(), req).await
-}
-
-#[tauri::command]
-async fn split_stream_video(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    req: SplitStreamRequest,
-) -> Result<Vec<String>, String> {
-    downloader::split_stream_video(app, state.db.clone(), state.process_mgr.clone(), req).await
-}
-
-#[tauri::command]
-async fn trim_local_video(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    req: TrimVideoRequest,
-) -> Result<String, String> {
-    downloader::trim_local_video_exact(app, state.db.clone(), req).await
-}
-
-#[tauri::command]
-async fn trim_stream_video(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    req: TrimStreamRequest,
-) -> Result<String, String> {
-    downloader::trim_stream_video_exact(app, state.db.clone(), state.process_mgr.clone(), req).await
-}
-
-#[tauri::command]
 fn get_recent_logs(
     state: State<'_, AppState>,
     limit: Option<u32>,
@@ -241,10 +204,6 @@ pub fn run() {
             open_media_file,
             get_app_settings,
             save_app_settings,
-            split_local_video,
-            split_stream_video,
-            trim_local_video,
-            trim_stream_video,
             get_recent_logs,
             clear_app_logs,
             open_logs_folder,

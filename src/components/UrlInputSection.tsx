@@ -15,6 +15,7 @@ import {
   XIcon,
   TikTokIcon,
   PinterestIcon,
+  ThreadsIcon,
 } from "../lib/icons";
 
 interface UrlInputSectionProps {
@@ -116,6 +117,8 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
         return <YoutubeIcon className={`${className} text-[#ef4444]`} />;
       case "instagram":
         return <InstagramIcon className={`${className} text-[#e1306c]`} />;
+      case "threads":
+        return <ThreadsIcon className={`${className} text-white`} />;
       case "tiktok":
         return <TikTokIcon className={`${className} text-[#06b6d4]`} />;
       case "x":
@@ -152,46 +155,26 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
               {renderPlatformIcon(detectedPlatform, "w-4 h-4")}
             </div>
           ) : hasValidClipboardUrl ? (
-            // Clipboard contains a valid media link: show "Download from clipboard" button with animated light trail border
-            <div className="relative p-[1px] overflow-hidden rounded-lg group shrink-0">
-              {/* Rotating Greyscale Light Trail Border Beam */}
-              <div
-                className="absolute -inset-[200%] animate-[spin_3.5s_linear_infinite] pointer-events-none"
-                style={{
-                  background:
-                    "conic-gradient(from 0deg, transparent 0deg, transparent 250deg, rgba(255, 255, 255, 0.15) 290deg, rgba(255, 255, 255, 0.95) 335deg, transparent 360deg)",
-                }}
-              />
-              {/* Inner Button in Pure Greyscale */}
-              <button
-                onClick={handleSmartDownloadClick}
-                onMouseEnter={checkClipboard}
-                className="relative z-10 flex items-center gap-2 px-2.5 py-1.5 rounded-[7px] text-xs font-bold bg-[#18181b] hover:bg-[#222228] text-white cursor-pointer transition-colors"
-                title={`Download from clipboard: ${clipboardUrl}`}
-              >
-                {renderPlatformIcon(clipboardPlatform, "w-3.5 h-3.5")}
-                <span>Download from clipboard</span>
-              </button>
-            </div>
+            // Clipboard contains a valid media link: show "Download from clipboard" button with clean static highlight
+            <button
+              onClick={handleSmartDownloadClick}
+              onMouseEnter={checkClipboard}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/40 hover:border-blue-500/60 shadow-sm shadow-blue-500/10 cursor-pointer transition-all shrink-0"
+              title={`Download from clipboard: ${clipboardUrl}`}
+            >
+              {renderPlatformIcon(clipboardPlatform, "w-3.5 h-3.5")}
+              <span>Download from clipboard</span>
+            </button>
           ) : hasValidInputUrl ? (
-            // Input field contains a valid media link: show "Download" button with animated light trail border
-            <div className="relative p-[1px] overflow-hidden rounded-lg group shrink-0">
-              <div
-                className="absolute -inset-[200%] animate-[spin_3.5s_linear_infinite] pointer-events-none"
-                style={{
-                  background:
-                    "conic-gradient(from 0deg, transparent 0deg, transparent 250deg, rgba(255, 255, 255, 0.15) 290deg, rgba(255, 255, 255, 0.95) 335deg, transparent 360deg)",
-                }}
-              />
-              <button
-                onClick={handleSmartDownloadClick}
-                className="relative z-10 flex items-center gap-2 px-2.5 py-1.5 rounded-[7px] text-xs font-bold bg-[#18181b] hover:bg-[#222228] text-white cursor-pointer transition-colors"
-                title={`Download: ${url.trim()}`}
-              >
-                {renderPlatformIcon(detectedPlatform, "w-3.5 h-3.5")}
-                <span>Download</span>
-              </button>
-            </div>
+            // Input field contains a valid media link: show "Download" button with clean static highlight
+            <button
+              onClick={handleSmartDownloadClick}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-600/30 cursor-pointer transition-all shrink-0"
+              title={`Download: ${url.trim()}`}
+            >
+              {renderPlatformIcon(detectedPlatform, "w-3.5 h-3.5")}
+              <span>Download</span>
+            </button>
           ) : (
             // No valid link in clipboard and no input: Clean default platform / link icon (NO button)
             <div className="w-8 h-8 flex items-center justify-center text-[#71717a]">
@@ -210,7 +193,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
               onStartDownload(url.trim());
             }
           }}
-          placeholder="Paste video or media link (YouTube, TikTok, Instagram, 𝕏, Pinterest, Web Media)..."
+          placeholder="Paste video or media link (YouTube, TikTok, Instagram, Threads, 𝕏, Pinterest, Web Media)..."
           className="flex-grow bg-transparent border-0 text-sm text-[#f4f4f5] placeholder-[#71717a] px-2 py-1.5 focus:outline-none focus:ring-0 min-w-0"
         />
 

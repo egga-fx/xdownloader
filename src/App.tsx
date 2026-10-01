@@ -7,8 +7,6 @@ import { BinarySetupModal } from "./components/BinarySetupModal";
 import { MediaPreviewModal } from "./components/MediaPreviewModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { AboutModal } from "./components/AboutModal";
-import { VideoSplitterModal } from "./components/VideoSplitterModal";
-import { VideoTrimmerModal } from "./components/VideoTrimmerModal";
 import {
   ActiveDownloadTask,
   AppSettings,
@@ -20,8 +18,6 @@ import {
   VideoInfo,
   AppUpdateInfo,
   TimeRange,
-  SplitterSource,
-  TrimmerSource,
 } from "./types";
 import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage } from "./lib/utils";
 import {
@@ -49,6 +45,7 @@ import {
   XIcon,
   TikTokIcon,
   PinterestIcon,
+  ThreadsIcon,
 } from "./lib/icons";
 
 interface QueuedDownloadItem {
@@ -82,7 +79,6 @@ export function App() {
   const [formatType, setFormatType] = useState<DownloaderFormatType>("video");
   const [quality, setQuality] = useState<DownloaderQuality>("best");
   const [customName, setCustomName] = useState<string>("");
-  const [timeRange, setTimeRange] = useState<TimeRange | undefined>(undefined);
 
   // Media Vault & Tasks State
   const [vaultOpen, setVaultOpen] = useState<boolean>(false);
@@ -103,10 +99,6 @@ export function App() {
   const [setupModalOpen, setSetupModalOpen] = useState<boolean>(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
   const [aboutModalOpen, setAboutModalOpen] = useState<boolean>(false);
-  const [splitterModalOpen, setSplitterModalOpen] = useState<boolean>(false);
-  const [splitterSource, setSplitterSource] = useState<SplitterSource | null>(null);
-  const [trimmerModalOpen, setTrimmerModalOpen] = useState<boolean>(false);
-  const [trimmerSource, setTrimmerSource] = useState<TrimmerSource | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>({
     outputFolder: "Videos\\xDownloader",
     defaultVideoQuality: "1080p",
@@ -124,46 +116,6 @@ export function App() {
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
-  };
-
-  const handleOpenTrimmer = (src?: TrimmerSource) => {
-    if (src) {
-      setTrimmerSource(src);
-    } else if (videoInfo) {
-      setTrimmerSource({
-        type: "online",
-        url: videoInfo.webpageUrl || url,
-        info: videoInfo,
-      });
-    } else if (url.trim()) {
-      setTrimmerSource({
-        type: "online",
-        url: url.trim(),
-      });
-    } else {
-      setTrimmerSource(null);
-    }
-    setTrimmerModalOpen(true);
-  };
-
-  const handleOpenSplitter = (src?: SplitterSource) => {
-    if (src) {
-      setSplitterSource(src);
-    } else if (videoInfo) {
-      setSplitterSource({
-        type: "online",
-        url: videoInfo.webpageUrl || url,
-        info: videoInfo,
-      });
-    } else if (url.trim()) {
-      setSplitterSource({
-        type: "online",
-        url: url.trim(),
-      });
-    } else {
-      setSplitterSource(null);
-    }
-    setSplitterModalOpen(true);
   };
 
   // 1. Initial Load: Binaries, Settings, Vault records & Updater check
@@ -276,7 +228,6 @@ export function App() {
     // Immediately clear previous videoInfo so stale metadata doesn't linger
     setVideoInfo(null);
     setCustomName("");
-    setTimeRange(undefined);
 
     if (!clean.trim()) {
       return;
@@ -423,7 +374,6 @@ export function App() {
       thumbnailUrl: finalThumb,
       author: finalAuthor,
       durationSec: finalDuration,
-      timeRange: finalFormatType === "image" ? undefined : timeRange,
       selectedIndices,
       imageUrls: matchedInfo?.images,
     };
@@ -603,8 +553,6 @@ export function App() {
         onToggleVault={() => setVaultOpen(!vaultOpen)}
         vaultCount={records.length}
         activeDownloadingCount={activeTasks.size}
-        onOpenSplitter={() => handleOpenSplitter()}
-        onOpenTrimmer={() => handleOpenTrimmer()}
         onOpenSettings={() => setSettingsModalOpen(true)}
         onOpenAbout={() => setAboutModalOpen(true)}
         hasUpdate={!!availableUpdate?.available}
@@ -647,11 +595,7 @@ export function App() {
                 setQuality={setQuality}
                 customName={customName}
                 setCustomName={setCustomName}
-                timeRange={timeRange}
-                setTimeRange={setTimeRange}
                 onDownload={(selectedIndices) => handleStartDownload(videoInfo.webpageUrl || url, selectedIndices)}
-                onOpenSplitter={() => handleOpenTrimmer()}
-                onOpenTrimmer={() => handleOpenTrimmer()}
                 isDownloadingCurrentUrl={isDownloadingCurrentUrl}
               />
             </div>
@@ -667,6 +611,9 @@ export function App() {
             </span>
             <span title="Instagram">
               <InstagramIcon className="w-4 h-4" />
+            </span>
+            <span title="Threads">
+              <ThreadsIcon className="w-4 h-4" />
             </span>
             <span title="𝕏 (Twitter)">
               <XIcon className="w-4 h-4" />
@@ -694,16 +641,6 @@ export function App() {
         onCopyPath={handleCopyPath}
         onDeleteRecordDirectly={handleDeleteRecordDirectly}
         onRetryRecord={handleRetryRecord}
-        onSplitRecord={(rec) =>
-          handleOpenTrimmer({
-            type: "local",
-            record: rec,
-            filePath: rec.filePath,
-            title: rec.title,
-            duration: rec.durationSec,
-            thumbnail: rec.thumbnailUrl,
-          })
-        }
         loading={loadingVault}
       />
 
@@ -712,43 +649,10 @@ export function App() {
         record={previewRecord}
         onClose={() => setPreviewRecord(null)}
         onOpenFolder={(rec) => handleOpenFolder(rec)}
-        onOpenTrimmer={(rec) =>
-          handleOpenTrimmer({
-            type: "local",
-            record: rec,
-            filePath: rec.filePath,
-            title: rec.title,
-            duration: rec.durationSec,
-            thumbnail: rec.thumbnailUrl,
-          })
-        }
-      />
-
-      {/* Video Trimmer Modal */}
-      <VideoTrimmerModal
-        open={trimmerModalOpen}
-        onClose={() => setTrimmerModalOpen(false)}
-        source={trimmerSource}
-        outputFolder={outputFolder}
-        onSuccess={() => {
-          loadRecords();
-          showToast("Video trimmed successfully!");
-        }}
-      />
-
-      {/* Video Splitter Modal */}
-      <VideoSplitterModal
-        open={splitterModalOpen}
-        onClose={() => setSplitterModalOpen(false)}
-        source={splitterSource}
-        outputFolder={outputFolder}
-        onSuccess={() => {
-          loadRecords();
-          showToast("Video split successfully!");
-        }}
       />
 
       {/* Engine Setup Modal */}
+
       <BinarySetupModal
         open={setupModalOpen}
         onClose={() => setSetupModalOpen(false)}

@@ -4,6 +4,7 @@ export type DownloaderPlatform =
   | "instagram"
   | "x"
   | "pinterest"
+  | "threads"
   | "web_media"
   | "generic";
 
@@ -105,81 +106,6 @@ export interface AppUpdateInfo {
   version?: string;
   body?: string;
   date?: string;
-}
-
-export interface SplitSegment {
-  partIndex: number;
-  start: string;
-  end: string;
-  label?: string;
-}
-
-export interface SplitLocalRequest {
-  filePath: string;
-  segments: SplitSegment[];
-  outputFolder?: string;
-  preciseCut: boolean;
-  createSubfolder: boolean;
-}
-
-export interface SplitStreamRequest {
-  url: string;
-  segments: SplitSegment[];
-  formatType: string;
-  quality: string;
-  title?: string;
-  thumbnailUrl?: string;
-  author?: string;
-  outputFolder?: string;
-  createSubfolder: boolean;
-}
-
-export interface SplitProgressEvent {
-  partIndex: number;
-  totalParts: number;
-  percent: number;
-  filePath?: string;
-  title?: string;
-  status: "starting" | "completed" | "error";
-  error?: string;
-}
-
-export type SplitterSource =
-  | {
-      type: "online";
-      url: string;
-      info?: VideoInfo;
-    }
-  | {
-      type: "local";
-      record?: DownloadRecord;
-      filePath?: string;
-      title?: string;
-      duration?: number;
-      thumbnail?: string;
-    };
-
-export type TrimmerSource = SplitterSource;
-
-export interface TrimVideoRequest {
-  filePath: string;
-  startSec: number;
-  endSec: number;
-  customName?: string;
-  outputFolder?: string;
-}
-
-export interface TrimStreamRequest {
-  url: string;
-  startSec: number;
-  endSec: number;
-  customName?: string;
-  outputFolder?: string;
-  formatType?: string;
-  quality?: string;
-  title?: string;
-  thumbnailUrl?: string;
-  author?: string;
 }
 
 export interface LogEntry {

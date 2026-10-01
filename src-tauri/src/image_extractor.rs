@@ -763,8 +763,243 @@ pub async fn extract_instagram_image(url: &str) -> Result<ImageMediaBundle, Stri
     parse_instagram_html(&html, url)
 }
 
+/// Helper to decode HTML entities in text scraped from OpenGraph meta tags
+pub fn unescape_html_entities(input: &str) -> String {
+    input
+        .replace("&#064;", "@")
+        .replace("&#64;", "@")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", " ")
+}
+
+/// Checks if a URL belongs to Threads (threads.net or threads.com)
+pub fn is_threads_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    lower.contains("threads.net") || lower.contains("threads.com")
+}
+
+/// Parses HTML response from Threads using Googlebot User-Agent
+pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Result<VideoInfo, String> {
+    // 1. Author resolution from URL or OpenGraph
+    let mut author = String::new();
+    if let Ok(author_re) = Regex::new(r"/@([A-Za-z0-9_.]+)") {
+        if let Some(caps) = author_re.captures(final_url).or_else(|| author_re.captures(original_url)) {
+            if let Some(m) = caps.get(1) {
+                author = format!("@{}", m.as_str());
+            }
+        }
+    }
+
+    // 2. OpenGraph tags
+    let og_title_re = Regex::new(r#"<meta\s+property="og:title"\s+content="([^"]*)""#).ok();
+    let og_desc_re = Regex::new(r#"<meta\s+property="og:description"\s+content="([^"]*)""#).ok();
+    let og_image_re = Regex::new(r#"<meta\s+property="og:image"\s+content="([^"]*)""#).ok();
+
+    let og_title = og_title_re.as_ref()
+        .and_then(|re| re.captures(html))
+        .and_then(|c| c.get(1))
+        .map(|m| unescape_html_entities(m.as_str()))
+        .unwrap_or_default();
+
+    let og_desc = og_desc_re.as_ref()
+        .and_then(|re| re.captures(html))
+        .and_then(|c| c.get(1))
+        .map(|m| unescape_html_entities(m.as_str()))
+        .unwrap_or_default();
+
+    let thumbnail = og_image_re.as_ref()
+        .and_then(|re| re.captures(html))
+        .and_then(|c| c.get(1))
+        .map(|m| unescape_html_entities(m.as_str()))
+        .unwrap_or_default();
+
+    if author.is_empty() && !og_title.is_empty() {
+        if let Ok(title_author_re) = Regex::new(r"\(@([A-Za-z0-9_.]+)\)") {
+            if let Some(caps) = title_author_re.captures(&og_title) {
+                if let Some(m) = caps.get(1) {
+                    author = format!("@{}", m.as_str());
+                }
+            }
+        }
+    }
+
+    // Meaningful title: Use caption text if available, otherwise og_title
+    let base_title = if !og_desc.is_empty() {
+        let trimmed = og_desc.trim();
+        if trimmed.chars().count() > 120 {
+            format!("{}...", trimmed.chars().take(117).collect::<String>())
+        } else {
+            trimmed.to_string()
+        }
+    } else if !og_title.is_empty() {
+        og_title.clone()
+    } else {
+        "Threads Post".to_string()
+    };
+
+    // ID resolution
+    let mut post_id = String::new();
+    if let Ok(id_re) = Regex::new(r"/post/([A-Za-z0-9_-]+)") {
+        if let Some(caps) = id_re.captures(final_url).or_else(|| id_re.captures(original_url)) {
+            if let Some(m) = caps.get(1) {
+                post_id = m.as_str().to_string();
+            }
+        }
+    }
+    if post_id.is_empty() {
+        post_id = format!("threads_{}", chrono::Utc::now().timestamp_millis());
+    }
+
+    // 3. Search for video_versions in embedded JSON
+    let mut found_video_url: Option<String> = None;
+    let mut video_duration: i64 = 0;
+    if let Ok(video_re) = Regex::new(r#""video_versions"\s*:\s*(\[.*?\])\s*,\s*""#) {
+        for caps in video_re.captures_iter(html) {
+            if let Some(m) = caps.get(1) {
+                if let Ok(vv) = serde_json::from_str::<serde_json::Value>(m.as_str()) {
+                    if let Some(arr) = vv.as_array() {
+                        for item in arr {
+                            if let Some(v_url) = item.get("url").and_then(|u| u.as_str()) {
+                                if !v_url.is_empty() {
+                                    found_video_url = Some(v_url.to_string());
+                                    if let Some(dur) = item.get("duration").and_then(|d| d.as_f64()) {
+                                        video_duration = dur as i64;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if found_video_url.is_some() {
+                break;
+            }
+        }
+    }
+
+    // If video found, return VideoInfo with the direct MP4 stream URL stored in description for the downloader
+    if let Some(v_url) = found_video_url {
+        return Ok(VideoInfo {
+            id: post_id,
+            title: base_title,
+            duration: if video_duration > 0 { video_duration } else { 30 },
+            thumbnail,
+            uploader: if !author.is_empty() { author.clone() } else { "Threads Creator".to_string() },
+            channel: "Threads".to_string(),
+            description: Some(v_url),
+            webpage_url: final_url.to_string(),
+            images: None,
+        });
+    }
+
+    // 4. If no video, check for carousel images
+    let mut image_urls: Vec<String> = Vec::new();
+    if let Ok(carousel_re) = Regex::new(r#""carousel_media"\s*:\s*(\[.*?\])\s*,\s*""#) {
+        for caps in carousel_re.captures_iter(html) {
+            if let Some(m) = caps.get(1) {
+                if let Ok(cm) = serde_json::from_str::<serde_json::Value>(m.as_str()) {
+                    if let Some(arr) = cm.as_array() {
+                        for item in arr {
+                            if let Some(candidates) = item.get("image_versions2").and_then(|iv| iv.get("candidates")).and_then(|c| c.as_array()) {
+                                if let Some(first) = candidates.first().and_then(|cand| cand.get("url")).and_then(|u| u.as_str()) {
+                                    image_urls.push(first.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !image_urls.is_empty() {
+                break;
+            }
+        }
+    }
+
+    // 5. If not carousel, check single image_versions2
+    if image_urls.is_empty() {
+        if let Ok(single_img_re) = Regex::new(r#""image_versions2"\s*:\s*(\{.*?\})\s*,\s*""#) {
+            for caps in single_img_re.captures_iter(html) {
+                if let Some(m) = caps.get(1) {
+                    if let Ok(iv) = serde_json::from_str::<serde_json::Value>(m.as_str()) {
+                        if let Some(candidates) = iv.get("candidates").and_then(|c| c.as_array()) {
+                            if let Some(first) = candidates.first().and_then(|cand| cand.get("url")).and_then(|u| u.as_str()) {
+                                image_urls.push(first.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback to og:image if candidates array was not found
+    if image_urls.is_empty() && !thumbnail.is_empty() {
+        image_urls.push(thumbnail.clone());
+    }
+
+    if image_urls.is_empty() {
+        return Err("No media or video stream found in Threads post".to_string());
+    }
+
+    let bundle = create_bundle_from_urls(
+        &post_id,
+        final_url,
+        &base_title,
+        "threads",
+        &image_urls,
+    );
+
+    Ok(bundle_to_video_info(&bundle, final_url))
+}
+
+/// Fetches and extracts a Threads post via Googlebot User-Agent
+pub async fn extract_threads_post(url: &str) -> Result<VideoInfo, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)")
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(45))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let resp = client
+        .get(url)
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .send()
+        .await
+        .map_err(|e| format!("Threads request failed: {}", e))?;
+
+    let final_url = resp.url().to_string();
+    let html = resp.text().await.map_err(|e| format!("Failed to read Threads HTML: {}", e))?;
+    parse_threads_html(&html, &final_url, url)
+}
+
 /// Main Dispatcher for fallback image extraction
 pub async fn try_extract_image_media(url: &str) -> Result<ImageMediaBundle, String> {
+    if is_threads_url(url) {
+        let vinfo = extract_threads_post(url).await?;
+        let imgs = vinfo.images.unwrap_or_else(|| {
+            if !vinfo.thumbnail.is_empty() {
+                vec![vinfo.thumbnail.clone()]
+            } else {
+                vec![]
+            }
+        });
+        return Ok(create_bundle_from_urls(
+            &vinfo.id,
+            url,
+            &vinfo.title,
+            "threads",
+            &imgs,
+        ));
+    }
     if url.contains("pinterest.com") || url.contains("pin.it") {
         return extract_pinterest_image(url).await;
     }
@@ -1339,5 +1574,43 @@ mod tests {
         let pin_url = "https://id.pinterest.com/pin/2040762329258273/";
         let res = try_extract_image_media(pin_url).await;
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_is_threads_url() {
+        assert!(is_threads_url("https://www.threads.com/@mirasammm/post/Dd7qshgk7ev"));
+        assert!(is_threads_url("https://www.threads.net/@digitalbynonnanii/post/Dd6hc6HGKSS/media"));
+        assert!(is_threads_url("https://www.threads.com/share/D5iSbKNRg/"));
+        assert!(!is_threads_url("https://www.instagram.com/p/DdRWIrXmji_/"));
+        assert!(!is_threads_url("https://www.youtube.com/watch?v=123"));
+    }
+
+    #[test]
+    fn test_parse_threads_html_video_offline() {
+        let sample_html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta property="og:title" content="Creator (&#064;creator_user) on Threads">
+                <meta property="og:description" content="Amazing nature video taken in the mountains">
+                <meta property="og:image" content="https://scontent.cdninstagram.com/v/t51/thumb.jpg">
+            </head>
+            <body>
+                <script>
+                    window.__additional_data = {"data": {"video_versions": [{"url": "https://instagram.fna.fbcdn.net/video.mp4", "duration": 18.5}]}};
+                </script>
+            </body>
+            </html>
+        "#;
+        let url = "https://www.threads.net/@creator_user/post/D123456";
+        let res = parse_threads_html(sample_html, url, url);
+        assert!(res.is_ok(), "Failed to parse threads video html: {:?}", res.err());
+        let info = res.unwrap();
+        assert_eq!(info.id, "D123456");
+        assert_eq!(info.uploader, "@creator_user");
+        assert_eq!(info.title, "Amazing nature video taken in the mountains");
+        assert_eq!(info.thumbnail, "https://scontent.cdninstagram.com/v/t51/thumb.jpg");
+        assert_eq!(info.duration, 18);
+        assert_eq!(info.description, Some("https://instagram.fna.fbcdn.net/video.mp4".to_string()));
     }
 }

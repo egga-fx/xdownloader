@@ -10,10 +10,6 @@ import {
   clearAppLogs,
   appendMockLog,
   openLogsFolder,
-  splitLocalVideo,
-  splitStreamVideo,
-  trimLocalVideoExact,
-  trimStreamVideoExact,
   resetMockStorage,
   getVideoMetadata,
 } from "../src/lib/tauri-api";
@@ -173,47 +169,8 @@ describe("AI Spec-First Contract Tests: src/lib/tauri-api.ts", () => {
     });
   });
 
-  // --- 6. Media Studio Preview Simulation ---
-  describe("Media Studio preview methods", () => {
-    it("should return generated part filepaths for splitLocalVideo()", async () => {
-      const parts = await splitLocalVideo({
-        filePath: "C:\\Videos\\sample.mp4",
-        segments: [
-          { partIndex: 1, start: "00:00:00", end: "00:01:00" },
-          { partIndex: 2, start: "00:01:00", end: "00:02:00" },
-        ],
-      });
-      expect(parts).toHaveLength(2);
-      expect(parts[0]).toContain("sample.mp4_part_01.mp4");
-      expect(parts[1]).toContain("sample.mp4_part_02.mp4");
-    });
-
-    it("should return task identifiers for splitStreamVideo()", async () => {
-      const tasks = await splitStreamVideo({
-        url: "https://example.com/video.mp4",
-        segments: [
-          { partIndex: 1, start: "00:00:00", end: "00:00:30" },
-        ],
-      });
-      expect(tasks).toHaveLength(1);
-      expect(tasks[0]).toBe("mock_task_1");
-    });
-
-    it("should return expected trimmed paths for trimLocalVideoExact() and trimStreamVideoExact()", async () => {
-      const localResult = await trimLocalVideoExact({
-        filePath: "C:\\Videos\\test.mp4",
-        startSec: 10,
-        endSec: 25,
-      });
-      expect(localResult).toContain("test.mp4_trim_");
-
-      const streamResult = await trimStreamVideoExact({
-        url: "https://youtube.com/watch?v=sample",
-        startSec: 0,
-        endSec: 15,
-      });
-      expect(streamResult).toContain("trim_task_");
-    });
+  // --- 6. Media Extraction Preview Simulation ---
+  describe("Media Extraction Preview Simulation", () => {
 
     it("should return carousel image bundle structure for photo/image posts in preview mode", async () => {
       const pinResult = await getVideoMetadata("https://pin.it/7xYz123");

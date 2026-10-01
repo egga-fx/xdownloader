@@ -4,7 +4,6 @@ import {
   Play,
   Download,
   MoreVertical,
-  Scissors,
   FolderOpen,
   Copy,
   Trash2,
@@ -20,7 +19,6 @@ interface VaultItemActionsProps {
   onOpenFolder: (record: DownloadRecord) => void;
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
-  onSplitRecord?: (record: DownloadRecord) => void;
   onRetry?: (record: DownloadRecord) => void;
   layout?: "row" | "split";
 }
@@ -31,7 +29,6 @@ export const VaultItemActions: React.FC<VaultItemActionsProps> = ({
   onOpenFolder,
   onCopyPath,
   onDeleteRecord,
-  onSplitRecord,
   onRetry,
   layout = "row",
 }) => {
@@ -220,20 +217,6 @@ export const VaultItemActions: React.FC<VaultItemActionsProps> = ({
                 </button>
               )}
 
-              {/* Trim / Split Video */}
-              {canPlayOrDownload && onSplitRecord && record.formatType !== "image" && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsOpen(false);
-                    onSplitRecord(record);
-                  }}
-                  className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#d4d4d8] hover:text-white hover:bg-white/5 transition-colors cursor-pointer w-full text-left"
-                >
-                  <Scissors className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>Trim / Split Media</span>
-                </button>
-              )}
 
               {/* Show in Folder (Only show in menu if in browser mode, since desktop has it as a direct button outside) */}
               {canPlayOrDownload && !isDesktop && (

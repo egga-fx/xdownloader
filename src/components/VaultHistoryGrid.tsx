@@ -25,7 +25,6 @@ interface VaultHistoryGridProps {
   onOpenFolder: (record: DownloadRecord) => void;
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
-  onSplitRecord?: (record: DownloadRecord) => void;
   onRetryRecord?: (record: DownloadRecord) => void;
 }
 
@@ -37,7 +36,6 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
   onOpenFolder,
   onCopyPath,
   onDeleteRecord,
-  onSplitRecord,
   onRetryRecord,
 }) => {
   return (
@@ -221,7 +219,6 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 onOpenFolder={onOpenFolder}
                 onCopyPath={onCopyPath}
                 onDeleteRecord={onDeleteRecord}
-                onSplitRecord={onSplitRecord}
                 onRetry={onRetryRecord}
                 layout="split"
               />

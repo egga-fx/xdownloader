@@ -9,8 +9,7 @@ use tauri::{AppHandle, Emitter};
 use crate::binaries::find_binary;
 use crate::db::Database;
 use crate::models::{
-    ActiveDownloadTask, DownloadRecord, SplitLocalRequest, SplitStreamRequest, TaskProgress,
-    TimeRange, TrimStreamRequest, TrimVideoRequest,
+    ActiveDownloadTask, DownloadRecord, TaskProgress, TimeRange,
 };
 
 #[cfg(target_os = "windows")]
@@ -135,7 +134,9 @@ pub async fn run_download(
 
     // 1. Direct Image Extraction Interceptor
     if format_type == "image" {
-        let platform_name = if url.contains("instagram.com") {
+        let platform_name = if crate::image_extractor::is_threads_url(&url) {
+            "threads"
+        } else if url.contains("instagram.com") {
             "instagram"
         } else if url.contains("pinterest.com") || url.contains("pin.it") {
             "pinterest"
@@ -206,6 +207,35 @@ pub async fn run_download(
 
     let ffmpeg_path = find_binary("ffmpeg");
 
+    // Resolve direct download URL and metadata for platforms that require extraction preprocessing (Threads)
+    let mut download_url = url.clone();
+    let mut resolved_title = title.clone();
+    let mut resolved_author = author.clone();
+    let mut resolved_thumbnail = thumbnail_url.clone();
+    let mut resolved_duration = duration_sec;
+
+    if crate::image_extractor::is_threads_url(&url) {
+        if let Ok(vinfo) = crate::image_extractor::extract_threads_post(&url).await {
+            if let Some(ref direct_v_url) = vinfo.description {
+                if !direct_v_url.is_empty() && direct_v_url.starts_with("http") {
+                    download_url = direct_v_url.clone();
+                }
+            }
+            if resolved_title.is_none() || resolved_title.as_deref() == Some(&url) {
+                resolved_title = Some(vinfo.title.clone());
+            }
+            if resolved_author.is_none() {
+                resolved_author = Some(vinfo.uploader.clone());
+            }
+            if resolved_thumbnail.is_none() || resolved_thumbnail.as_deref() == Some("") {
+                resolved_thumbnail = Some(vinfo.thumbnail.clone());
+            }
+            if resolved_duration.is_none() || resolved_duration == Some(0) {
+                resolved_duration = Some(vinfo.duration);
+            }
+        }
+    }
+
     // Template output filename (sanitized for Windows filesystem)
     let out_template = match custom_name.as_deref() {
         Some(name) if !name.trim().is_empty() => {
@@ -215,6 +245,15 @@ pub async fn run_download(
         _ => {
             if url.contains("instagram.com") {
                 out_dir.join("%(upload_date>%Y%m%d_%H%M%S|upload_date)s_%(id)s.%(ext)s")
+            } else if crate::image_extractor::is_threads_url(&url) {
+                let name = resolved_title.as_deref().unwrap_or("threads_video");
+                let clean = sanitize_filename(name);
+                let safe_stem = if clean.chars().count() > 80 {
+                    clean.chars().take(80).collect::<String>()
+                } else {
+                    clean
+                };
+                out_dir.join(format!("{}.%(ext)s", safe_stem))
             } else {
                 out_dir.join("%(title)s [%(id)s].%(ext)s")
             }
@@ -324,7 +363,7 @@ pub async fn run_download(
         }
     }
 
-    cmd.arg(&url);
+    cmd.arg(&download_url);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -333,10 +372,10 @@ pub async fn run_download(
     process_mgr.register(task_id.clone(), pid);
 
     // Metadata resolution for the initial DB record
-    let rec_title = custom_name.clone().or(title).unwrap_or_else(|| url.clone());
-    let mut rec_thumb = thumbnail_url.unwrap_or_default();
-    let rec_author = author.unwrap_or_default();
-    let rec_duration = duration_sec.unwrap_or(0);
+    let rec_title = custom_name.clone().or(resolved_title).unwrap_or_else(|| url.clone());
+    let mut rec_thumb = resolved_thumbnail.unwrap_or_default();
+    let rec_author = resolved_author.unwrap_or_default();
+    let rec_duration = resolved_duration.unwrap_or(0);
 
     // Fallback: extract YouTube thumbnail directly from video ID if empty
     if rec_thumb.is_empty() {
@@ -346,7 +385,9 @@ pub async fn run_download(
     }
 
     // Detect platform
-    let platform = if url.contains("youtube.com") || url.contains("youtu.be") {
+    let platform = if crate::image_extractor::is_threads_url(&url) {
+        "threads"
+    } else if url.contains("youtube.com") || url.contains("youtu.be") {
         "youtube"
     } else if url.contains("tiktok.com") {
         "tiktok"
@@ -689,454 +730,5 @@ pub async fn run_download(
     }
 }
 
-pub fn time_str_to_seconds(t: &str) -> i64 {
-    let parts: Vec<&str> = t.trim().split(':').collect();
-    match parts.len() {
-        3 => {
-            let h: i64 = parts[0].parse().unwrap_or(0);
-            let m: i64 = parts[1].parse().unwrap_or(0);
-            let s: f64 = parts[2].parse().unwrap_or(0.0);
-            h * 3600 + m * 60 + s as i64
-        }
-        2 => {
-            let m: i64 = parts[0].parse().unwrap_or(0);
-            let s: f64 = parts[1].parse().unwrap_or(0.0);
-            m * 60 + s as i64
-        }
-        1 => parts[0].parse::<f64>().unwrap_or(0.0) as i64,
-        _ => 0,
-    }
-}
-
-pub async fn split_local_video(
-    app: AppHandle,
-    db: Arc<Database>,
-    req: SplitLocalRequest,
-) -> Result<Vec<String>, String> {
-    let in_path = PathBuf::from(&req.file_path);
-    if !in_path.exists() {
-        return Err(format!("Source video file does not exist: {}", req.file_path));
-    }
-
-    let stem = in_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("video")
-        .to_string();
-
-    let ext = in_path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("mp4")
-        .to_string();
-
-    let base_parent = match req.output_folder {
-        Some(ref d) if !d.trim().is_empty() => PathBuf::from(d.trim()),
-        _ => in_path.parent().unwrap_or(&PathBuf::from(".")).to_path_buf(),
-    };
-
-    let out_dir = if req.create_subfolder {
-        base_parent.join(format!("{}_parts", sanitize_filename(&stem)))
-    } else {
-        base_parent
-    };
-
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Failed to create output directory: {}", e))?;
-
-    let ffmpeg_path = find_binary("ffmpeg")
-        .ok_or_else(|| "FFmpeg binary is not installed. Please setup engines first.".to_string())?;
-
-    let mut created_paths: Vec<String> = Vec::new();
-    let total_segments = req.segments.len();
-
-    for (idx, seg) in req.segments.iter().enumerate() {
-        let part_filename = format!("{}_part_{:02}.{}", sanitize_filename(&stem), seg.part_index, ext);
-        let out_path = out_dir.join(&part_filename);
-        let out_str = out_path.to_string_lossy().to_string();
-
-        let mut cmd = Command::new(&ffmpeg_path);
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NO_WINDOW);
-
-        cmd.arg("-ss")
-            .arg(&seg.start)
-            .arg("-to")
-            .arg(&seg.end)
-            .arg("-i")
-            .arg(&in_path);
-
-        if req.precise_cut {
-            cmd.arg("-c:v")
-                .arg("libx264")
-                .arg("-crf")
-                .arg("18")
-                .arg("-preset")
-                .arg("fast")
-                .arg("-c:a")
-                .arg("aac")
-                .arg("-b:a")
-                .arg("192k");
-        } else {
-            cmd.arg("-c")
-                .arg("copy")
-                .arg("-avoid_negative_ts")
-                .arg("make_zero");
-        }
-
-        cmd.arg("-y").arg(&out_path);
-
-        let output = cmd.output().map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("FFmpeg splitting failed on Part {}: {}", seg.part_index, stderr));
-        }
-
-        let file_size = std::fs::metadata(&out_path)
-            .map(|m| m.len() as i64)
-            .unwrap_or(0);
-
-        let start_sec = time_str_to_seconds(&seg.start);
-        let end_sec = time_str_to_seconds(&seg.end);
-        let part_duration = (end_sec - start_sec).max(1);
-
-        let record_id = format!("split_{}_{:02}", chrono::Utc::now().timestamp_millis(), seg.part_index);
-        let part_title = if let Some(ref l) = seg.label {
-            if !l.trim().is_empty() {
-                format!("{} ({})", stem, l.trim())
-            } else {
-                format!("{} (Part {:02})", stem, seg.part_index)
-            }
-        } else {
-            format!("{} (Part {:02})", stem, seg.part_index)
-        };
-
-        let is_audio = ext == "mp3" || ext == "wav" || ext == "m4a" || ext == "flac" || ext == "opus";
-        let record = DownloadRecord {
-            id: record_id.clone(),
-            platform: "local_split".to_string(),
-            url: format!("file://{}", out_str),
-            title: part_title,
-            author: "Video Splitter".to_string(),
-            duration_sec: part_duration,
-            thumbnail_url: String::new(),
-            format_type: if is_audio { "audio".to_string() } else { "video".to_string() },
-            quality: if req.precise_cut { "precise".to_string() } else { "lossless".to_string() },
-            file_path: out_str.clone(),
-            file_size_bytes: file_size,
-            status: "completed".to_string(),
-            error: None,
-            created_at: chrono::Utc::now().to_rfc3339(),
-            time_range: Some(TimeRange {
-                start: seg.start.clone(),
-                end: seg.end.clone(),
-            }),
-            exists: true,
-        };
-
-        let _ = db.add_record(&record);
-
-        let pct = ((idx + 1) as f64 / total_segments as f64) * 100.0;
-        let _ = app.emit(
-            "split-progress",
-            serde_json::json!({
-                "partIndex": seg.part_index,
-                "totalParts": total_segments,
-                "percent": pct,
-                "filePath": out_str,
-                "title": record.title,
-                "status": "completed",
-            }),
-        );
-
-        created_paths.push(out_str);
-    }
-
-    Ok(created_paths)
-}
-
-pub async fn split_stream_video(
-    app: AppHandle,
-    db: Arc<Database>,
-    process_mgr: Arc<ProcessManager>,
-    req: SplitStreamRequest,
-) -> Result<Vec<String>, String> {
-    let base_title = req.title.unwrap_or_else(|| "stream".to_string());
-    let clean_title = sanitize_filename(&base_title);
-
-    let base_dir = match req.output_folder {
-        Some(ref d) if !d.trim().is_empty() => PathBuf::from(d.trim()),
-        _ => get_default_download_dir(),
-    };
-
-    let out_dir = if req.create_subfolder {
-        base_dir.join(format!("{}_parts", clean_title))
-    } else {
-        base_dir
-    };
-
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Failed to create output directory: {}", e))?;
-
-    let mut task_ids: Vec<String> = Vec::new();
-    let total_segments = req.segments.len();
-
-    for (idx, seg) in req.segments.iter().enumerate() {
-        let task_id = format!("split_stream_{}_{:02}", chrono::Utc::now().timestamp_millis(), seg.part_index);
-        let part_name = format!("{}_part_{:02}", clean_title, seg.part_index);
-        let part_title = if let Some(ref l) = seg.label {
-            if !l.trim().is_empty() {
-                format!("{} ({})", base_title, l.trim())
-            } else {
-                format!("{} (Part {:02})", base_title, seg.part_index)
-            }
-        } else {
-            format!("{} (Part {:02})", base_title, seg.part_index)
-        };
-
-        let start_sec = time_str_to_seconds(&seg.start);
-        let end_sec = time_str_to_seconds(&seg.end);
-        let part_duration = (end_sec - start_sec).max(1);
-
-        task_ids.push(task_id.clone());
-
-        let _ = app.emit(
-            "split-progress",
-            serde_json::json!({
-                "partIndex": seg.part_index,
-                "totalParts": total_segments,
-                "percent": ((idx as f64) / total_segments as f64) * 100.0,
-                "title": part_title,
-                "status": "starting",
-            }),
-        );
-
-        let dl_res = run_download(
-            app.clone(),
-            db.clone(),
-            process_mgr.clone(),
-            task_id,
-            req.url.clone(),
-            req.format_type.clone(),
-            req.quality.clone(),
-            Some(part_title),
-            req.thumbnail_url.clone(),
-            req.author.clone(),
-            Some(part_duration),
-            Some(part_name),
-            Some(out_dir.to_string_lossy().to_string()),
-            false,
-            Some(TimeRange {
-                start: seg.start.clone(),
-                end: seg.end.clone(),
-            }),
-            None,
-            None,
-        )
-        .await;
-
-        if let Err(e) = dl_res {
-            eprintln!("Warning: Failed to split part {}: {}", seg.part_index, e);
-        }
-    }
-
-    Ok(task_ids)
-}
-
-pub fn format_seconds_to_timestamp(sec: f64) -> String {
-    let total_secs = sec.max(0.0) as u64;
-    let h = total_secs / 3600;
-    let m = (total_secs % 3600) / 60;
-    let s = total_secs % 60;
-    format!("{:02}:{:02}:{:02}", h, m, s)
-}
-
-pub async fn trim_local_video_exact(
-    app: AppHandle,
-    db: Arc<Database>,
-    req: TrimVideoRequest,
-) -> Result<String, String> {
-    let in_path = PathBuf::from(&req.file_path);
-    if !in_path.exists() {
-        return Err(format!("Source video file does not exist: {}", req.file_path));
-    }
-
-    let stem = in_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("video")
-        .to_string();
-
-    let clean_stem = sanitize_filename(&stem);
-    let base_parent = match req.output_folder {
-        Some(ref d) if !d.trim().is_empty() => PathBuf::from(d.trim()),
-        _ => in_path.parent().unwrap_or(&PathBuf::from(".")).to_path_buf(),
-    };
-    let _ = std::fs::create_dir_all(&base_parent);
-
-    let ts = chrono::Utc::now().timestamp();
-    let final_filename = match req.custom_name {
-        Some(ref name) if !name.trim().is_empty() => {
-            let clean = sanitize_filename(name.trim());
-            format!("{}_trim_{}.mp4", clean, ts)
-        }
-        _ => format!("{}_trim_{}.mp4", clean_stem, ts),
-    };
-
-    let out_file = base_parent.join(&final_filename);
-    let ffmpeg_path = find_binary("ffmpeg")
-        .ok_or_else(|| "FFmpeg binary is not installed. Please setup engines first.".to_string())?;
-
-    let start_sec = req.start_sec.max(0.0);
-    let end_sec = req.end_sec.max(start_sec + 0.1);
-    let duration = end_sec - start_sec;
-
-    let start_ts = format!("{:.3}", start_sec);
-    let to_ts = format!("{:.3}", end_sec);
-
-    let mut cmd = Command::new(&ffmpeg_path);
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-
-    // Frame-Accurate Re-encode:
-    // -ss before -i for fast seek, -to for precise end, re-encode with libx264 fast crf 22 + aac
-    cmd.arg("-y")
-        .arg("-ss")
-        .arg(&start_ts)
-        .arg("-to")
-        .arg(&to_ts)
-        .arg("-i")
-        .arg(&in_path)
-        .arg("-c:v")
-        .arg("libx264")
-        .arg("-preset")
-        .arg("fast")
-        .arg("-crf")
-        .arg("22")
-        .arg("-c:a")
-        .arg("aac")
-        .arg("-b:a")
-        .arg("192k")
-        .arg("-movflags")
-        .arg("+faststart")
-        .arg(&out_file);
-
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Failed to execute FFmpeg: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("FFmpeg trim error: {}", stderr.lines().last().unwrap_or("Unknown error")));
-    }
-
-    let file_size = std::fs::metadata(&out_file)
-        .map(|m| m.len() as i64)
-        .unwrap_or(0);
-
-    let task_id = format!("trim_{}_{}", ts, &stem.chars().take(8).collect::<String>());
-    let out_path_str = out_file.to_string_lossy().to_string();
-
-    let record = DownloadRecord {
-        id: task_id.clone(),
-        platform: "local".to_string(),
-        url: out_path_str.clone(),
-        title: format!("{} (Trimmed)", stem),
-        author: "xDownloader Studio".to_string(),
-        duration_sec: duration.round() as i64,
-        thumbnail_url: "".to_string(),
-        format_type: "video".to_string(),
-        quality: "1080p".to_string(),
-        file_path: out_path_str.clone(),
-        file_size_bytes: file_size,
-        status: "completed".to_string(),
-        error: None,
-        created_at: chrono::Utc::now().to_rfc3339(),
-        time_range: Some(TimeRange {
-            start: format_seconds_to_timestamp(start_sec),
-            end: format_seconds_to_timestamp(end_sec),
-        }),
-        exists: true,
-    };
-
-    let _ = db.add_record(&record);
-
-    let _ = app.emit(
-        "download-progress",
-        ActiveDownloadTask {
-            task_id,
-            url: out_path_str.clone(),
-            title: format!("{} (Trimmed)", stem),
-            platform: "local".to_string(),
-            format_type: "video".to_string(),
-            quality: "1080p".to_string(),
-            status: "completed".to_string(),
-            progress: TaskProgress {
-                percent: 100.0,
-                speed_str: "Trimmed".to_string(),
-                eta_str: "00:00".to_string(),
-                downloaded_bytes: Some(file_size),
-                total_bytes: Some(file_size),
-            },
-            error: None,
-        },
-    );
-
-    Ok(out_path_str)
-}
-
-pub async fn trim_stream_video_exact(
-    app: AppHandle,
-    db: Arc<Database>,
-    process_mgr: Arc<ProcessManager>,
-    req: TrimStreamRequest,
-) -> Result<String, String> {
-    let ts = chrono::Utc::now().timestamp();
-    let base_title = req.title.clone().unwrap_or_else(|| "Online Video".to_string());
-    let clean_title = sanitize_filename(&base_title);
-
-    let final_filename = match req.custom_name {
-        Some(ref name) if !name.trim().is_empty() => {
-            let clean = sanitize_filename(name.trim());
-            format!("{}_trim_{}", clean, ts)
-        }
-        _ => format!("{}_trim_{}", clean_title, ts),
-    };
-
-    let start_sec = req.start_sec.max(0.0);
-    let end_sec = req.end_sec.max(start_sec + 0.1);
-    let duration = (end_sec - start_sec).round() as i64;
-
-    let start_ts = format_seconds_to_timestamp(start_sec);
-    let end_ts = format_seconds_to_timestamp(end_sec);
-
-    let task_id = format!("trim_stream_{}_{}", ts, &clean_title.chars().take(8).collect::<String>());
-
-    run_download(
-        app,
-        db,
-        process_mgr,
-        task_id.clone(),
-        req.url,
-        req.format_type.unwrap_or_else(|| "video".to_string()),
-        req.quality.unwrap_or_else(|| "1080p".to_string()),
-        Some(format!("{} (Trimmed)", base_title)),
-        req.thumbnail_url,
-        req.author,
-        Some(duration),
-        Some(final_filename),
-        req.output_folder,
-        false,
-        Some(TimeRange {
-            start: start_ts,
-            end: end_ts,
-        }),
-        None,
-        None,
-    )
-    .await?;
-
-    Ok(task_id)
-}
 
 

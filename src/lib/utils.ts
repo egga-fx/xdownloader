@@ -9,6 +9,7 @@ export function cn(...inputs: ClassValue[]) {
 export function detectPlatform(inputUrl: string): DownloaderPlatform {
   if (!inputUrl) return "generic";
   const trimmed = inputUrl.trim();
+  if (/threads\.(?:net|com)/i.test(trimmed)) return "threads";
   if (/youtube\.com|youtu\.be/i.test(trimmed)) return "youtube";
   if (/tiktok\.com/i.test(trimmed)) return "tiktok";
   if (/instagram\.com/i.test(trimmed)) return "instagram";
@@ -46,6 +47,10 @@ export function isSupportedMediaUrl(inputUrl: string): boolean {
   if (platform === "generic") return false;
 
   // Platform-specific media validations:
+  if (platform === "threads") {
+    return Boolean(path && path !== "/");
+  }
+
   if (platform === "pinterest") {
     // pin.it must have shortcode
     if (parsed.hostname.includes("pin.it")) {
@@ -195,6 +200,19 @@ export function getSourceAccount(item: DownloadRecord): SourceAccountInfo {
     return { text: "Pinterest Source", url: rawUrl || "https://www.pinterest.com" };
   }
 
+  // 6. Threads
+  if (item.platform === "threads" || /threads\.(?:net|com)/i.test(rawUrl)) {
+    const match = rawUrl.match(/threads\.(?:net|com)\/(@[^/?#]+)/i);
+    if (match) {
+      return { text: match[1], url: `https://www.threads.net/${match[1]}` };
+    }
+    if (author) {
+      const handle = author.startsWith("@") ? author : `@${author}`;
+      return { text: handle, url: `https://www.threads.net/${handle}` };
+    }
+    return { text: "@threads", url: rawUrl || "https://www.threads.net" };
+  }
+
   // 6. Web Media
   if (item.platform === "web_media" || /^https?:\/\//i.test(rawUrl)) {
     let hostname = "Web Media";
@@ -303,11 +321,11 @@ export function cleanMediaUrl(rawUrl: string): string {
       return parsed.toString();
     }
 
-    // 3. TikTok / Instagram / X
+    // 3. TikTok / Instagram / X / Threads
     // Strip common tracking queries
     const trackingParams = [
       "si", "igsh", "utm_source", "utm_medium", "utm_campaign",
-      "utm_term", "utm_content", "fbclid", "s", "t", "ref_src"
+      "utm_term", "utm_content", "fbclid", "s", "t", "ref_src", "xmt"
     ];
     for (const param of trackingParams) {
       parsed.searchParams.delete(param);
@@ -369,33 +387,6 @@ export function timestampToSeconds(ts: string): number {
 }
 
 /**
- * Generates equal-duration SplitSegments from total duration
- */
-export function generatePresetSegments(
-  totalSec: number,
-  chunkSec: number
-): { partIndex: number; start: string; end: string; label?: string }[] {
-  if (totalSec <= 0 || chunkSec <= 0) return [];
-  const segments: { partIndex: number; start: string; end: string; label?: string }[] = [];
-  let currentStart = 0;
-  let part = 1;
-
-  while (currentStart < totalSec) {
-    const nextEnd = Math.min(currentStart + chunkSec, totalSec);
-    segments.push({
-      partIndex: part,
-      start: secondsToTimestamp(currentStart),
-      end: secondsToTimestamp(nextEnd),
-      label: `Part ${part}`,
-    });
-    currentStart = nextEnd;
-    part++;
-  }
-
-  return segments;
-}
-
-/**
  * Safely extracts a readable string message from an unknown error value
  */
 export function getErrorMessage(err: unknown): string {
@@ -407,68 +398,4 @@ export function getErrorMessage(err: unknown): string {
   return String(err);
 }
 
-/**
- * Validates start and end boundaries for video trimming
- */
-export function validateTrimRange(
-  startSec: number,
-  endSec: number,
-  totalDuration?: number
-): { valid: boolean; error?: string } {
-  if (isNaN(startSec) || isNaN(endSec)) {
-    return { valid: false, error: "Timecodes must be valid numbers" };
-  }
-  if (startSec < 0) {
-    return { valid: false, error: "Start time cannot be negative" };
-  }
-  if (endSec <= startSec) {
-    return { valid: false, error: "End time must be greater than start time" };
-  }
-  if (endSec - startSec < 0.1) {
-    return { valid: false, error: "Trim duration must be at least 0.1 seconds" };
-  }
-  if (typeof totalDuration === "number" && totalDuration > 0) {
-    if (startSec >= totalDuration) {
-      return { valid: false, error: "Start time cannot exceed or equal total video duration" };
-    }
-    if (endSec > totalDuration + 0.5) {
-      return { valid: false, error: "End time cannot exceed total video duration" };
-    }
-  }
-  return { valid: true };
-}
-
-/**
- * Validates an array of split segments for duration and ordering
- */
-export function validateSplitSegments(
-  segments: { partIndex?: number; start: string; end: string }[],
-  totalDuration?: number
-): { valid: boolean; error?: string } {
-  if (!segments || segments.length === 0) {
-    return { valid: false, error: "At least one segment is required" };
-  }
-
-  for (let i = 0; i < segments.length; i++) {
-    const s = segments[i];
-    const startSec = timestampToSeconds(s.start);
-    const endSec = timestampToSeconds(s.end);
-
-    if (endSec <= startSec) {
-      return {
-        valid: false,
-        error: `Segment ${s.partIndex ?? i + 1} has invalid range: start (${s.start}) must be before end (${s.end})`,
-      };
-    }
-
-    if (typeof totalDuration === "number" && totalDuration > 0 && endSec > totalDuration + 1) {
-      return {
-        valid: false,
-        error: `Segment ${s.partIndex ?? i + 1} end (${s.end}) exceeds total duration (${secondsToTimestamp(totalDuration)})`,
-      };
-    }
-  }
-
-  return { valid: true };
-}
 

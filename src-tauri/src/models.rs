@@ -106,63 +106,6 @@ impl Default for AppSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SplitSegment {
-    pub part_index: u32,
-    pub start: String,
-    pub end: String,
-    pub label: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SplitLocalRequest {
-    pub file_path: String,
-    pub segments: Vec<SplitSegment>,
-    pub output_folder: Option<String>,
-    pub precise_cut: bool,
-    pub create_subfolder: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SplitStreamRequest {
-    pub url: String,
-    pub segments: Vec<SplitSegment>,
-    pub format_type: String,
-    pub quality: String,
-    pub title: Option<String>,
-    pub thumbnail_url: Option<String>,
-    pub author: Option<String>,
-    pub output_folder: Option<String>,
-    pub create_subfolder: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TrimVideoRequest {
-    pub file_path: String,
-    pub start_sec: f64,
-    pub end_sec: f64,
-    pub custom_name: Option<String>,
-    pub output_folder: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TrimStreamRequest {
-    pub url: String,
-    pub start_sec: f64,
-    pub end_sec: f64,
-    pub custom_name: Option<String>,
-    pub output_folder: Option<String>,
-    pub format_type: Option<String>,
-    pub quality: Option<String>,
-    pub title: Option<String>,
-    pub thumbnail_url: Option<String>,
-    pub author: Option<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

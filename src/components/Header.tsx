@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Settings,
   Info,
-  Scissors,
   Loader2,
 } from "lucide-react";
 import { BinariesStatus } from "../types";
@@ -23,8 +22,6 @@ interface HeaderProps {
   onToggleVault: () => void;
   vaultCount: number;
   activeDownloadingCount: number;
-  onOpenSplitter?: () => void;
-  onOpenTrimmer?: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
   hasUpdate?: boolean;
@@ -41,8 +38,6 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleVault,
   vaultCount,
   activeDownloadingCount,
-  onOpenSplitter,
-  onOpenTrimmer,
   onOpenSettings,
   onOpenAbout,
   hasUpdate = false,
@@ -50,8 +45,6 @@ export const Header: React.FC<HeaderProps> = ({
   const isChecking = checkingBinaries || binariesStatus === null;
   const isBinariesReady =
     !isChecking && binariesStatus?.ytdlp_installed && binariesStatus?.ffmpeg_installed;
-
-  const triggerTrimmer = onOpenTrimmer || onOpenSplitter;
 
   return (
     <header className="h-14 border-b border-[#27272a] bg-[#09090b]/80 backdrop-blur-md px-4 flex items-center justify-between z-30 shrink-0 select-none">
@@ -154,17 +147,6 @@ export const Header: React.FC<HeaderProps> = ({
           ) : null}
         </button>
 
-        {/* Video Trimmer Button */}
-        {triggerTrimmer && (
-          <button
-            onClick={triggerTrimmer}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold bg-[#141418] border-[#27272a] text-[#f4f4f5] hover:border-zinc-500 hover:bg-zinc-800 hover:text-white cursor-pointer transition-all"
-            title="Video Trimmer (Potong video secara visual)"
-          >
-            <Scissors className="w-3.5 h-3.5 text-zinc-300" />
-            <span className="hidden sm:inline">Trimmer</span>
-          </button>
-        )}
 
         {/* Settings Button: Gear Icon Only */}
         <button

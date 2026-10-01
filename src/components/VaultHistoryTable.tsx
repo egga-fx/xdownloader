@@ -23,7 +23,6 @@ interface VaultHistoryTableProps {
   onOpenFolder: (record: DownloadRecord) => void;
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
-  onSplitRecord?: (record: DownloadRecord) => void;
   onRetryRecord?: (record: DownloadRecord) => void;
 }
 
@@ -35,7 +34,6 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
   onOpenFolder,
   onCopyPath,
   onDeleteRecord,
-  onSplitRecord,
   onRetryRecord,
 }) => {
   return (
@@ -216,7 +214,6 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
               onOpenFolder={onOpenFolder}
               onCopyPath={onCopyPath}
               onDeleteRecord={onDeleteRecord}
-              onSplitRecord={onSplitRecord}
               onRetry={onRetryRecord}
               layout="row"
             />

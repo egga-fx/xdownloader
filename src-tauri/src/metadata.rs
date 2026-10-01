@@ -30,6 +30,11 @@ fn parse_img_index(u: &str) -> Option<usize> {
 }
 
 pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
+    // 1. Threads native extraction interceptor (threads.com and threads.net)
+    if crate::image_extractor::is_threads_url(url) {
+        return crate::image_extractor::extract_threads_post(url).await;
+    }
+
     let ytdlp_path = match find_binary("yt-dlp") {
         Some(p) => p,
         None => {

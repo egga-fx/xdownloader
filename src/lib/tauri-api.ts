@@ -13,12 +13,7 @@ import {
   DownloaderQuality,
   DownloadRecord,
   LogEntry,
-  SplitLocalRequest,
-  SplitStreamRequest,
-  SplitProgressEvent,
   TimeRange,
-  TrimStreamRequest,
-  TrimVideoRequest,
   VideoInfo,
 } from "../types";
 import { detectPlatform } from "./utils";
@@ -368,14 +363,19 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
     };
   }
 
-  const idMatch = cleanUrl.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
-  const postId = idMatch ? idMatch[1] : `ig_${Date.now().toString(36)}`;
+  const idMatch = cleanUrl.match(/\/(?:p|reel|reels|tv|post)\/([A-Za-z0-9_-]+)/);
+  const postId = idMatch ? idMatch[1] : `post_${Date.now().toString(36)}`;
   const now = new Date();
   const pad = (n: number) => n.toString().padStart(2, "0");
   const tsStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
+  const authorMatch = cleanUrl.match(/@([A-Za-z0-9_.]+)/);
+  const authorName = authorMatch ? `@${authorMatch[1]}` : (platform === "threads" ? "@threads_creator" : "CreatorStudio");
+
   const videoTitle = platform === "instagram"
     ? `${tsStr}_${postId}`
+    : platform === "threads"
+    ? `${authorName} on Threads - Post [${postId}]`
     : `Amazing ${platform.toUpperCase()} Viral Showcase (Preview Mode)`;
 
   return {
@@ -385,7 +385,7 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
     duration: 186,
     thumbnail:
       "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80",
-    uploader: "CreatorStudio",
+    uploader: authorName,
     channel: `${platform.toUpperCase()} Spotlight`,
     description: "Multi-platform media downloaded effortlessly using xDownloader.",
   };
@@ -1058,54 +1058,7 @@ export async function openExternalUrl(url: string): Promise<void> {
   }
 }
 
-// --- 9. VIDEO SPLITTER ---
-
-export async function splitLocalVideo(req: SplitLocalRequest): Promise<string[]> {
-  if (isTauriEnvironment()) {
-    return await invoke<string[]>("split_local_video", { req });
-  }
-  return req.segments.map((s) => `${req.filePath}_part_${String(s.partIndex).padStart(2, "0")}.mp4`);
-}
-
-export async function splitStreamVideo(req: SplitStreamRequest): Promise<string[]> {
-  if (isTauriEnvironment()) {
-    return await invoke<string[]>("split_stream_video", { req });
-  }
-  return req.segments.map((s) => `mock_task_${s.partIndex}`);
-}
-
-export function onSplitProgress(callback: (data: SplitProgressEvent) => void): () => void {
-  if (isTauriEnvironment()) {
-    let unlistenFn: UnlistenFn | undefined;
-    listen<SplitProgressEvent>("split-progress", (event) => {
-      callback(event.payload);
-    }).then((fn) => {
-      unlistenFn = fn;
-    });
-    return () => {
-      if (unlistenFn) unlistenFn();
-    };
-  }
-  return () => {};
-}
-
-// --- 10. VIDEO TRIMMER ---
-
-export async function trimLocalVideoExact(req: TrimVideoRequest): Promise<string> {
-  if (isTauriEnvironment()) {
-    return await invoke<string>("trim_local_video", { req });
-  }
-  return `${req.filePath}_trim_${Date.now()}.mp4`;
-}
-
-export async function trimStreamVideoExact(req: TrimStreamRequest): Promise<string> {
-  if (isTauriEnvironment()) {
-    return await invoke<string>("trim_stream_video", { req });
-  }
-  return `trim_task_${Date.now()}`;
-}
-
-// --- 11. LOGGING & DIAGNOSTICS ---
+// --- 9. LOGGING & DIAGNOSTICS ---
 
 export async function getRecentLogs(limit: number = 100, level?: string): Promise<LogEntry[]> {
   if (isTauriEnvironment()) {

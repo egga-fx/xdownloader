@@ -25,7 +25,6 @@ interface MediaVaultDrawerProps {
   onOpenFolder: (record: DownloadRecord) => void;
   onCopyPath: (path: string) => void;
   onDeleteRecordDirectly: (id: string, title?: string) => Promise<void>;
-  onSplitRecord?: (record: DownloadRecord) => void;
   onRetryRecord?: (record: DownloadRecord) => void;
   loading: boolean;
 }
@@ -41,7 +40,6 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
   onOpenFolder,
   onCopyPath,
   onDeleteRecordDirectly,
-  onSplitRecord,
   onRetryRecord,
   loading,
 }) => {
@@ -251,7 +249,6 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
               onOpenFolder={onOpenFolder}
               onCopyPath={onCopyPath}
               onDeleteRecord={handleDeleteClick}
-              onSplitRecord={onSplitRecord}
               onRetryRecord={onRetryRecord}
             />
           ) : (
@@ -263,7 +260,6 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
               onOpenFolder={onOpenFolder}
               onCopyPath={onCopyPath}
               onDeleteRecord={handleDeleteClick}
-              onSplitRecord={onSplitRecord}
               onRetryRecord={onRetryRecord}
             />
           )}
