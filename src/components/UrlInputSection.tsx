@@ -43,9 +43,10 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   const [clipboardPlatform, setClipboardPlatform] = useState<DownloaderPlatform>("generic");
 
   // Check clipboard periodically on window focus and visibility change
-  const checkClipboard = async () => {
-    // Only auto-poll in native desktop shell to avoid browser security permission popups
-    if (!isTauriEnvironment()) return;
+  const checkClipboard = async (isUserGesture = false) => {
+    // Only auto-poll in native desktop shell to avoid browser security permission popups,
+    // unless explicitly triggered by a user gesture (hover, focus, click).
+    if (!isTauriEnvironment() && !isUserGesture) return;
 
     try {
       const text = await getClipboardUrl();
@@ -64,28 +65,32 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   };
 
   useEffect(() => {
-    // Auto-polling is only active in native desktop shell
-    if (!isTauriEnvironment()) return;
-
     let active = true;
     const runCheck = async () => {
       if (active) await checkClipboard();
     };
 
     runCheck();
-    const interval = setInterval(runCheck, 2000);
+    // Fast polling in native desktop shell (1000ms for immediate reaction)
+    let interval: ReturnType<typeof setInterval> | null = null;
+    if (isTauriEnvironment()) {
+      interval = setInterval(runCheck, 1000);
+    }
+
     const handleFocus = () => runCheck();
     const handleVisibility = () => {
       if (document.visibilityState === "visible") runCheck();
     };
 
     window.addEventListener("focus", handleFocus);
+    window.addEventListener("pointerdown", handleFocus);
     document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
       active = false;
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("pointerdown", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
@@ -95,7 +100,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
 
   const handleSmartDownloadClick = async () => {
     // 1. If live clipboard contains a valid media URL, DYNAMICALLY use it:
-    if (hasValidClipboardUrl) {
+    if (hasValidClipboardUrl && (!hasMetadata || clipboardUrl !== url.trim())) {
       onUrlChange(clipboardUrl);
       onStartDownload(clipboardUrl);
       return;
@@ -136,7 +141,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
     <div className="w-full flex flex-col gap-1.5">
       {/* Zero-layer standalone input container */}
       <div
-        onMouseEnter={checkClipboard}
+        onMouseEnter={() => checkClipboard(true)}
         className={`w-full relative flex items-center bg-[#121215] border transition-all duration-150 rounded-xl px-2 py-1.5 shadow-lg shadow-black/40 ${
           error
             ? "border-red-500/80 focus-within:border-red-500"
@@ -149,22 +154,22 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
             <div className="w-8 h-8 flex items-center justify-center">
               <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
             </div>
-          ) : hasMetadata ? (
-            // Metadata loaded: download button disappears cleanly, showing only clean static platform icon
-            <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5">
-              {renderPlatformIcon(detectedPlatform, "w-4 h-4")}
-            </div>
-          ) : hasValidClipboardUrl ? (
+          ) : hasValidClipboardUrl && (!hasMetadata || clipboardUrl !== url.trim()) ? (
             // Clipboard contains a valid media link: show "Download from clipboard" button with clean static highlight
             <button
               onClick={handleSmartDownloadClick}
-              onMouseEnter={checkClipboard}
+              onMouseEnter={() => checkClipboard(true)}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/40 hover:border-blue-500/60 shadow-sm shadow-blue-500/10 cursor-pointer transition-all shrink-0"
               title={`Download from clipboard: ${clipboardUrl}`}
             >
               {renderPlatformIcon(clipboardPlatform, "w-3.5 h-3.5")}
               <span>Download from clipboard</span>
             </button>
+          ) : hasMetadata ? (
+            // Metadata loaded: download button disappears cleanly, showing only clean static platform icon
+            <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5">
+              {renderPlatformIcon(detectedPlatform, "w-4 h-4")}
+            </div>
           ) : hasValidInputUrl ? (
             // Input field contains a valid media link: show "Download" button with clean static highlight
             <button
@@ -188,6 +193,8 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
           type="text"
           value={url}
           onChange={(e) => onUrlChange(e.target.value)}
+          onFocus={() => checkClipboard(true)}
+          onClick={() => checkClipboard(true)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && url.trim()) {
               onStartDownload(url.trim());

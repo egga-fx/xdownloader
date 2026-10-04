@@ -19,7 +19,7 @@ import {
   AppUpdateInfo,
   TimeRange,
 } from "./types";
-import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage } from "./lib/utils";
+import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage, sanitizeTitle } from "./lib/utils";
 import {
   checkBinariesStatus,
   checkForAppUpdate,
@@ -34,7 +34,14 @@ import {
   saveAppSettings,
   startDownload,
   cancelDownload,
+  copyToClipboard,
 } from "./lib/tauri-api";
+import {
+  ensureNotificationPermission,
+  notifyDownloadCompleted,
+  notifyDownloadFailed,
+  notifyOutputFolderChanged,
+} from "./lib/notifications";
 import {
   Globe,
   CheckCircle,
@@ -153,6 +160,11 @@ export function App() {
           })
           .catch(() => {});
       }
+
+      // Check/request desktop notification permissions gracefully
+      if (settings.desktopNotifications !== false) {
+        ensureNotificationPermission().catch(() => {});
+      }
     } catch (err) {
       console.error("Initial load error:", err);
       setCheckingBinaries(false);
@@ -175,34 +187,60 @@ export function App() {
     loadInitialData();
   }, [loadInitialData]);
 
+  // Completion deduplication guards
+  const completedTaskIdsRef = useRef<Set<string>>(new Set());
+  const failedTaskIdsRef = useRef<Set<string>>(new Set());
+  const outputFolderRef = useRef<string>(outputFolder);
+  outputFolderRef.current = outputFolder;
+
   // 2. Listen to real-time download progress events from Tauri Rust Core
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let isCancelled = false;
+    let unlistenFn: (() => void) | null = null;
+
     onDownloadProgress((task) => {
+      // 1. Process side effects outside the state reducer with strict deduplication
+      if (task.status === "completed") {
+        if (!completedTaskIdsRef.current.has(task.taskId)) {
+          completedTaskIdsRef.current.add(task.taskId);
+          loadRecords();
+          showToast(`Download finished: "${task.title}"`);
+          notifyDownloadCompleted(task.title, outputFolderRef.current);
+          setTimeout(dequeueAndStartNext, 150);
+        }
+      } else if (task.status === "error") {
+        if (!failedTaskIdsRef.current.has(task.taskId)) {
+          failedTaskIdsRef.current.add(task.taskId);
+          loadRecords();
+          showToast(`Download failed: "${task.title}"${task.error ? ` (${task.error})` : ""}`);
+          notifyDownloadFailed(task.title, task.error);
+          setTimeout(dequeueAndStartNext, 150);
+        }
+      }
+
+      // 2. Pure state updater without any side effects
       setActiveTasks((prev) => {
         const next = new Map(prev);
         if (task.status === "completed" || task.status === "error") {
-          // If completed or error, refresh records from SQLite
-          loadRecords();
-          if (task.status === "completed") {
-            showToast(`Download finished: "${task.title}"`);
-          } else if (task.status === "error") {
-            showToast(`Download failed: "${task.title}"${task.error ? ` (${task.error})` : ""}`);
-          }
           next.delete(task.taskId);
-          // Auto-trigger next item from queue if slots available
-          setTimeout(dequeueAndStartNext, 150);
         } else {
           next.set(task.taskId, task);
         }
         return next;
       });
     }).then((fn) => {
-      unlisten = fn;
+      if (isCancelled) {
+        fn();
+      } else {
+        unlistenFn = fn;
+      }
     });
 
     return () => {
-      if (unlisten) unlisten();
+      isCancelled = true;
+      if (unlistenFn) {
+        unlistenFn();
+      }
     };
   }, []);
 
@@ -248,7 +286,8 @@ export function App() {
       // Ensure user hasn't changed url while request was in-flight
       if (currentUrlRef.current.trim() === cleanTarget) {
         setVideoInfo(info);
-        const cleanTitle = info.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
+        const rawTitle = info.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
+        const cleanTitle = sanitizeTitle(rawTitle);
         setCustomName(cleanTitle);
         if (info.description === "image") {
           setFormatType("image");
@@ -321,7 +360,8 @@ export function App() {
         matchedInfo = freshInfo;
         if (currentUrlRef.current.trim() === targetUrl) {
           setVideoInfo(freshInfo);
-          const cleanFreshTitle = freshInfo.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
+          const rawFreshTitle = freshInfo.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
+          const cleanFreshTitle = sanitizeTitle(rawFreshTitle);
           setCustomName(cleanFreshTitle);
           if (freshInfo.description === "image") {
             setFormatType("image");
@@ -359,7 +399,7 @@ export function App() {
         ? (appSettings.defaultVideoQuality as DownloaderQuality) || "1080p"
         : quality;
 
-    const finalTitle = customName || matchedInfo?.title || targetUrl;
+    const finalTitle = sanitizeTitle(customName) || sanitizeTitle(matchedInfo?.title) || targetUrl;
     const finalAuthor = matchedInfo?.uploader || matchedInfo?.channel || "";
     const finalDuration = matchedInfo?.duration || 0;
 
@@ -368,7 +408,7 @@ export function App() {
       targetUrl,
       formatType: finalFormatType,
       quality: finalQuality,
-      customName: customName || (matchedInfo ? matchedInfo.title : undefined),
+      customName: sanitizeTitle(customName) || (matchedInfo ? sanitizeTitle(matchedInfo.title) : undefined),
       outputFolder: outputFolder || undefined,
       title: finalTitle,
       thumbnailUrl: finalThumb,
@@ -498,6 +538,7 @@ export function App() {
       await saveAppSettings({ outputFolder: selected });
       setAppSettings((prev) => ({ ...prev, outputFolder: selected }));
       showToast(`Output folder set to: ${selected}`);
+      notifyOutputFolderChanged(selected);
     }
   };
 
@@ -508,8 +549,9 @@ export function App() {
       if (newSettings.defaultVideoQuality) {
         setQuality(newSettings.defaultVideoQuality);
       }
-      if (newSettings.outputFolder) {
+      if (newSettings.outputFolder && newSettings.outputFolder !== outputFolder) {
         setOutputFolder(newSettings.outputFolder);
+        notifyOutputFolderChanged(newSettings.outputFolder);
       }
       showToast("Settings saved successfully");
     } catch (err: unknown) {
@@ -528,7 +570,7 @@ export function App() {
 
   const handleCopyPath = async (path: string) => {
     try {
-      await navigator.clipboard.writeText(path);
+      await copyToClipboard(path);
       showToast("File path copied to clipboard");
     } catch {
       // ignore
@@ -669,6 +711,7 @@ export function App() {
         onSaveSettings={handleSaveSettings}
         onPickFolder={handlePickFolder}
         onOpenAbout={() => setAboutModalOpen(true)}
+        initialUpdateInfo={availableUpdate}
       />
 
       {/* About Application Modal */}

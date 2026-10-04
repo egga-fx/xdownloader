@@ -75,12 +75,22 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   const [isSelectionModalOpen, setIsSelectionModalOpen] = useState<boolean>(false);
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   const [aspectRatios, setAspectRatios] = useState<Record<number, number>>({});
+  const [imgError, setImgError] = useState<boolean>(false);
 
   useEffect(() => {
     setActiveImageIndex(getInitialIndex());
     setAspectRatio(null);
     setAspectRatios({});
+    setImgError(false);
   }, [info.id, info.webpageUrl, info.images]);
+
+  const currentThumbnail = isCarousel
+    ? carouselImages[activeImageIndex] || info.thumbnail
+    : info.thumbnail;
+
+  useEffect(() => {
+    setImgError(false);
+  }, [currentThumbnail]);
 
   useEffect(() => {
     if (info.description === "image" && formatType !== "image") {
@@ -91,10 +101,6 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
       setQuality("best");
     }
   }, [info.description]);
-
-  const currentThumbnail = isCarousel
-    ? carouselImages[activeImageIndex] || info.thumbnail
-    : info.thumbnail;
 
   // Pre-load all carousel images and cache their natural aspect ratios in background
   useEffect(() => {
@@ -155,7 +161,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
               : "16 / 9",
           }}
         >
-          {currentThumbnail ? (
+          {currentThumbnail && !imgError ? (
             <>
               {/* Ambient backdrop for subtle edge blending */}
               <div
@@ -166,6 +172,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 src={currentThumbnail}
                 alt={info.title}
                 referrerPolicy="no-referrer"
+                onError={() => setImgError(true)}
                 onLoad={(e) => {
                   const { naturalWidth, naturalHeight } = e.currentTarget;
                   if (naturalWidth && naturalHeight) {
@@ -178,8 +185,11 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
               />
             </>
           ) : (
-            <div className="relative z-1 w-full h-full flex items-center justify-center text-[#71717a]">
-              {isImage ? <ImageIcon className="w-8 h-8" /> : <Film className="w-8 h-8" />}
+            <div className="relative z-1 w-full h-full flex flex-col items-center justify-center gap-1.5 text-[#71717a] bg-[#18181b] min-h-[120px]">
+              {isImage ? <ImageIcon className="w-8 h-8 opacity-60" /> : <Film className="w-8 h-8 opacity-60" />}
+              <span className="text-[11px] font-medium text-zinc-500">
+                {imgError ? "Preview unavailable" : "No preview"}
+              </span>
             </div>
           )}
 

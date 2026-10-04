@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use regex::Regex;
@@ -37,12 +37,7 @@ fn create_http_client() -> reqwest::Client {
 }
 
 fn sanitize_name(name: &str) -> String {
-    name.chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => c,
-        })
-        .collect()
+    crate::downloader::sanitize_filename(name)
 }
 
 /// 1. Pinterest Image Extractor
@@ -783,6 +778,24 @@ pub fn is_threads_url(url: &str) -> bool {
     lower.contains("threads.net") || lower.contains("threads.com")
 }
 
+/// Unescapes HTML entities, JSON Unicode escapes (\u0026), and slash escapes (\/) in scraped URLs
+pub fn clean_scraped_url(raw: &str) -> String {
+    let unescaped_json = raw
+        .replace(r"\u0026", "&")
+        .replace(r"\u002F", "/")
+        .replace(r"\u002f", "/")
+        .replace(r"\u003F", "?")
+        .replace(r"\u003f", "?")
+        .replace(r"\u003D", "=")
+        .replace(r"\u003d", "=")
+        .replace(r"\/", "/");
+
+    unescape_html_entities(&unescaped_json)
+        .replace("&amp;", "&")
+        .trim()
+        .to_string()
+}
+
 /// Parses HTML response from Threads using Googlebot User-Agent
 pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Result<VideoInfo, String> {
     // 1. Author resolution from URL or OpenGraph
@@ -798,7 +811,6 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
     // 2. OpenGraph tags
     let og_title_re = Regex::new(r#"<meta\s+property="og:title"\s+content="([^"]*)""#).ok();
     let og_desc_re = Regex::new(r#"<meta\s+property="og:description"\s+content="([^"]*)""#).ok();
-    let og_image_re = Regex::new(r#"<meta\s+property="og:image"\s+content="([^"]*)""#).ok();
 
     let og_title = og_title_re.as_ref()
         .and_then(|re| re.captures(html))
@@ -812,11 +824,37 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         .map(|m| unescape_html_entities(m.as_str()))
         .unwrap_or_default();
 
-    let thumbnail = og_image_re.as_ref()
-        .and_then(|re| re.captures(html))
-        .and_then(|c| c.get(1))
-        .map(|m| unescape_html_entities(m.as_str()))
-        .unwrap_or_default();
+    // 2b. High-resolution thumbnail resolution (Priority: candidates in image_versions2, then meta tags)
+    let mut resolved_thumbnail = String::new();
+
+    // Priority 1: Check embedded candidates array (highest resolution video cover / post image)
+    if let Ok(cand_re) = Regex::new(r#""candidates"\s*:\s*\[\s*\{[^}]*?"url"\s*:\s*"([^"]+)""#) {
+        if let Some(caps) = cand_re.captures(html) {
+            if let Some(m) = caps.get(1) {
+                let clean = clean_scraped_url(m.as_str());
+                if clean.starts_with("http") {
+                    resolved_thumbnail = clean;
+                }
+            }
+        }
+    }
+
+    // Priority 2: Flexible OpenGraph & Twitter meta tags
+    if resolved_thumbnail.is_empty() {
+        let meta_img_re = Regex::new(r#"<meta\s+[^>]*(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']"#).ok();
+        let meta_img_alt_re = Regex::new(r#"<meta\s+[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["'](?:og:image|twitter:image)["']"#).ok();
+
+        let candidate = meta_img_re.as_ref()
+            .and_then(|re| re.captures(html))
+            .or_else(|| meta_img_alt_re.as_ref().and_then(|re| re.captures(html)))
+            .and_then(|c| c.get(1))
+            .map(|m| clean_scraped_url(m.as_str()))
+            .unwrap_or_default();
+
+        if candidate.starts_with("http") {
+            resolved_thumbnail = candidate;
+        }
+    }
 
     if author.is_empty() && !og_title.is_empty() {
         if let Ok(title_author_re) = Regex::new(r"\(@([A-Za-z0-9_.]+)\)") {
@@ -829,17 +867,18 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
     }
 
     // Meaningful title: Use caption text if available, otherwise og_title
-    let base_title = if !og_desc.is_empty() {
-        let trimmed = og_desc.trim();
-        if trimmed.chars().count() > 120 {
-            format!("{}...", trimmed.chars().take(117).collect::<String>())
-        } else {
-            trimmed.to_string()
-        }
+    let raw_title = if !og_desc.is_empty() {
+        og_desc.trim()
     } else if !og_title.is_empty() {
-        og_title.clone()
+        og_title.trim()
     } else {
+        "Threads Post"
+    };
+    let sanitized_title = crate::downloader::sanitize_filename(raw_title);
+    let base_title = if sanitized_title.is_empty() || sanitized_title == "media_download" {
         "Threads Post".to_string()
+    } else {
+        sanitized_title
     };
 
     // ID resolution
@@ -858,27 +897,31 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
     // 3. Search for video_versions in embedded JSON
     let mut found_video_url: Option<String> = None;
     let mut video_duration: i64 = 0;
-    if let Ok(video_re) = Regex::new(r#""video_versions"\s*:\s*(\[.*?\])\s*,\s*""#) {
-        for caps in video_re.captures_iter(html) {
+    if let Ok(video_re) = regex::RegexBuilder::new(r#""video_versions"\s*:\s*\[\s*\{[^}]*?"url"\s*:\s*"([^"]+)""#)
+        .dot_matches_new_line(true)
+        .build()
+    {
+        if let Some(caps) = video_re.captures(html) {
             if let Some(m) = caps.get(1) {
-                if let Ok(vv) = serde_json::from_str::<serde_json::Value>(m.as_str()) {
-                    if let Some(arr) = vv.as_array() {
-                        for item in arr {
-                            if let Some(v_url) = item.get("url").and_then(|u| u.as_str()) {
-                                if !v_url.is_empty() {
-                                    found_video_url = Some(v_url.to_string());
-                                    if let Some(dur) = item.get("duration").and_then(|d| d.as_f64()) {
-                                        video_duration = dur as i64;
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                let clean = clean_scraped_url(m.as_str());
+                if clean.starts_with("http") {
+                    found_video_url = Some(clean);
                 }
             }
-            if found_video_url.is_some() {
-                break;
+        }
+    }
+
+    if found_video_url.is_some() {
+        if let Ok(dur_re) = regex::RegexBuilder::new(r#""video_versions"\s*:\s*\[\s*\{[^}]*?"duration"\s*:\s*([0-9.]+)"#)
+            .dot_matches_new_line(true)
+            .build()
+        {
+            if let Some(caps) = dur_re.captures(html) {
+                if let Some(m) = caps.get(1) {
+                    if let Ok(d) = m.as_str().parse::<f64>() {
+                        video_duration = d as i64;
+                    }
+                }
             }
         }
     }
@@ -889,7 +932,7 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
             id: post_id,
             title: base_title,
             duration: if video_duration > 0 { video_duration } else { 30 },
-            thumbnail,
+            thumbnail: resolved_thumbnail,
             uploader: if !author.is_empty() { author.clone() } else { "Threads Creator".to_string() },
             channel: "Threads".to_string(),
             description: Some(v_url),
@@ -900,7 +943,10 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
 
     // 4. If no video, check for carousel images
     let mut image_urls: Vec<String> = Vec::new();
-    if let Ok(carousel_re) = Regex::new(r#""carousel_media"\s*:\s*(\[.*?\])\s*,\s*""#) {
+    if let Ok(carousel_re) = regex::RegexBuilder::new(r#""carousel_media"\s*:\s*(\[\s*\{.*?\}\s*\])"#)
+        .dot_matches_new_line(true)
+        .build()
+    {
         for caps in carousel_re.captures_iter(html) {
             if let Some(m) = caps.get(1) {
                 if let Ok(cm) = serde_json::from_str::<serde_json::Value>(m.as_str()) {
@@ -908,7 +954,7 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
                         for item in arr {
                             if let Some(candidates) = item.get("image_versions2").and_then(|iv| iv.get("candidates")).and_then(|c| c.as_array()) {
                                 if let Some(first) = candidates.first().and_then(|cand| cand.get("url")).and_then(|u| u.as_str()) {
-                                    image_urls.push(first.to_string());
+                                    image_urls.push(clean_scraped_url(first));
                                 }
                             }
                         }
@@ -921,27 +967,26 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         }
     }
 
-    // 5. If not carousel, check single image_versions2
+    // 5. If not carousel, check single image candidates
     if image_urls.is_empty() {
-        if let Ok(single_img_re) = Regex::new(r#""image_versions2"\s*:\s*(\{.*?\})\s*,\s*""#) {
-            for caps in single_img_re.captures_iter(html) {
+        if let Ok(single_img_re) = regex::RegexBuilder::new(r#""image_versions2"\s*:\s*\{[^}]*?"candidates"\s*:\s*\[\s*\{[^}]*?"url"\s*:\s*"([^"]+)""#)
+            .dot_matches_new_line(true)
+            .build()
+        {
+            if let Some(caps) = single_img_re.captures(html) {
                 if let Some(m) = caps.get(1) {
-                    if let Ok(iv) = serde_json::from_str::<serde_json::Value>(m.as_str()) {
-                        if let Some(candidates) = iv.get("candidates").and_then(|c| c.as_array()) {
-                            if let Some(first) = candidates.first().and_then(|cand| cand.get("url")).and_then(|u| u.as_str()) {
-                                image_urls.push(first.to_string());
-                                break;
-                            }
-                        }
+                    let clean = clean_scraped_url(m.as_str());
+                    if clean.starts_with("http") {
+                        image_urls.push(clean);
                     }
                 }
             }
         }
     }
 
-    // Fallback to og:image if candidates array was not found
-    if image_urls.is_empty() && !thumbnail.is_empty() {
-        image_urls.push(thumbnail.clone());
+    // Fallback to resolved_thumbnail if candidates array was not found
+    if image_urls.is_empty() && !resolved_thumbnail.is_empty() {
+        image_urls.push(resolved_thumbnail.clone());
     }
 
     if image_urls.is_empty() {
@@ -952,7 +997,7 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         &post_id,
         final_url,
         &base_title,
-        "threads",
+        if !author.is_empty() { &author } else { "Threads Creator" },
         &image_urls,
     );
 
@@ -1127,6 +1172,7 @@ pub async fn download_image_bundle(
 
     let mut primary_saved_path = String::new();
     let mut total_bytes: i64 = 0;
+    let mut created_files: Vec<PathBuf> = Vec::new();
 
     for (step_idx, (slide_idx, item)) in items_to_download.iter().enumerate() {
         let ext = if item.url.contains(".png") { "png" } else { "jpg" };
@@ -1137,24 +1183,48 @@ pub async fn download_image_bundle(
         };
         let dest_file = target_dir.join(&filename);
 
-        let resp = client
-            .get(&item.url)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to download image {}: {}", filename, e))?;
+        let resp = match client.get(&item.url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                for f in &created_files {
+                    let _ = std::fs::remove_file(f);
+                }
+                return Err(format!("Failed to download image {}: {}", filename, e));
+            }
+        };
 
         if !resp.status().is_success() {
+            for f in &created_files {
+                let _ = std::fs::remove_file(f);
+            }
             return Err(format!("Image download failed with HTTP {}", resp.status()));
         }
 
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+        let bytes = match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                for f in &created_files {
+                    let _ = std::fs::remove_file(f);
+                }
+                return Err(format!("Failed to read image bytes: {}", e));
+            }
+        };
+
+        if bytes.is_empty() {
+            for f in &created_files {
+                let _ = std::fs::remove_file(f);
+            }
+            return Err(format!("Downloaded image {} is 0 bytes", filename));
+        }
 
         total_bytes += bytes.len() as i64;
-        std::fs::write(&dest_file, &bytes)
-            .map_err(|e| format!("Failed to write file {:?}: {}", dest_file, e))?;
+        if let Err(e) = std::fs::write(&dest_file, &bytes) {
+            for f in &created_files {
+                let _ = std::fs::remove_file(f);
+            }
+            return Err(format!("Failed to write file {:?}: {}", dest_file, e));
+        }
+        created_files.push(dest_file.clone());
 
         if primary_saved_path.is_empty() {
             primary_saved_path = dest_file.to_string_lossy().to_string();
@@ -1185,15 +1255,25 @@ pub async fn download_image_bundle(
 
     // Download background audio if available (e.g. TikTok photo mode BGM)
     if let Some(ref bgm_url) = bundle.audio_url {
-        let dest_audio = target_dir.join("background_music.mp3");
+        let dest_audio = target_dir.join(format!("{}_bgm.mp3", clean_base_name));
         if let Ok(resp) = client.get(bgm_url).send().await {
             if resp.status().is_success() {
                 if let Ok(bytes) = resp.bytes().await {
-                    total_bytes += bytes.len() as i64;
-                    let _ = std::fs::write(dest_audio, bytes);
+                    if !bytes.is_empty() {
+                        total_bytes += bytes.len() as i64;
+                        let _ = std::fs::write(&dest_audio, &bytes);
+                        created_files.push(dest_audio);
+                    }
                 }
             }
         }
+    }
+
+    if created_files.is_empty() || primary_saved_path.is_empty() || !Path::new(&primary_saved_path).exists() {
+        for f in &created_files {
+            let _ = std::fs::remove_file(f);
+        }
+        return Err("No image files could be written to destination".to_string());
     }
 
     // Final record path is primary saved image or target directory
@@ -1612,5 +1692,55 @@ mod tests {
         assert_eq!(info.thumbnail, "https://scontent.cdninstagram.com/v/t51/thumb.jpg");
         assert_eq!(info.duration, 18);
         assert_eq!(info.description, Some("https://instagram.fna.fbcdn.net/video.mp4".to_string()));
+    }
+
+    #[test]
+    fn test_parse_threads_html_with_escaped_entities() {
+        let sample_html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta property="og:title" content="Photographer on Threads">
+                <meta property="og:description" content="City skyline sunset">
+                <meta property="og:image" content="https://scontent.cdninstagram.com/v/t51/thumb.jpg?_nc_cat=101&amp;ccb=7-5">
+            </head>
+            <body>
+                <script>
+                    window.__additional_data = {
+                        "data": {
+                            "candidates": [
+                                {
+                                    "width": 1080,
+                                    "height": 1350,
+                                    "url": "https:\/\/scontent-iad3-2.cdninstagram.com\/v\/t51.2885-15\/480_n.jpg?_nc_cat=101\u0026ccb=7-5\u0026_nc_sid=abc"
+                                }
+                            ],
+                            "video_versions": [
+                                {
+                                    "url": "https:\/\/instagram.fna.fbcdn.net\/v\/video.mp4?_nc_cat=102\u0026ccb=7-5",
+                                    "duration": 22.0
+                                }
+                            ]
+                        }
+                    };
+                </script>
+            </body>
+            </html>
+        "#;
+        let url = "https://www.threads.net/@photographer/post/D987654";
+        let res = parse_threads_html(sample_html, url, url);
+        assert!(res.is_ok());
+        let info = res.unwrap();
+        // Candidate with clean unescaped & and / takes priority over og:image
+        assert_eq!(
+            info.thumbnail,
+            "https://scontent-iad3-2.cdninstagram.com/v/t51.2885-15/480_n.jpg?_nc_cat=101&ccb=7-5&_nc_sid=abc"
+        );
+        assert!(!info.thumbnail.contains(r"\u0026"));
+        assert!(!info.thumbnail.contains(r"\/"));
+        assert_eq!(
+            info.description,
+            Some("https://instagram.fna.fbcdn.net/v/video.mp4?_nc_cat=102&ccb=7-5".to_string())
+        );
     }
 }

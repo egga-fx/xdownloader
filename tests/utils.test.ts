@@ -10,6 +10,7 @@ import {
   secondsToTimestamp,
   timestampToSeconds,
   getErrorMessage,
+  sanitizeTitle,
 } from "../src/lib/utils";
 
 describe("AI Spec-First Audit: src/lib/utils.ts", () => {
@@ -229,6 +230,41 @@ describe("AI Spec-First Audit: src/lib/utils.ts", () => {
       expect(getErrorMessage(500)).toBe("500");
       expect(getErrorMessage(null)).toBe("null");
       expect(getErrorMessage(undefined)).toBe("undefined");
+    });
+  });
+
+  // --- 8. sanitizeTitle ---
+  describe("sanitizeTitle() [Windows & Web Filename Sanitization]", () => {
+    it("should return empty string for undefined or empty input", () => {
+      expect(sanitizeTitle("")).toBe("");
+      expect(sanitizeTitle(undefined)).toBe("");
+    });
+
+    it("should strip newlines, carriage returns, tabs, and control characters", () => {
+      const input = "Full percakapan Rocky Gerung.\n\nPasca dilantik sebagai anggota.\r\n\tWartawan";
+      const result = sanitizeTitle(input);
+      expect(result).not.toContain("\n");
+      expect(result).not.toContain("\r");
+      expect(result).not.toContain("\t");
+      expect(result).toContain("Full percakapan Rocky Gerung. Pasca dilantik sebagai anggota. Wartawan");
+    });
+
+    it("should replace invalid Windows filesystem characters", () => {
+      const input = 'Sample / Video : Part * 1 ? "Quotes" <Bracket> | Pipe';
+      const result = sanitizeTitle(input);
+      expect(result).not.toMatch(/[\\/:*?"<>|]/);
+      expect(result).toBe("Sample Video Part 1 Quotes Bracket Pipe");
+    });
+
+    it("should collapse multiple consecutive spaces and trim ending dots/spaces", () => {
+      const input = "   Too    Many     Spaces   ...   ";
+      expect(sanitizeTitle(input)).toBe("Too Many Spaces");
+    });
+
+    it("should truncate stem to max 80 characters", () => {
+      const longTitle = "A".repeat(120);
+      const result = sanitizeTitle(longTitle);
+      expect(result.length).toBeLessThanOrEqual(80);
     });
   });
 });

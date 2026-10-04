@@ -398,4 +398,21 @@ export function getErrorMessage(err: unknown): string {
   return String(err);
 }
 
+/**
+ * Sanitizes titles for safe display and default filenames across Windows and Web.
+ * Replaces newlines, control characters, and reserved Windows filesystem symbols.
+ */
+export function sanitizeTitle(name?: string): string {
+  if (!name) return "";
+  const cleaned = name
+    .replace(/[\x00-\x1f\n\r\t]/g, " ")
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.,\s]+$/, "");
+
+  return cleaned.slice(0, 80).trim();
+}
+
+
 

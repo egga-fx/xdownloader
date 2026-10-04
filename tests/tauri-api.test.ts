@@ -12,6 +12,12 @@ import {
   openLogsFolder,
   resetMockStorage,
   getVideoMetadata,
+  getClipboardUrl,
+  copyToClipboard,
+  getAppVersion,
+  isVersionNewer,
+  checkForAppUpdate,
+  downloadAndInstallAppUpdate,
 } from "../src/lib/tauri-api";
 import { ActiveDownloadTask, LogEntry } from "../src/types";
 
@@ -206,4 +212,76 @@ describe("AI Spec-First Contract Tests: src/lib/tauri-api.ts", () => {
       expect(igCarouselResult.thumbnail).toBe(igCarouselResult.images![1]);
     });
   });
+
+  // --- 8. Clipboard Contract & Security ---
+  describe("Clipboard Integration: getClipboardUrl() & copyToClipboard() [Silent Desktop Native]", () => {
+    it("should return empty string safely when clipboard is unavailable or blank", async () => {
+      const result = await getClipboardUrl();
+      expect(typeof result).toBe("string");
+    });
+
+    it("should handle copyToClipboard without throwing in test environment", async () => {
+      const success = await copyToClipboard("https://youtube.com/watch?v=sample");
+      expect(typeof success).toBe("boolean");
+    });
+
+    it("should strictly return without calling navigator.clipboard in simulated Tauri environment", async () => {
+      const originalWindow = (globalThis as unknown as { window?: unknown }).window;
+      try {
+        (globalThis as unknown as { window: { __TAURI_INTERNALS__: Record<string, unknown> } }).window = {
+          __TAURI_INTERNALS__: { invoke: () => {} },
+        };
+        expect(isTauriEnvironment()).toBe(true);
+        // In Tauri environment with no mock native plugin, it should catch and return "" directly
+        const clip = await getClipboardUrl();
+        expect(clip).toBe("");
+      } finally {
+        if (originalWindow !== undefined) {
+          (globalThis as unknown as { window: unknown }).window = originalWindow;
+        } else {
+          delete (globalThis as unknown as { window?: unknown }).window;
+        }
+      }
+    });
+  });
+
+  // --- 9. Auto-Updater & Semver Engine Contract ---
+  describe("Auto-Updater & Semver Comparison Engine", () => {
+    it("should accurately compare semantic version strings via isVersionNewer()", () => {
+      // Newer versions
+      expect(isVersionNewer("v1.0.4", "1.0.3")).toBe(true);
+      expect(isVersionNewer("1.1.0", "1.0.3")).toBe(true);
+      expect(isVersionNewer("2.0.0", "1.0.3")).toBe(true);
+      expect(isVersionNewer("1.0.3.1", "1.0.3")).toBe(true);
+
+      // Same or older versions
+      expect(isVersionNewer("v1.0.3", "1.0.3")).toBe(false);
+      expect(isVersionNewer("1.0.3", "1.0.3")).toBe(false);
+      expect(isVersionNewer("v1.0.2", "1.0.3")).toBe(false);
+      expect(isVersionNewer("1.0.0", "1.0.3")).toBe(false);
+      expect(isVersionNewer("0.9.9", "1.0.3")).toBe(false);
+
+      // Empty / invalid inputs
+      expect(isVersionNewer("", "1.0.3")).toBe(false);
+      expect(isVersionNewer("1.0.4", "")).toBe(false);
+    });
+
+    it("should return the correct fallback version 1.0.4 from getAppVersion() in test runner", async () => {
+      const version = await getAppVersion();
+      expect(version).toBe("1.0.4");
+    });
+
+    it("should run checkForAppUpdate() safely and return valid AppUpdateInfo structure", async () => {
+      const updateInfo = await checkForAppUpdate();
+      expect(updateInfo).toBeDefined();
+      expect(typeof updateInfo.available).toBe("boolean");
+      expect(updateInfo.currentVersion).toBe("1.0.4");
+    });
+
+    it("should safely handle downloadAndInstallAppUpdate() when no update is pending", async () => {
+      const result = await downloadAndInstallAppUpdate(null);
+      expect(result).toBe(false);
+    });
+  });
 });
+

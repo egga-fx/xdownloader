@@ -18,10 +18,12 @@ import {
   Cpu,
   Info,
   Activity,
+  Bell,
 } from "lucide-react";
 import { AppSettings, AppUpdateInfo, DownloaderQuality } from "../types";
 import {
   isTauriEnvironment,
+  getAppVersion,
   checkForAppUpdate,
   downloadAndInstallAppUpdate,
   updateEngine,
@@ -38,6 +40,7 @@ interface SettingsModalProps {
   onSaveSettings: (newSettings: Partial<AppSettings>) => Promise<void>;
   onPickFolder?: () => void;
   onOpenAbout?: () => void;
+  initialUpdateInfo?: AppUpdateInfo | null;
 }
 
 interface QualityOption {
@@ -234,16 +237,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSaveSettings,
   onPickFolder,
   onOpenAbout,
+  initialUpdateInfo,
 }) => {
   const [defaultVideoQuality, setDefaultVideoQuality] = useState<DownloaderQuality>("best");
   const [defaultAudioQuality, setDefaultAudioQuality] = useState<DownloaderQuality>("mp3");
   const [outputFolder, setOutputFolder] = useState<string>("");
   const [autoClipboardDetect, setAutoClipboardDetect] = useState<boolean>(true);
   const [downloadSubtitles, setDownloadSubtitles] = useState<boolean>(false);
+  const [desktopNotifications, setDesktopNotifications] = useState<boolean>(true);
   const [checkUpdatesOnStartup, setCheckUpdatesOnStartup] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
 
   // Auto-Updater state
+  const [appVersion, setAppVersion] = useState<string>("1.0.4");
   const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [updateChecked, setUpdateChecked] = useState<boolean>(false);
@@ -274,10 +280,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setOutputFolder(settings.outputFolder || "");
       setAutoClipboardDetect(settings.autoClipboardDetect ?? true);
       setDownloadSubtitles(settings.downloadSubtitles ?? false);
+      setDesktopNotifications(settings.desktopNotifications ?? true);
       setCheckUpdatesOnStartup(settings.checkUpdatesOnStartup ?? true);
-      setUpdateChecked(false);
       setUpdateError(null);
       setEngineStatusMsg(null);
+
+      // Load app version
+      getAppVersion()
+        .then((v) => {
+          if (v) setAppVersion(v);
+        })
+        .catch(() => {});
+
+      // Use initial update info if passed
+      if (initialUpdateInfo) {
+        setUpdateInfo(initialUpdateInfo);
+        setUpdateChecked(true);
+      } else {
+        setUpdateChecked(false);
+      }
 
       // Check yt-dlp version
       checkBinariesStatus().then((st) => {
@@ -286,7 +307,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         }
       }).catch(() => {});
     }
-  }, [open, settings]);
+  }, [open, settings, initialUpdateInfo]);
 
   if (!open) return null;
 
@@ -321,10 +342,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleInstallUpdate = async () => {
+    if (!updateInfo) return;
     setInstallingUpdate(true);
     setUpdateError(null);
     try {
-      await downloadAndInstallAppUpdate((pct) => setUpdateProgress(pct));
+      await downloadAndInstallAppUpdate(updateInfo, (pct) => setUpdateProgress(pct));
     } catch (err: unknown) {
       setUpdateError(getErrorMessage(err) || "Failed to download and apply update");
       setInstallingUpdate(false);
@@ -340,6 +362,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         outputFolder,
         autoClipboardDetect,
         downloadSubtitles,
+        desktopNotifications,
         checkUpdatesOnStartup,
       });
       onClose();
@@ -353,6 +376,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setDefaultAudioQuality("mp3");
     setAutoClipboardDetect(true);
     setDownloadSubtitles(false);
+    setDesktopNotifications(true);
     setCheckUpdatesOnStartup(true);
   };
 
@@ -503,6 +527,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
 
+            {/* Desktop Notifications */}
+            <div className="flex items-center justify-between p-3 rounded-xl bg-[#18181b] border border-[#27272a]">
+              <div className="flex flex-col gap-0.5">
+                <span className="font-bold text-xs text-white flex items-center gap-1.5">
+                  <Bell className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Notifikasi Desktop Windows</span>
+                </span>
+                <span className="text-[11px] text-[#71717a]">
+                  Tampilkan notifikasi OS saat unduhan selesai dan folder penyimpanan disetel.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDesktopNotifications(!desktopNotifications)}
+                className={`w-10 h-5 rounded-full transition-colors relative cursor-pointer ${
+                  desktopNotifications ? "bg-blue-600" : "bg-[#27272a]"
+                }`}
+              >
+                <div
+                  className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-0.5 ${
+                    desktopNotifications ? "left-5.5" : "left-0.5"
+                  }`}
+                />
+              </button>
+            </div>
+
             {/* 5. APP UPDATES */}
             <div className="flex flex-col gap-2.5 pt-2 border-t border-[#27272a]">
               <div className="flex items-center justify-between">
@@ -511,7 +561,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span>Application Updates</span>
                 </span>
                 <span className="text-[11px] font-mono text-[#71717a]">
-                  v{updateInfo?.currentVersion || "1.0.0"}
+                  v{appVersion || updateInfo?.currentVersion || "1.0.4"}
                 </span>
               </div>
 

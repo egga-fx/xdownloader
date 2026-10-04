@@ -59,6 +59,10 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         cmd.arg("--js-runtimes").arg(format!("{}:{}", runtime, path.to_string_lossy()));
     }
 
+    if url.contains("youtube.com") || url.contains("youtu.be") {
+        cmd.arg("--extractor-args").arg("youtube:player_client=default,ios,mweb");
+    }
+
     cmd.arg(url);
 
     // Run async command with 20 seconds safety timeout to prevent UI freezes

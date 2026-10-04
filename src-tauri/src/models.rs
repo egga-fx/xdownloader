@@ -87,6 +87,8 @@ pub struct AppSettings {
     pub download_subtitles: bool,
     #[serde(default = "default_true")]
     pub check_updates_on_startup: bool,
+    #[serde(default = "default_true")]
+    pub desktop_notifications: bool,
 }
 
 fn default_true() -> bool {
@@ -102,6 +104,7 @@ impl Default for AppSettings {
             auto_clipboard_detect: true,
             download_subtitles: false,
             check_updates_on_startup: true,
+            desktop_notifications: true,
         }
     }
 }

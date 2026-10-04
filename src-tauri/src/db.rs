@@ -162,6 +162,17 @@ impl Database {
         Ok(())
     }
 
+    pub fn is_task_cancelled(&self, id: &str) -> bool {
+        if let Ok(conn) = self.conn.lock() {
+            if let Ok(mut stmt) = conn.prepare("SELECT status FROM downloads WHERE id = ?1") {
+                if let Ok(status) = stmt.query_row(params![id], |row| row.get::<_, String>(0)) {
+                    return status == "cancelled";
+                }
+            }
+        }
+        false
+    }
+
     pub fn get_records(
         &self,
         platform: Option<String>,

@@ -172,7 +172,106 @@ fn uuid_short() -> String {
     format!("{:x}", nanos)
 }
 
+#[tauri::command]
+fn get_clipboard_text(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().read_text().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_clipboard_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().write_text(text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn install_app_update_from_url(app: tauri::AppHandle, url: String) -> Result<bool, String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    use tauri::Emitter;
+
+    if url.is_empty() {
+        return Err("Download URL is empty".to_string());
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let installer_path = temp_dir.join("xdownloader_setup_update.exe");
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let response = client
+        .get(&url)
+        .header("User-Agent", "xDownloader-Updater")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download update from GitHub: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+
+    let total_size = response.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(&installer_path)
+        .await
+        .map_err(|e| format!("Failed to create temporary installer file: {}", e))?;
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.map_err(|e| format!("Error downloading chunk: {}", e))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Error writing chunk: {}", e))?;
+
+        downloaded += chunk.len() as u64;
+        if total_size > 0 {
+            let pct = ((downloaded as f64 / total_size as f64) * 100.0).min(100.0) as u32;
+            let _ = app.emit("app-update-progress", pct);
+        }
+    }
+    file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
+    drop(file);
+
+    let _ = app.emit("app-update-progress", 100u32);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        let _ = Command::new(&installer_path).spawn();
+        std::process::exit(0);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        open::that(&installer_path).map_err(|e| e.to_string())?;
+        std::process::exit(0);
+    }
+}
+
 pub fn run() {
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+
+        let app_id: Vec<u16> = OsStr::new("com.eggafx.xdownloader")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        extern "system" {
+            fn SetCurrentProcessExplicitAppUserModelID(AppID: *const u16) -> i32;
+        }
+
+        unsafe {
+            let _ = SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
+        }
+    }
+
     let db = match Database::new() {
         Ok(d) => Arc::new(d),
         Err(e) => {
@@ -188,6 +287,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state)
@@ -207,6 +307,9 @@ pub fn run() {
             get_recent_logs,
             clear_app_logs,
             open_logs_folder,
+            get_clipboard_text,
+            set_clipboard_text,
+            install_app_update_from_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xDownloader application");

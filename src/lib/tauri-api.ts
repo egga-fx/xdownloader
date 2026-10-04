@@ -1,7 +1,7 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
@@ -896,6 +896,8 @@ export async function getAppSettings(): Promise<AppSettings> {
     defaultAudioQuality: "mp3",
     autoClipboardDetect: true,
     downloadSubtitles: false,
+    checkUpdatesOnStartup: true,
+    desktopNotifications: true,
   };
 }
 
@@ -949,14 +951,30 @@ export async function onBinaryDownloadProgress(
 
 export async function getClipboardUrl(): Promise<string> {
   if (isTauriEnvironment()) {
+    // 1. Try first-party native Tauri command (bypasses all plugin capability ACLs)
     try {
-      const text = await readText();
-      return text ? text.trim() : "";
+      const text = await invoke<string>("get_clipboard_text");
+      if (text && typeof text === "string" && text.trim().length > 0) {
+        return text.trim();
+      }
     } catch {
       // ignore
     }
+
+    // 2. Try official plugin readText()
+    try {
+      const text = await readText();
+      if (text && typeof text === "string" && text.trim().length > 0) {
+        return text.trim();
+      }
+    } catch {
+      // In native desktop shell, do NOT fall through to navigator.clipboard.readText
+      // to prevent WebView2 from displaying browser security permission prompts.
+    }
+    return "";
   }
 
+  // 3. Pure browser simulation fallback (never executed in native desktop shell)
   try {
     if (typeof navigator !== "undefined" && navigator.clipboard?.readText) {
       const text = await navigator.clipboard.readText();
@@ -968,79 +986,194 @@ export async function getClipboardUrl(): Promise<string> {
   return "";
 }
 
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    // 1. Try first-party native Tauri command
+    try {
+      await invoke("set_clipboard_text", { text });
+      return true;
+    } catch {
+      // ignore
+    }
+
+    // 2. Try official plugin writeText
+    try {
+      await writeText(text);
+      return true;
+    } catch {
+      // fallback
+    }
+    return false;
+  }
+
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
 // --- 8. AUTO-UPDATER ---
 
 let pendingUpdate: Update | null = null;
 
-export async function checkForAppUpdate(): Promise<AppUpdateInfo> {
+export async function getAppVersion(): Promise<string> {
   if (isTauriEnvironment()) {
     try {
+      const { getVersion } = await import("@tauri-apps/api/app");
+      const v = await getVersion();
+      if (v) return v;
+    } catch {
+      // fallback
+    }
+  }
+  return "1.0.4";
+}
+
+export function isVersionNewer(remoteVersion: string, currentVersion: string): boolean {
+  if (!remoteVersion || !currentVersion) return false;
+  const clean = (v: string) => v.replace(/^v/i, "").trim();
+  const v1 = clean(remoteVersion).split(".").map((n) => parseInt(n, 10) || 0);
+  const v2 = clean(currentVersion).split(".").map((n) => parseInt(n, 10) || 0);
+
+  for (let i = 0; i < Math.max(v1.length, v2.length); i++) {
+    const num1 = v1[i] || 0;
+    const num2 = v2[i] || 0;
+    if (num1 > num2) return true;
+    if (num1 < num2) return false;
+  }
+  return false;
+}
+
+export async function checkForAppUpdate(): Promise<AppUpdateInfo> {
+  pendingUpdate = null;
+  const currentVersion = await getAppVersion();
+
+  if (isTauriEnvironment()) {
+    // 1. Try official Tauri v2 updater plugin first (if signed latest.json exists)
+    try {
       const update = await check();
-      if (update) {
+      if (update && update.available) {
         pendingUpdate = update;
         return {
           available: true,
-          currentVersion: update.currentVersion,
+          currentVersion: update.currentVersion || currentVersion,
           version: update.version,
           body: update.body || "",
           date: update.date || "",
         };
       }
-      return {
-        available: false,
-        currentVersion: "1.0.0",
-      };
-    } catch (err) {
-      console.warn("Update check error:", err);
-      return {
-        available: false,
-        currentVersion: "1.0.0",
-      };
+    } catch (pluginErr) {
+      console.warn("Tauri updater plugin check failed, falling back to GitHub Releases API:", pluginErr);
     }
   }
 
-  // Web mode
+  // 2. Resilient GitHub Releases API fallback (works natively without requiring signed latest.json)
+  try {
+    const res = await fetch("https://api.github.com/repos/egga-fx/xdownloader/releases/latest", {
+      headers: {
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const remoteTag = (data.tag_name || data.name || "").toString();
+      const isNewer = isVersionNewer(remoteTag, currentVersion);
+
+      const assets: Array<{ name: string; browser_download_url: string }> = data.assets || [];
+      const setupAsset = assets.find((a) => a.name.toLowerCase().endsWith(".exe"));
+
+      return {
+        available: isNewer,
+        currentVersion,
+        version: remoteTag.replace(/^v/i, ""),
+        body: data.body || "",
+        date: data.published_at || "",
+        downloadUrl: setupAsset?.browser_download_url,
+        releaseUrl: data.html_url || "https://github.com/egga-fx/xdownloader/releases/latest",
+      };
+    }
+  } catch (ghErr) {
+    console.warn("GitHub Releases check error:", ghErr);
+  }
+
   return {
     available: false,
-    currentVersion: "1.0.0",
+    currentVersion,
   };
 }
 
 export async function downloadAndInstallAppUpdate(
+  updateInfo?: AppUpdateInfo | null,
   onProgress?: (progressPercent: number) => void
 ): Promise<boolean> {
-  if (!isTauriEnvironment() || !pendingUpdate) {
-    return false;
+  // 1. If official pending update object is present, use native Tauri updater
+  if (pendingUpdate) {
+    try {
+      let downloadedBytes = 0;
+      let totalBytes = 0;
+
+      await pendingUpdate.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Started":
+            totalBytes = event.data.contentLength || 0;
+            break;
+          case "Progress":
+            downloadedBytes += event.data.chunkLength;
+            if (totalBytes > 0 && onProgress) {
+              onProgress(Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)));
+            }
+            break;
+          case "Finished":
+            if (onProgress) onProgress(100);
+            break;
+        }
+      });
+
+      await relaunch();
+      return true;
+    } catch (err) {
+      console.warn("Native downloadAndInstall failed, attempting fallback installer download:", err);
+    }
   }
 
-  try {
-    let downloadedBytes = 0;
-    let totalBytes = 0;
+  // 2. Direct GitHub Installer Download fallback via native Rust IPC
+  if (isTauriEnvironment() && updateInfo?.downloadUrl) {
+    let unlisten: UnlistenFn | null = null;
+    if (onProgress) {
+      unlisten = await listen<number>("app-update-progress", (event) => {
+        onProgress(event.payload);
+      });
+    }
 
-    await pendingUpdate.downloadAndInstall((event) => {
-      switch (event.event) {
-        case "Started":
-          totalBytes = event.data.contentLength || 0;
-          break;
-        case "Progress":
-          downloadedBytes += event.data.chunkLength;
-          if (totalBytes > 0 && onProgress) {
-            onProgress(Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)));
-          }
-          break;
-        case "Finished":
-          if (onProgress) onProgress(100);
-          break;
+    try {
+      await invoke("install_app_update_from_url", { url: updateInfo.downloadUrl });
+      return true;
+    } catch (err) {
+      // If direct execution fails, open release page as ultimate fallback
+      if (updateInfo.releaseUrl) {
+        await openExternalUrl(updateInfo.releaseUrl);
       }
-    });
-
-    // Seamlessly relaunch to apply update
-    await relaunch();
-    return true;
-  } catch (err) {
-    console.error("Failed to download and install update:", err);
-    throw err;
+      throw err;
+    } finally {
+      if (unlisten) {
+        unlisten();
+      }
+    }
   }
+
+  // 3. Web or browser fallback
+  if (updateInfo?.releaseUrl) {
+    await openExternalUrl(updateInfo.releaseUrl);
+    return true;
+  }
+
+  return false;
 }
 
 export async function openExternalUrl(url: string): Promise<void> {

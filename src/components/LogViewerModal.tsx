@@ -14,7 +14,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { LogEntry } from "../types";
-import { getRecentLogs, clearAppLogs, openLogsFolder } from "../lib/tauri-api";
+import { getRecentLogs, clearAppLogs, openLogsFolder, copyToClipboard } from "../lib/tauri-api";
 
 interface LogViewerModalProps {
   open: boolean;
@@ -105,7 +105,7 @@ export const LogViewerModal: React.FC<LogViewerModalProps> = ({ open, onClose })
       )
       .join("\n");
 
-    navigator.clipboard.writeText(text);
+    copyToClipboard(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

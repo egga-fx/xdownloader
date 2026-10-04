@@ -12,7 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import { openExternalUrl } from "../lib/tauri-api";
+import { openExternalUrl, copyToClipboard, getAppVersion } from "../lib/tauri-api";
 
 const GithubIcon: React.FC<{ className?: string }> = ({ className = "w-4 h-4" }) => (
   <svg
@@ -35,8 +35,19 @@ interface AboutModalProps {
 }
 
 export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
+  const [appVersion, setAppVersion] = useState<string>("1.0.4");
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [toolsAgentsExpanded, setToolsAgentsExpanded] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (open) {
+      getAppVersion()
+        .then((v) => {
+          if (v) setAppVersion(v);
+        })
+        .catch(() => {});
+    }
+  }, [open]);
 
   // Close on Escape key
   useEffect(() => {
@@ -52,7 +63,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
   if (!open) return null;
 
   const handleCopy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
+    copyToClipboard(text);
     setCopiedUrl(label);
     setTimeout(() => setCopiedUrl(null), 2000);
   };
@@ -95,7 +106,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
                   xDownloader
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
-                  v1.0.1
+                  v{appVersion}
                 </span>
               </div>
               <p className="text-xs text-[#a1a1aa] font-medium mt-0.5">

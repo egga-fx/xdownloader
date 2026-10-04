@@ -98,6 +98,7 @@ export interface AppSettings {
   autoClipboardDetect: boolean;
   downloadSubtitles: boolean;
   checkUpdatesOnStartup?: boolean;
+  desktopNotifications?: boolean;
 }
 
 export interface AppUpdateInfo {
@@ -106,6 +107,8 @@ export interface AppUpdateInfo {
   version?: string;
   body?: string;
   date?: string;
+  downloadUrl?: string;
+  releaseUrl?: string;
 }
 
 export interface LogEntry {
