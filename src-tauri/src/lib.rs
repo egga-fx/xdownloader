@@ -332,6 +332,173 @@ async fn install_app_update_from_url(app: tauri::AppHandle, url: String) -> Resu
     }
 }
 
+#[tauri::command]
+async fn check_for_app_update(app: tauri::AppHandle) -> Result<models::AppUpdateInfo, String> {
+    let current_version = app.package_info().version.to_string();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let url = "https://api.github.com/repos/egga-fx/xdownloader/releases/latest";
+    let resp = client
+        .get(url)
+        .header("User-Agent", format!("xDownloader-Desktop/{}", current_version))
+        .header("Accept", "application/vnd.github.v3+json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to GitHub releases API: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Ok(models::AppUpdateInfo {
+            available: false,
+            current_version,
+            version: None,
+            body: None,
+            date: None,
+            download_url: None,
+            release_url: Some("https://github.com/egga-fx/xdownloader/releases/latest".to_string()),
+        });
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse release response: {}", e))?;
+
+    let tag = data
+        .get("tag_name")
+        .or_else(|| data.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let clean_remote = tag.trim_start_matches('v').trim();
+    let is_newer = is_version_newer_semver(clean_remote, &current_version);
+
+    let mut download_url = None;
+    if let Some(assets) = data.get("assets").and_then(|a| a.as_array()) {
+        for asset in assets {
+            if let Some(name) = asset.get("name").and_then(|n| n.as_str()) {
+                if name.to_lowercase().ends_with(".exe") {
+                    if let Some(url) = asset.get("browser_download_url").and_then(|u| u.as_str()) {
+                        download_url = Some(url.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let release_url = data
+        .get("html_url")
+        .and_then(|u| u.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| Some("https://github.com/egga-fx/xdownloader/releases/latest".to_string()));
+
+    let body = data.get("body").and_then(|b| b.as_str()).map(|s| s.to_string());
+    let date = data.get("published_at").and_then(|d| d.as_str()).map(|s| s.to_string());
+
+    Ok(models::AppUpdateInfo {
+        available: is_newer,
+        current_version,
+        version: Some(clean_remote.to_string()),
+        body,
+        date,
+        download_url,
+        release_url,
+    })
+}
+
+fn is_version_newer_semver(remote: &str, current: &str) -> bool {
+    let clean = |s: &str| -> Vec<u32> {
+        s.trim_start_matches('v')
+            .trim()
+            .split('.')
+            .map(|p| p.parse::<u32>().unwrap_or(0))
+            .collect()
+    };
+    let v_rem = clean(remote);
+    let v_cur = clean(current);
+    for i in 0..std::cmp::max(v_rem.len(), v_cur.len()) {
+        let r = *v_rem.get(i).unwrap_or(&0);
+        let c = *v_cur.get(i).unwrap_or(&0);
+        if r > c {
+            return true;
+        }
+        if r < c {
+            return false;
+        }
+    }
+    false
+}
+
+#[tauri::command]
+async fn start_transcription_for_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    file_path: String,
+    language_code: Option<String>,
+    custom_name: Option<String>,
+    output_folder: Option<String>,
+) -> Result<String, String> {
+    let task_id = format!("tr_file_{}_{}", chrono::Utc::now().timestamp_millis(), uuid_short());
+    let db = state.db.clone();
+    let process_mgr = state.process_mgr.clone();
+    let transcription_mgr = state.transcription_mgr.clone();
+
+    // Guard: Verify key is configured before doing any async work
+    let cfg = transcriber::load_config(&db)?;
+    cfg.ensure_ready()?;
+
+    let task_id_clone = task_id.clone();
+    let app_clone = app.clone();
+    let task_mgr_for_cleanup = transcription_mgr.clone();
+    let task_id_for_cleanup = task_id.clone();
+
+    let join_handle = tokio::spawn(async move {
+        let _ = transcriber::run_file_transcription(
+            app_clone,
+            db,
+            process_mgr,
+            task_id_clone,
+            file_path,
+            language_code,
+            custom_name,
+            output_folder,
+        )
+        .await;
+        task_mgr_for_cleanup.remove(&task_id_for_cleanup);
+    });
+
+    state.transcription_mgr.register(task_id.clone(), join_handle.abort_handle());
+    Ok(task_id)
+}
+
+#[tauri::command]
+async fn read_subtitle_file(file_path: String) -> Result<String, String> {
+    let path = std::path::Path::new(&file_path);
+    if !path.exists() {
+        return Err("Subtitle file does not exist".to_string());
+    }
+    tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| format!("Failed to read subtitle file: {}", e))
+}
+
+#[tauri::command]
+async fn save_subtitle_file(file_path: String, content: String) -> Result<bool, String> {
+    let path = std::path::Path::new(&file_path);
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    tokio::fs::write(path, content.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to write subtitle file: {}", e))?;
+    Ok(true)
+}
+
 pub fn run() {
     #[cfg(target_os = "windows")]
     {
@@ -394,12 +561,16 @@ pub fn run() {
             open_logs_folder,
             get_clipboard_text,
             set_clipboard_text,
+            check_for_app_update,
             install_app_update_from_url,
             get_transcription_config,
             save_transcription_config,
             test_transcription_key,
             start_transcription,
+            start_transcription_for_file,
             cancel_transcription,
+            read_subtitle_file,
+            save_subtitle_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xDownloader application");

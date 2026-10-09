@@ -26,6 +26,7 @@ interface MediaVaultDrawerProps {
   onCopyPath: (path: string) => void;
   onDeleteRecordDirectly: (id: string, title?: string) => Promise<void>;
   onRetryRecord?: (record: DownloadRecord) => void;
+  onOpenTranscriptStudio?: (record: DownloadRecord) => void;
   loading: boolean;
 }
 
@@ -41,6 +42,7 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
   onCopyPath,
   onDeleteRecordDirectly,
   onRetryRecord,
+  onOpenTranscriptStudio,
   loading,
 }) => {
   const [viewMode, setViewMode] = useState<"table" | "grid">("table");
@@ -251,6 +253,7 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
               onCopyPath={onCopyPath}
               onDeleteRecord={handleDeleteClick}
               onRetryRecord={onRetryRecord}
+              onOpenTranscriptStudio={onOpenTranscriptStudio}
             />
           ) : (
             <VaultHistoryGrid
@@ -262,6 +265,7 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
               onCopyPath={onCopyPath}
               onDeleteRecord={handleDeleteClick}
               onRetryRecord={onRetryRecord}
+              onOpenTranscriptStudio={onOpenTranscriptStudio}
             />
           )}
         </div>

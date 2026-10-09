@@ -25,6 +25,7 @@ interface VaultHistoryTableProps {
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
   onRetryRecord?: (record: DownloadRecord) => void;
+  onOpenTranscriptStudio?: (record: DownloadRecord) => void;
 }
 
 export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
@@ -36,6 +37,7 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
   onCopyPath,
   onDeleteRecord,
   onRetryRecord,
+  onOpenTranscriptStudio,
 }) => {
   return (
     <div className="flex flex-col divide-y divide-[#1f1f23]">
@@ -224,6 +226,7 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
               onCopyPath={onCopyPath}
               onDeleteRecord={onDeleteRecord}
               onRetry={onRetryRecord}
+              onOpenTranscriptStudio={onOpenTranscriptStudio}
               layout="row"
             />
           </div>

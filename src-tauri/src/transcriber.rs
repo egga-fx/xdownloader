@@ -1056,6 +1056,442 @@ pub async fn run_transcription(
     Ok(srt_path_str)
 }
 
+pub async fn run_file_transcription(
+    app: AppHandle,
+    db: Arc<Database>,
+    process_mgr: Arc<ProcessManager>,
+    task_id: String,
+    file_path_str: String,
+    language_code: Option<String>,
+    custom_name: Option<String>,
+    output_folder: Option<String>,
+) -> Result<String, String> {
+    // Guard 1: Verify API key
+    let cfg = load_config(&db)?;
+    let api_key = match cfg.ensure_ready() {
+        Ok(k) => k.to_string(),
+        Err(e) => {
+            let err_prog = TranscriptionProgress {
+                task_id: task_id.clone(),
+                stage: "error".to_string(),
+                percent: 0.0,
+                message: e.clone(),
+                error: Some(e.clone()),
+                srt_path: None,
+            };
+            let _ = app.emit("transcription-progress", &err_prog);
+            return Err(e);
+        }
+    };
+
+    let input_path = PathBuf::from(&file_path_str);
+    if !input_path.exists() {
+        let err = format!("Input media file does not exist: {}", file_path_str);
+        let _ = app.emit(
+            "transcription-progress",
+            &TranscriptionProgress {
+                task_id: task_id.clone(),
+                stage: "error".to_string(),
+                percent: 0.0,
+                message: err.clone(),
+                error: Some(err.clone()),
+                srt_path: None,
+            },
+        );
+        return Err(err);
+    }
+
+    let _ = app.emit(
+        "transcription-progress",
+        &TranscriptionProgress {
+            task_id: task_id.clone(),
+            stage: "downloading_audio".to_string(),
+            percent: 15.0,
+            message: "Preparing audio stream...".to_string(),
+            error: None,
+            srt_path: None,
+        },
+    );
+
+    let ext = input_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let (audio_path, is_temp) = if ext == "mp3" {
+        (input_path.clone(), false)
+    } else {
+        // Convert to temp MP3 using ffmpeg
+        let ffmpeg_bin = crate::binaries::find_binary("ffmpeg").ok_or_else(|| {
+            let err = "FFmpeg binary is not installed. Please set up engines first.".to_string();
+            let _ = app.emit(
+                "transcription-progress",
+                &TranscriptionProgress {
+                    task_id: task_id.clone(),
+                    stage: "error".to_string(),
+                    percent: 0.0,
+                    message: err.clone(),
+                    error: Some(err.clone()),
+                    srt_path: None,
+                },
+            );
+            err
+        })?;
+
+        let temp_mp3 = std::env::temp_dir().join(format!("{}.mp3", task_id));
+
+        let mut cmd = std::process::Command::new(&ffmpeg_bin);
+        cmd.args(["-y", "-i"])
+            .arg(&input_path)
+            .args(["-vn", "-acodec", "libmp3lame", "-ab", "128k", "-ar", "44100"])
+            .arg(&temp_mp3);
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn ffmpeg: {}", e))?;
+        let pid = child.id();
+        let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("media").to_string();
+        process_mgr.register(task_id.clone(), pid, std::env::temp_dir(), stem);
+
+        let status_res = tokio::task::spawn_blocking(move || child.wait()).await;
+        process_mgr.remove(&task_id);
+
+        match status_res {
+            Ok(Ok(status)) if status.success() => (temp_mp3, true),
+            Ok(Ok(status)) => {
+                let _ = tokio::fs::remove_file(&temp_mp3).await;
+                let err = format!("FFmpeg failed with exit code: {:?}", status.code());
+                let _ = app.emit(
+                    "transcription-progress",
+                    &TranscriptionProgress {
+                        task_id: task_id.clone(),
+                        stage: "error".to_string(),
+                        percent: 0.0,
+                        message: err.clone(),
+                        error: Some(err.clone()),
+                        srt_path: None,
+                    },
+                );
+                return Err(err);
+            }
+            _ => {
+                let _ = tokio::fs::remove_file(&temp_mp3).await;
+                let err = "FFmpeg process failed or was interrupted".to_string();
+                let _ = app.emit(
+                    "transcription-progress",
+                    &TranscriptionProgress {
+                        task_id: task_id.clone(),
+                        stage: "error".to_string(),
+                        percent: 0.0,
+                        message: err.clone(),
+                        error: Some(err.clone()),
+                        srt_path: None,
+                    },
+                );
+                return Err(err);
+            }
+        }
+    };
+
+    let _ = app.emit(
+        "transcription-progress",
+        &TranscriptionProgress {
+            task_id: task_id.clone(),
+            stage: "uploading".to_string(),
+            percent: 50.0,
+            message: "Uploading audio to ElevenLabs Scribe...".to_string(),
+            error: None,
+            srt_path: None,
+        },
+    );
+
+    let file_bytes = match tokio::fs::read(&audio_path).await {
+        Ok(b) => b,
+        Err(e) => {
+            if is_temp {
+                let _ = tokio::fs::remove_file(&audio_path).await;
+            }
+            let err = format!("Failed to read audio file: {}", e);
+            let _ = app.emit(
+                "transcription-progress",
+                &TranscriptionProgress {
+                    task_id: task_id.clone(),
+                    stage: "error".to_string(),
+                    percent: 0.0,
+                    message: err.clone(),
+                    error: Some(err.clone()),
+                    srt_path: None,
+                },
+            );
+            return Err(err);
+        }
+    };
+
+    if is_temp {
+        let _ = tokio::fs::remove_file(&audio_path).await;
+    }
+
+    let boundary = format!("----xDownloaderBoundary{}", crate::uuid_short());
+    let mut body = Vec::new();
+
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"model_id\"\r\n\r\n");
+    body.extend_from_slice(cfg.model_id.as_bytes());
+    body.extend_from_slice(b"\r\n");
+
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"tag_audio_events\"\r\n\r\n");
+    body.extend_from_slice(if cfg.tag_audio_events { b"true\r\n" } else { b"false\r\n" });
+
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"diarize\"\r\n\r\n");
+    body.extend_from_slice(if cfg.diarize { b"true\r\n" } else { b"false\r\n" });
+
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"timestamps_granularity\"\r\n\r\nword\r\n");
+
+    let active_lang = language_code.as_ref().or(cfg.language_code.as_ref());
+    if let Some(l) = active_lang {
+        if !l.trim().is_empty() {
+            body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+            body.extend_from_slice(b"Content-Disposition: form-data; name=\"language_code\"\r\n\r\n");
+            body.extend_from_slice(l.trim().as_bytes());
+            body.extend_from_slice(b"\r\n");
+        }
+    }
+
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"file\"; filename=\"audio.mp3\"\r\n");
+    body.extend_from_slice(b"Content-Type: audio/mpeg\r\n\r\n");
+    body.extend_from_slice(&file_bytes);
+    body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(1800))
+        .build()
+        .map_err(|e| format!("HTTP client init failed: {}", e))?;
+
+    let _ = app.emit(
+        "transcription-progress",
+        &TranscriptionProgress {
+            task_id: task_id.clone(),
+            stage: "transcribing".to_string(),
+            percent: 75.0,
+            message: "Transcribing audio with Scribe v2...".to_string(),
+            error: None,
+            srt_path: None,
+        },
+    );
+
+    let req = client
+        .post("https://api.elevenlabs.io/v1/speech-to-text")
+        .header("xi-api-key", &api_key)
+        .header("Content-Type", format!("multipart/form-data; boundary={}", boundary))
+        .body(body);
+
+    let resp_result = req.send().await;
+
+    let resp = match resp_result {
+        Ok(r) => r,
+        Err(e) => {
+            let err = format!("API request failed: {}", e.without_url());
+            let _ = app.emit(
+                "transcription-progress",
+                &TranscriptionProgress {
+                    task_id: task_id.clone(),
+                    stage: "error".to_string(),
+                    percent: 0.0,
+                    message: err.clone(),
+                    error: Some(err.clone()),
+                    srt_path: None,
+                },
+            );
+            return Err(err);
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        let err_body = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            let mut cur_cfg = load_config(&db)?;
+            cur_cfg.mark_invalid();
+            let _ = save_config(&db, &cur_cfg);
+        }
+        let err_msg = format!("ElevenLabs API Error (HTTP {}): {}", status.as_u16(), err_body);
+        let _ = app.emit(
+            "transcription-progress",
+            &TranscriptionProgress {
+                task_id: task_id.clone(),
+                stage: "error".to_string(),
+                percent: 0.0,
+                message: err_msg.clone(),
+                error: Some(err_msg.clone()),
+                srt_path: None,
+            },
+        );
+        return Err(err_msg);
+    }
+
+    let json_bytes = resp.bytes().await.map_err(|e| format!("Failed to read response: {}", e))?;
+    let parsed: ElevenLabsResponse = serde_json::from_slice(&json_bytes)
+        .map_err(|e| format!("Failed to parse ElevenLabs response: {}", e))?;
+
+    let mut words: Vec<TranscriptWord> = Vec::new();
+    if let Some(raw_words) = parsed.words {
+        for w in raw_words {
+            let text = w.text.unwrap_or_default();
+            if text.trim().is_empty() {
+                continue;
+            }
+            let start = w.start.unwrap_or(0.0);
+            let end = w.end.unwrap_or(start + 0.4);
+            words.push(TranscriptWord {
+                text,
+                start,
+                end,
+                kind: w.word_type.unwrap_or_else(|| "word".to_string()),
+                speaker: w.speaker_id,
+            });
+        }
+    }
+
+    if words.is_empty() {
+        if let Some(raw_text) = parsed.text {
+            if !raw_text.trim().is_empty() {
+                words.push(TranscriptWord {
+                    text: raw_text.trim().to_string(),
+                    start: 0.0,
+                    end: 10.0,
+                    kind: "word".to_string(),
+                    speaker: None,
+                });
+            }
+        }
+    }
+
+    if words.is_empty() {
+        let err_msg = "No spoken words detected in the media.".to_string();
+        let _ = app.emit(
+            "transcription-progress",
+            &TranscriptionProgress {
+                task_id: task_id.clone(),
+                stage: "error".to_string(),
+                percent: 0.0,
+                message: err_msg.clone(),
+                error: Some(err_msg.clone()),
+                srt_path: None,
+            },
+        );
+        return Err(err_msg);
+    }
+
+    let _ = app.emit(
+        "transcription-progress",
+        &TranscriptionProgress {
+            task_id: task_id.clone(),
+            stage: "writing_files".to_string(),
+            percent: 90.0,
+            message: "Generating SRT, VTT, and TXT subtitle files...".to_string(),
+            error: None,
+            srt_path: None,
+        },
+    );
+
+    let cue_opts = CueOptions {
+        max_chars_per_line: cfg.max_chars_per_line as usize,
+        include_audio_events: cfg.tag_audio_events,
+        include_speakers: cfg.diarize,
+        ..Default::default()
+    };
+    let cues = build_cues(&words, &cue_opts);
+    let srt_content = build_srt(&cues);
+    let vtt_content = build_vtt(&cues);
+    let txt_content = build_txt(&cues);
+
+    let out_dir = match output_folder {
+        Some(ref f) if !f.trim().is_empty() => PathBuf::from(f),
+        _ => {
+            if let Some(parent) = input_path.parent() {
+                parent.to_path_buf()
+            } else {
+                get_default_download_dir()
+            }
+        }
+    };
+    let _ = tokio::fs::create_dir_all(&out_dir).await;
+
+    let default_stem = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("media");
+
+    let stem = match custom_name {
+        Some(ref n) if !n.trim().is_empty() => sanitize_filename(n),
+        _ => sanitize_filename(default_stem),
+    };
+
+    let srt_path = out_dir.join(format!("{}.srt", stem));
+    let vtt_path = out_dir.join(format!("{}.vtt", stem));
+    let txt_path = out_dir.join(format!("{}.txt", stem));
+
+    let srt_tmp = out_dir.join(format!("{}.srt.tmp", stem));
+    let vtt_tmp = out_dir.join(format!("{}.vtt.tmp", stem));
+    let txt_tmp = out_dir.join(format!("{}.txt.tmp", stem));
+
+    tokio::fs::write(&srt_tmp, srt_content.as_bytes()).await.map_err(|e| e.to_string())?;
+    tokio::fs::write(&vtt_tmp, vtt_content.as_bytes()).await.map_err(|e| e.to_string())?;
+    tokio::fs::write(&txt_tmp, txt_content.as_bytes()).await.map_err(|e| e.to_string())?;
+
+    let _ = tokio::fs::rename(&srt_tmp, &srt_path).await;
+    let _ = tokio::fs::rename(&vtt_tmp, &vtt_path).await;
+    let _ = tokio::fs::rename(&txt_tmp, &txt_path).await;
+
+    let srt_size = tokio::fs::metadata(&srt_path)
+        .await
+        .map(|m| m.len() as i64)
+        .unwrap_or(srt_content.len() as i64);
+
+    let srt_record = DownloadRecord {
+        id: format!("{}_srt", task_id),
+        platform: "local_file".to_string(),
+        url: file_path_str.clone(),
+        title: format!("{} [Transcript]", stem),
+        author: "Local Studio".to_string(),
+        duration_sec: 0,
+        thumbnail_url: String::new(),
+        format_type: "subtitle".to_string(),
+        quality: "srt".to_string(),
+        file_path: srt_path.to_string_lossy().to_string(),
+        file_size_bytes: srt_size,
+        status: "completed".to_string(),
+        error: None,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        time_range: None,
+        exists: true,
+    };
+    let _ = db.add_record(&srt_record);
+
+    let srt_path_str = srt_path.to_string_lossy().to_string();
+    let final_progress = TranscriptionProgress {
+        task_id: task_id.clone(),
+        stage: "completed".to_string(),
+        percent: 100.0,
+        message: "Transcript created successfully!".to_string(),
+        error: None,
+        srt_path: Some(srt_path_str.clone()),
+    };
+    let _ = app.emit("transcription-progress", &final_progress);
+
+    Ok(srt_path_str)
+}
+
 // ---------------------------------------------------------------------------
 // Tests (written from the format/behavior contracts)
 // ---------------------------------------------------------------------------

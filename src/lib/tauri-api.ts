@@ -1,4 +1,4 @@
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc as tauriConvertFileSrc } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -845,12 +845,16 @@ export async function pickFolder(): Promise<string | null> {
 export function convertLocalFileSrc(filePath: string): string {
   if (isTauriEnvironment()) {
     try {
-      return convertFileSrc(filePath);
+      return tauriConvertFileSrc(filePath);
     } catch {
       return filePath;
     }
   }
   return filePath;
+}
+
+export function convertFileSrc(filePath: string): string {
+  return convertLocalFileSrc(filePath);
 }
 
 export async function pickMediaFile(): Promise<string | null> {
@@ -859,11 +863,23 @@ export async function pickMediaFile(): Promise<string | null> {
       const selected = await openDialog({
         directory: false,
         multiple: false,
-        title: "Pilih File Video untuk Di-trim",
+        title: "Pilih File Media (Video / Audio)",
         filters: [
+          {
+            name: "Media Files",
+            extensions: ["mp4", "mkv", "webm", "mov", "avi", "flv", "mp3", "wav", "m4a", "aac", "ogg", "flac"],
+          },
           {
             name: "Video Files",
             extensions: ["mp4", "mkv", "mov", "webm", "avi", "flv", "ts", "m4v"],
+          },
+          {
+            name: "Audio Files",
+            extensions: ["mp3", "wav", "m4a", "aac", "ogg", "flac"],
+          },
+          {
+            name: "All Files",
+            extensions: ["*"],
           },
         ],
       });
@@ -1110,6 +1126,93 @@ export async function cancelTranscription(taskId: string): Promise<boolean> {
   return true;
 }
 
+export async function startTranscriptionForFile(params: {
+  filePath: string;
+  languageCode?: string | null;
+  customName?: string;
+  outputFolder?: string;
+}): Promise<string> {
+  if (isTauriEnvironment()) {
+    return await invoke<string>("start_transcription_for_file", {
+      filePath: params.filePath,
+      languageCode: params.languageCode ?? null,
+      customName: params.customName ?? null,
+      outputFolder: params.outputFolder ?? null,
+    });
+  }
+
+  const cfg = await getTranscriptionConfig();
+  if (cfg.keyStatus === "missing") {
+    throw new Error("API key not configured");
+  }
+  if (cfg.keyStatus === "invalid") {
+    throw new Error("API key was rejected by the provider. Please update it in Settings.");
+  }
+
+  const taskId = `tr_file_${Date.now()}_mock`;
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "downloading_audio",
+      percent: 15,
+      message: "Preparing audio stream...",
+    });
+  }, 200);
+
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "uploading",
+      percent: 50,
+      message: "Uploading audio to ElevenLabs Scribe...",
+    });
+  }, 800);
+
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "transcribing",
+      percent: 75,
+      message: "Transcribing audio with Scribe v2...",
+    });
+  }, 1500);
+
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "writing_files",
+      percent: 90,
+      message: "Generating SRT, VTT, and TXT subtitle files...",
+    });
+  }, 2200);
+
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "completed",
+      percent: 100,
+      message: "Transcript created successfully!",
+      srtPath: `Videos/xDownloader/${params.customName || "local_transcript"}.srt`,
+    });
+  }, 2800);
+
+  return taskId;
+}
+
+export async function readSubtitleFile(filePath: string): Promise<string> {
+  if (isTauriEnvironment()) {
+    return await invoke<string>("read_subtitle_file", { filePath });
+  }
+  return `1\n00:00:00,000 --> 00:00:04,500\n[Welcome to xDownloader Transcript Studio]\n\n2\n00:00:04,600 --> 00:00:08,200\nAI speech-to-text transcript ready for editing.`;
+}
+
+export async function saveSubtitleFile(filePath: string, content: string): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    return await invoke<boolean>("save_subtitle_file", { filePath, content });
+  }
+  return true;
+}
+
 // --- 6. EVENT LISTENERS ---
 
 export async function onDownloadProgress(
@@ -1252,7 +1355,17 @@ export async function checkForAppUpdate(): Promise<AppUpdateInfo> {
   const currentVersion = await getAppVersion();
 
   if (isTauriEnvironment()) {
-    // 1. Try official Tauri v2 updater plugin first (if signed latest.json exists)
+    // 1. Native Rust check via reqwest with proper User-Agent header (immune to CORS & webview limitations)
+    try {
+      const nativeInfo = await invoke<AppUpdateInfo>("check_for_app_update");
+      if (nativeInfo && typeof nativeInfo.available === "boolean") {
+        return nativeInfo;
+      }
+    } catch (nativeErr) {
+      console.warn("Native check_for_app_update failed, falling back to plugin:", nativeErr);
+    }
+
+    // 2. Try official Tauri v2 updater plugin first (if signed latest.json exists)
     try {
       const update = await check();
       if (update && update.available) {
@@ -1270,7 +1383,7 @@ export async function checkForAppUpdate(): Promise<AppUpdateInfo> {
     }
   }
 
-  // 2. Resilient GitHub Releases API fallback (works natively without requiring signed latest.json)
+  // 3. Resilient GitHub Releases API fallback (works natively without requiring signed latest.json)
   try {
     const res = await fetch("https://api.github.com/repos/egga-fx/xdownloader/releases/latest", {
       headers: {

@@ -8,6 +8,7 @@ import {
   Copy,
   Trash2,
   RotateCcw,
+  Sparkles,
 } from "lucide-react";
 import { DownloadRecord } from "../types";
 import { triggerDirectBrowserDownload, isTauriEnvironment } from "../lib/tauri-api";
@@ -20,6 +21,7 @@ interface VaultItemActionsProps {
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
   onRetry?: (record: DownloadRecord) => void;
+  onOpenTranscriptStudio?: (record: DownloadRecord) => void;
   layout?: "row" | "split";
 }
 
@@ -30,6 +32,7 @@ export const VaultItemActions: React.FC<VaultItemActionsProps> = ({
   onCopyPath,
   onDeleteRecord,
   onRetry,
+  onOpenTranscriptStudio,
   layout = "row",
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -245,6 +248,25 @@ export const VaultItemActions: React.FC<VaultItemActionsProps> = ({
                 >
                   <Copy className="w-3.5 h-3.5 text-[#a1a1aa] shrink-0" />
                   <span>Copy File Path</span>
+                </button>
+              )}
+
+              {/* Open in Transcript Studio */}
+              {canPlayOrDownload && onOpenTranscriptStudio && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    onOpenTranscriptStudio(record);
+                  }}
+                  className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 transition-colors cursor-pointer w-full text-left"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  <span>
+                    {record.formatType === "subtitle"
+                      ? "Buka di Transcript Studio"
+                      : "Transkrip di Studio"}
+                  </span>
                 </button>
               )}
 

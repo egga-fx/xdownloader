@@ -41,6 +41,7 @@ interface MetadataPreviewCardProps {
   isTranscribing?: boolean;
   onTranscribe?: () => void;
   onOpenTranscriptionSettings?: () => void;
+  onOpenTranscriptStudio?: () => void;
 }
 
 const VIDEO_QUALITIES: DownloaderQuality[] = ["best", "1080p", "720p", "480p", "360p"];
@@ -61,6 +62,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   isTranscribing = false,
   onTranscribe,
   onOpenTranscriptionSettings,
+  onOpenTranscriptStudio,
 }) => {
   const isImage = info.description === "image";
   const carouselImages: string[] =
@@ -652,6 +654,19 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 <span>Foto #{activeImageIndex + 1}</span>
               </button>
             </>
+          )}
+
+          {onOpenTranscriptStudio && !isImage && (
+            <button
+              type="button"
+              onClick={onOpenTranscriptStudio}
+              disabled={isDownloadingCurrentUrl || isTranscribing}
+              className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-purple-500/30 bg-purple-950/40 text-purple-200 hover:bg-purple-900/60 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
+              title="Buka media ini langsung di Transcript Studio"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span>Buka di Studio</span>
+            </button>
           )}
 
           <button

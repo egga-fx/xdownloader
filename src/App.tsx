@@ -7,6 +7,8 @@ import { BinarySetupModal } from "./components/BinarySetupModal";
 import { MediaPreviewModal } from "./components/MediaPreviewModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { AboutModal } from "./components/AboutModal";
+import { UpdateModal } from "./components/UpdateModal";
+import { TranscriptStudioModal, StudioMediaInput } from "./components/TranscriptStudioModal";
 import {
   ActiveDownloadTask,
   AppSettings,
@@ -128,6 +130,12 @@ export function App() {
 
   // Auto-Updater status
   const [availableUpdate, setAvailableUpdate] = useState<AppUpdateInfo | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
+  const [updateModalOpen, setUpdateModalOpen] = useState<boolean>(false);
+
+  // Transcript Studio state
+  const [transcriptStudioOpen, setTranscriptStudioOpen] = useState<boolean>(false);
+  const [studioMediaInput, setStudioMediaInput] = useState<StudioMediaInput | null>(null);
 
   // Toast notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -160,17 +168,21 @@ export function App() {
 
       await loadRecords();
 
-      // Check for application updates on startup if enabled
-      if (settings.checkUpdatesOnStartup !== false) {
-        checkForAppUpdate()
-          .then((info) => {
-            if (info.available) {
-              setAvailableUpdate(info);
-              showToast(`Update v${info.version} available!`);
-            }
-          })
-          .catch(() => {});
-      }
+      // Check for application updates on startup
+      setCheckingUpdate(true);
+      checkForAppUpdate()
+        .then((info) => {
+          setAvailableUpdate(info);
+          if (info.available) {
+            showToast(`Update v${info.version} tersedia!`);
+          }
+        })
+        .catch((err) => {
+          console.debug("Update check failed/skipped:", err);
+        })
+        .finally(() => {
+          setCheckingUpdate(false);
+        });
 
       // Check/request desktop notification permissions gracefully
       if (settings.desktopNotifications !== false) {
@@ -750,6 +762,13 @@ export function App() {
         }}
         onOpenAbout={() => setAboutModalOpen(true)}
         hasUpdate={!!availableUpdate?.available}
+        updateInfo={availableUpdate}
+        checkingUpdate={checkingUpdate}
+        onOpenUpdateModal={() => setUpdateModalOpen(true)}
+        onOpenTranscriptStudio={() => {
+          setStudioMediaInput(null);
+          setTranscriptStudioOpen(true);
+        }}
       />
 
       {/* Main Content Area */}
@@ -805,6 +824,14 @@ export function App() {
                   setSettingsInitialSection("transcription");
                   setSettingsModalOpen(true);
                 }}
+                onOpenTranscriptStudio={() => {
+                  setStudioMediaInput({
+                    type: "url",
+                    url: videoInfo.webpageUrl || url,
+                    title: videoInfo.title,
+                  });
+                  setTranscriptStudioOpen(true);
+                }}
               />
             </div>
           )}
@@ -849,6 +876,16 @@ export function App() {
         onCopyPath={handleCopyPath}
         onDeleteRecordDirectly={handleDeleteRecordDirectly}
         onRetryRecord={handleRetryRecord}
+        onOpenTranscriptStudio={(rec) => {
+          setStudioMediaInput({
+            type: rec.formatType === "subtitle" ? "subtitle" : "file",
+            filePath: rec.filePath,
+            title: rec.title,
+            record: rec,
+          });
+          setVaultOpen(false);
+          setTranscriptStudioOpen(true);
+        }}
         loading={loadingVault}
       />
 
@@ -860,7 +897,6 @@ export function App() {
       />
 
       {/* Engine Setup Modal */}
-
       <BinarySetupModal
         open={setupModalOpen}
         onClose={() => setSetupModalOpen(false)}
@@ -880,12 +916,36 @@ export function App() {
         initialUpdateInfo={availableUpdate}
         initialSection={settingsInitialSection}
         onTranscriptionConfigChange={(cfg) => setTranscriptionConfig(cfg)}
+        onUpdateInfoChange={(info) => setAvailableUpdate(info)}
       />
 
       {/* About Application Modal */}
       <AboutModal
         open={aboutModalOpen}
         onClose={() => setAboutModalOpen(false)}
+      />
+
+      {/* App Update Modal */}
+      <UpdateModal
+        open={updateModalOpen}
+        onClose={() => setUpdateModalOpen(false)}
+        updateInfo={availableUpdate}
+      />
+
+      {/* AI Transcript Studio Fullscreen Modal */}
+      <TranscriptStudioModal
+        open={transcriptStudioOpen}
+        onClose={() => {
+          setTranscriptStudioOpen(false);
+          setStudioMediaInput(null);
+        }}
+        transcriptionConfig={transcriptionConfig}
+        onOpenSettings={() => {
+          setSettingsInitialSection("transcription");
+          setSettingsModalOpen(true);
+        }}
+        initialMedia={studioMediaInput}
+        onRefreshVault={loadRecords}
       />
 
       {/* Notification Toast */}

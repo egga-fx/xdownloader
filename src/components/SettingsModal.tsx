@@ -59,6 +59,7 @@ interface SettingsModalProps {
   initialUpdateInfo?: AppUpdateInfo | null;
   initialSection?: "general" | "transcription";
   onTranscriptionConfigChange?: (config: TranscriptionConfig) => void;
+  onUpdateInfoChange?: (info: AppUpdateInfo) => void;
 }
 
 interface QualityOption {
@@ -258,6 +259,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   initialUpdateInfo,
   initialSection = "general",
   onTranscriptionConfigChange,
+  onUpdateInfoChange,
 }) => {
   const [defaultVideoQuality, setDefaultVideoQuality] = useState<DownloaderQuality>("best");
   const [defaultAudioQuality, setDefaultAudioQuality] = useState<DownloaderQuality>("mp3");
@@ -380,6 +382,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const info = await checkForAppUpdate();
       setUpdateInfo(info);
       setUpdateChecked(true);
+      onUpdateInfoChange?.(info);
     } catch (err: unknown) {
       setUpdateError(getErrorMessage(err) || "Failed to check for updates");
     } finally {

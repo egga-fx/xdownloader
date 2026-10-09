@@ -26,6 +26,7 @@ interface VaultHistoryGridProps {
   onCopyPath: (path: string) => void;
   onDeleteRecord: (record: DownloadRecord) => void;
   onRetryRecord?: (record: DownloadRecord) => void;
+  onOpenTranscriptStudio?: (record: DownloadRecord) => void;
 }
 
 export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
@@ -37,6 +38,7 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
   onCopyPath,
   onDeleteRecord,
   onRetryRecord,
+  onOpenTranscriptStudio,
 }) => {
   return (
     <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -220,6 +222,7 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 onCopyPath={onCopyPath}
                 onDeleteRecord={onDeleteRecord}
                 onRetry={onRetryRecord}
+                onOpenTranscriptStudio={onOpenTranscriptStudio}
                 layout="split"
               />
             </div>

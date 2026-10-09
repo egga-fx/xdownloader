@@ -112,6 +112,18 @@ impl Default for AppSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppUpdateInfo {
+    pub available: bool,
+    pub current_version: String,
+    pub version: Option<String>,
+    pub body: Option<String>,
+    pub date: Option<String>,
+    pub download_url: Option<String>,
+    pub release_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LogEntry {
     pub id: i64,
     pub task_id: String,
