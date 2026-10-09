@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Volume2,
   Play,
+  Captions,
 } from "lucide-react";
 import { DownloadRecord } from "../types";
 import { formatDuration, formatFileSize, getSourceAccount } from "../lib/utils";
@@ -56,6 +57,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   if (!record) return null;
 
   const src = getSourceAccount(record);
+  const isSubtitle = record.formatType === "subtitle";
   const isAudio = record.formatType === "audio";
   const isImage = record.formatType === "image";
 
@@ -72,7 +74,9 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           <div className="flex items-center gap-2.5 min-w-0 pr-3">
             <span
               className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded ${
-                isAudio
+                isSubtitle
+                  ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
+                  : isAudio
                   ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
                   : isImage
                   ? "bg-zinc-800 text-zinc-300 border border-zinc-700"
@@ -96,8 +100,51 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
 
         {/* Media Preview Player Area */}
         <div className="relative w-full aspect-video bg-black flex items-center justify-center overflow-hidden shrink-0">
-          {/* 1. AUDIO PLAYER */}
-          {isAudio ? (
+          {/* 0. SUBTITLE PREVIEW */}
+          {isSubtitle ? (
+            <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-gradient-to-b from-[#18181b] to-[#09090b]">
+              <div className="w-20 h-20 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-4 shadow-xl">
+                <Captions className="w-10 h-10" />
+              </div>
+              <h4 className="font-bold text-sm text-white text-center max-w-md truncate" title={record.title}>
+                {record.title}
+              </h4>
+              <p className="text-xs text-[#71717a] mt-1 text-center">
+                File Subtitle & Transkrip (.srt) · {formatFileSize(record.fileSizeBytes)}
+              </p>
+              <div className="flex items-center gap-2 mt-4">
+                {isTauriEnvironment() ? (
+                  <>
+                    {record.filePath && (
+                      <button
+                        onClick={() => openMediaFile(record.filePath)}
+                        className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                        title="Buka file dengan aplikasi editor teks default OS"
+                      >
+                        <span>Buka File</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onOpenFolder(record)}
+                      className="px-3.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                      title="Buka folder lokasi file"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      <span>Buka Folder</span>
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => triggerDirectBrowserDownload(record)}
+                    className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download SRT</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : isAudio ? (
             <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-gradient-to-b from-[#18181b] to-[#09090b]">
               <div className="relative mb-5">
                 <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden shadow-2xl border-2 border-[#27272a] flex items-center justify-center bg-[#121215]">

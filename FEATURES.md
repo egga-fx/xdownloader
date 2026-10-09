@@ -147,6 +147,24 @@ mindmap
 - **Web Preview Resilience**:
   - Saat dijalankan di browser web di luar Tauri (`bun run dev`), seluruh API menyediakan mock simulation interaktif sehingga pengembangan UI tetap dapat dilakukan tanpa kompilasi Rust.
 
+### 9. AI Video & Audio Transcription (ElevenLabs Scribe v2)
+- **Automated Pipeline (Video → MP3 → Subtitles)**:
+  - Mengunduh audio stream dari video target secara otomatis menggunakan engine `yt-dlp`.
+  - Melakukan transkripsi speech-to-text akurat menggunakan model state-of-the-art `scribe_v2` dari ElevenLabs REST API via streaming multipart RFC 7578.
+  - Menghasilkan tiga format subtitel/teks secara atomik: `.srt` (SubRip), `.vtt` (WebVTT), dan `.txt` (Plain text / transkrip bacaan).
+  - Mendaftarkan file `.srt` ke Media Vault lokal dengan format `subtitle`.
+- **Advanced Features**:
+  - *Speaker Diarization*: Deteksi otomatis label pembicara ("Speaker 1", "Speaker 2", dll).
+  - *Audio Event Tagging*: Menandai tawa, tepuk tangan, dan suara latar (`[laughter]`, `[applause]`).
+  - *Custom Line Width*: Mengontrol batas karakter per baris (default 42 karakter).
+- **Lifecycle & Resource Cleanup**:
+  - File MP3 perantara selalu dihapus bersih dari disk dan SQLite setelah transkripsi selesai maupun saat terjadi pembatalan/error (Rule D8).
+  - Pembatalan proses seketika (`cancelTranscription`) dengan abort handle Tokio dan pembunuhan subprocess audio.
+- **Security & UI Gating**:
+  - Tombol *Transcript (SRT)* otomatis nonaktif (`disabled`) dengan status *Not Configured* jika API key belum disetel, disertai tombol pintasan cepat ke Pengaturan.
+  - API key disimpan aman di database SQLite vault lokal, tidak pernah di-expose dalam plain text ke frontend (hanya mask hint `••••xxxx`).
+  - Fitur pengujian API key interaktif (*Test Key*) langsung di Pengaturan.
+
 ---
 
 ## 📊 Feature Status & Verification Matrix
@@ -161,8 +179,9 @@ mindmap
 | **Media Vault (SQLite WAL)** | ✅ Production | SQLite Migrations & Rust Queries |
 | **One-Click Binary Setup & Updater** | ✅ Production | E2E Download & `binaries.rs` |
 | **Smart Clipboard Listener** | ✅ Production | Tauri Clipboard Plugin Integration |
+| **AI Video/Audio Transcriber (ElevenLabs)** | ✅ Production | Contract Tests (`bun test`) & `cargo check` |
 | **Web Preview Simulation Mode** | ✅ Production | Frontend Build & Browser Preview |
 
 ---
 
-*xDownloader Features Catalog v1.0.0 — Updated 2026-09-17*
+*xDownloader Features Catalog v1.0.4 — Updated 2026-10-07*

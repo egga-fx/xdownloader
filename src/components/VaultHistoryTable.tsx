@@ -4,6 +4,7 @@ import {
   Music,
   Loader2,
   AlertTriangle,
+  Captions,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
 import { VaultItemActions } from "./VaultItemActions";
@@ -146,7 +147,9 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                           corruptOrMissing ? "grayscale saturate-0" : ""
                         }`}
                       >
-                        {item.formatType === "audio" ? (
+                        {item.formatType === "subtitle" ? (
+                          <Captions className="w-4 h-4 text-purple-400" />
+                        ) : item.formatType === "audio" ? (
                           <Music className="w-4 h-4" />
                         ) : (
                           <Film className="w-4 h-4" />
@@ -179,6 +182,12 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                 </span>
 
                 <div className="flex items-center gap-1.5 text-[11px] text-[#71717a] mt-0.5 flex-wrap">
+                  {/* Format badge for subtitles */}
+                  {item.formatType === "subtitle" && (
+                    <span className="px-1 py-0.2 rounded text-[9px] font-extrabold bg-purple-500/15 text-purple-400 border border-purple-500/30">
+                      SRT
+                    </span>
+                  )}
                   {/* Status chip if missing / error */}
                   {!item.exists && (
                     <span className="px-1 py-0.2 rounded text-[9px] font-extrabold bg-red-500/15 text-red-400 border border-red-500/30">

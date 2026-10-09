@@ -18,8 +18,12 @@ import {
   isVersionNewer,
   checkForAppUpdate,
   downloadAndInstallAppUpdate,
+  getTranscriptionConfig,
+  saveTranscriptionConfig,
+  testTranscriptionKey,
+  onTranscriptionProgress,
 } from "../src/lib/tauri-api";
-import { ActiveDownloadTask, LogEntry } from "../src/types";
+import { ActiveDownloadTask, LogEntry, TranscriptionConfig } from "../src/types";
 
 describe("AI Spec-First Contract Tests: src/lib/tauri-api.ts", () => {
   beforeEach(() => {
@@ -266,21 +270,79 @@ describe("AI Spec-First Contract Tests: src/lib/tauri-api.ts", () => {
       expect(isVersionNewer("1.0.4", "")).toBe(false);
     });
 
-    it("should return the correct fallback version 1.0.4 from getAppVersion() in test runner", async () => {
+    it("should return the correct fallback version 1.1.0 from getAppVersion() in test runner", async () => {
       const version = await getAppVersion();
-      expect(version).toBe("1.0.4");
+      expect(version).toBe("1.1.0");
     });
 
     it("should run checkForAppUpdate() safely and return valid AppUpdateInfo structure", async () => {
       const updateInfo = await checkForAppUpdate();
       expect(updateInfo).toBeDefined();
       expect(typeof updateInfo.available).toBe("boolean");
-      expect(updateInfo.currentVersion).toBe("1.0.4");
+      expect(updateInfo.currentVersion).toBe("1.1.0");
     });
 
     it("should safely handle downloadAndInstallAppUpdate() when no update is pending", async () => {
       const result = await downloadAndInstallAppUpdate(null);
       expect(result).toBe(false);
+    });
+  });
+
+  // --- 10. Transcription Config & Key Management Contract ---
+  describe("Transcription Config & Key Lifecycle [Security & Contract]", () => {
+    it("should return default transcription config with keyStatus='missing' when unconfigured", async () => {
+      const cfg = await getTranscriptionConfig();
+      expect(cfg).toBeDefined();
+      expect(cfg.provider).toBe("elevenlabs");
+      expect(cfg.keyStatus).toBe("missing");
+      expect(cfg.apiKeyHint).toBeNull();
+      expect(cfg.modelId).toBe("scribe_v2");
+    });
+
+    it("should update keyStatus to 'saved' and mask key in apiKeyHint when valid key is provided", async () => {
+      const initial = await getTranscriptionConfig();
+      const updated = await saveTranscriptionConfig(initial, "sk_live_1234567890abcdefXYZ9");
+      expect(updated.keyStatus).toBe("saved");
+      expect(updated.apiKeyHint).toBe("••••XYZ9");
+
+      // Verify persistence across calls
+      const reloaded = await getTranscriptionConfig();
+      expect(reloaded.keyStatus).toBe("saved");
+      expect(reloaded.apiKeyHint).toBe("••••XYZ9");
+    });
+
+    it("should revert keyStatus to 'missing' when key is cleared with empty string", async () => {
+      const initial = await getTranscriptionConfig();
+      await saveTranscriptionConfig(initial, "sk_live_1234567890abcdefXYZ9");
+
+      const cleared = await saveTranscriptionConfig(initial, "");
+      expect(cleared.keyStatus).toBe("missing");
+      expect(cleared.apiKeyHint).toBeNull();
+    });
+
+    it("should preserve key and status when apiKey is null/undefined during config update", async () => {
+      const initial = await getTranscriptionConfig();
+      await saveTranscriptionConfig(initial, "sk_live_1234567890abcdefXYZ9");
+
+      const changedSettings: TranscriptionConfig = {
+        ...initial,
+        diarize: true,
+        maxCharsPerLine: 50,
+      };
+      const saved = await saveTranscriptionConfig(changedSettings);
+      expect(saved.keyStatus).toBe("saved");
+      expect(saved.apiKeyHint).toBe("••••XYZ9");
+      expect(saved.diarize).toBe(true);
+      expect(saved.maxCharsPerLine).toBe(50);
+    });
+
+    it("should register onTranscriptionProgress listener and unlisten cleanly", async () => {
+      let callCount = 0;
+      const unlisten = await onTranscriptionProgress(() => {
+        callCount++;
+      });
+      expect(typeof unlisten).toBe("function");
+      unlisten();
     });
   });
 });

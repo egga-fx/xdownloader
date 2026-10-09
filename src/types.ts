@@ -137,6 +137,33 @@ export interface DownloadRequestParams {
   imageUrls?: string[];
 }
 
+export type TranscriptionKeyStatus = "missing" | "saved" | "invalid";
 
+export type TranscriptionStage =
+  | "downloading_audio"
+  | "uploading"
+  | "transcribing"
+  | "writing_files"
+  | "completed"
+  | "error"
+  | "cancelled";
 
+export interface TranscriptionConfig {
+  provider: string;
+  keyStatus: TranscriptionKeyStatus;
+  apiKeyHint?: string | null;
+  modelId: string;
+  languageCode?: string | null;
+  diarize: boolean;
+  tagAudioEvents: boolean;
+  maxCharsPerLine: number;
+}
 
+export interface TranscriptionProgress {
+  taskId: string;
+  stage: TranscriptionStage;
+  percent: number;
+  message: string;
+  error?: string | null;
+  srtPath?: string | null;
+}

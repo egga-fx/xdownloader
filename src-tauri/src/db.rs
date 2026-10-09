@@ -51,6 +51,15 @@ impl Database {
         let _ = conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
 
         // Create tables
+        Self::init_schema(&conn)?;
+
+        Ok(Self {
+            conn: Mutex::new(conn),
+            db_path,
+        })
+    }
+
+    fn init_schema(conn: &Connection) -> Result<(), String> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS downloads (
                 id TEXT PRIMARY KEY,
@@ -99,10 +108,54 @@ impl Database {
         let _ = conn.execute("ALTER TABLE downloads ADD COLUMN time_range_start TEXT;", []);
         let _ = conn.execute("ALTER TABLE downloads ADD COLUMN time_range_end TEXT;", []);
 
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn new_in_memory() -> Result<Self, String> {
+        let conn = Connection::open_in_memory()
+            .map_err(|e| format!("Failed to open in-memory database: {}", e))?;
+        Self::init_schema(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
-            db_path,
+            db_path: PathBuf::from(":memory:"),
         })
+    }
+
+    /// Raw key/value accessor over the `settings` table (used for non-`AppSettings` data).
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        let mut stmt = conn
+            .prepare("SELECT value FROM settings WHERE key = ?1")
+            .map_err(|e| format!("SQL prepare error: {}", e))?;
+        match stmt.query_row(params![key], |row| row.get::<_, String>(0)) {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(format!("Failed to read setting '{}': {}", key, e)),
+        }
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )
+        .map_err(|e| format!("Failed to save setting '{}': {}", key, e))?;
+        Ok(())
+    }
+
+    /// Returns `(status, file_path)` for a record id, or `None` if it does not exist.
+    pub fn get_record_status_path(&self, id: &str) -> Result<Option<(String, String)>, String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        let mut stmt = conn
+            .prepare("SELECT status, file_path FROM downloads WHERE id = ?1")
+            .map_err(|e| format!("SQL prepare error: {}", e))?;
+        match stmt.query_row(params![id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))) {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(format!("Failed to read record '{}': {}", id, e)),
+        }
     }
 
     pub fn add_record(&self, record: &DownloadRecord) -> Result<(), String> {

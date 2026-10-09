@@ -199,6 +199,7 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
             <option value="video">Videos</option>
             <option value="audio">Audio</option>
             <option value="image">Images</option>
+            <option value="subtitle">Transkrip (SRT)</option>
           </select>
 
           {/* View Mode Toggle */}

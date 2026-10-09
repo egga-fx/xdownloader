@@ -14,6 +14,8 @@ import {
   DownloadRecord,
   LogEntry,
   TimeRange,
+  TranscriptionConfig,
+  TranscriptionProgress,
   VideoInfo,
 } from "../types";
 import { detectPlatform } from "./utils";
@@ -29,9 +31,11 @@ export function isTauriEnvironment(): boolean {
 // In-browser event bus for preview mode
 type DownloadProgressCallback = (task: ActiveDownloadTask) => void;
 type BinaryProgressCallback = (data: { binaryType: string; percent: number }) => void;
+type TranscriptionProgressCallback = (progress: TranscriptionProgress) => void;
 
 const browserDownloadListeners = new Set<DownloadProgressCallback>();
 const browserBinaryListeners = new Set<BinaryProgressCallback>();
+const browserTranscriptionListeners = new Set<TranscriptionProgressCallback>();
 const browserActiveSimulations = new Map<string, number>();
 
 // In-memory storage fallback for headless/Node/Bun testing and browser sandboxes
@@ -912,6 +916,200 @@ export async function saveAppSettings(settings: Partial<AppSettings>): Promise<b
   return true;
 }
 
+export async function getTranscriptionConfig(): Promise<TranscriptionConfig> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<TranscriptionConfig>("get_transcription_config");
+    } catch {
+      // fallback
+    }
+  }
+
+  const stored = getStorageItem("xdownloader_mock_transcription_config");
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch {
+      // ignore
+    }
+  }
+
+  return {
+    provider: "elevenlabs",
+    keyStatus: "missing",
+    apiKeyHint: null,
+    modelId: "scribe_v2",
+    languageCode: null,
+    diarize: false,
+    tagAudioEvents: false,
+    maxCharsPerLine: 42,
+  };
+}
+
+export async function saveTranscriptionConfig(
+  config: TranscriptionConfig,
+  apiKey?: string | null
+): Promise<TranscriptionConfig> {
+  if (isTauriEnvironment()) {
+    return await invoke<TranscriptionConfig>("save_transcription_config", {
+      config,
+      apiKey: apiKey ?? null,
+    });
+  }
+
+  const cur = await getTranscriptionConfig();
+  let keyStatus = cur.keyStatus;
+  let apiKeyHint = cur.apiKeyHint;
+
+  if (apiKey !== undefined && apiKey !== null) {
+    const trimmed = apiKey.trim();
+    if (trimmed.length === 0) {
+      keyStatus = "missing";
+      apiKeyHint = null;
+    } else {
+      keyStatus = "saved";
+      apiKeyHint = trimmed.length < 12 ? "••••" : `••••${trimmed.slice(-4)}`;
+    }
+  }
+
+  const merged: TranscriptionConfig = {
+    ...cur,
+    ...config,
+    keyStatus,
+    apiKeyHint,
+  };
+  setStorageItem("xdownloader_mock_transcription_config", JSON.stringify(merged));
+  return merged;
+}
+
+export async function testTranscriptionKey(): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    return await invoke<boolean>("test_transcription_key");
+  }
+
+  const cfg = await getTranscriptionConfig();
+  if (cfg.keyStatus === "missing") {
+    throw new Error("API key not configured");
+  }
+  await saveTranscriptionConfig({ ...cfg, keyStatus: "saved" });
+  return true;
+}
+
+// Helper to simulate transcription progress in Web Preview
+export function emitMockTranscriptionProgress(progress: TranscriptionProgress) {
+  browserTranscriptionListeners.forEach((listener) => {
+    try {
+      listener(progress);
+    } catch (err) {
+      console.error("Error in browser transcription progress listener:", err);
+    }
+  });
+}
+
+export async function onTranscriptionProgress(
+  callback: (progress: TranscriptionProgress) => void
+): Promise<UnlistenFn> {
+  if (isTauriEnvironment()) {
+    return await listen<TranscriptionProgress>("transcription-progress", (event) => {
+      callback(event.payload);
+    });
+  }
+
+  browserTranscriptionListeners.add(callback);
+  return () => {
+    browserTranscriptionListeners.delete(callback);
+  };
+}
+
+export async function startTranscription(params: {
+  url: string;
+  languageCode?: string | null;
+  customName?: string;
+  outputFolder?: string;
+  timeRange?: TimeRange;
+}): Promise<string> {
+  if (isTauriEnvironment()) {
+    return await invoke<string>("start_transcription", {
+      url: params.url,
+      languageCode: params.languageCode ?? null,
+      customName: params.customName ?? null,
+      outputFolder: params.outputFolder ?? null,
+      timeRange: params.timeRange ?? null,
+    });
+  }
+
+  // Web Preview fallback simulation
+  const cfg = await getTranscriptionConfig();
+  if (cfg.keyStatus === "missing") {
+    throw new Error("API key not configured");
+  }
+  if (cfg.keyStatus === "invalid") {
+    throw new Error("API key was rejected by the provider. Please update it in Settings.");
+  }
+
+  const taskId = `tr_${Date.now()}_mock`;
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "downloading_audio",
+      percent: 15,
+      message: "Extracting MP3 audio track...",
+    });
+  }, 200);
+
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "uploading",
+      percent: 50,
+      message: "Uploading audio to ElevenLabs Scribe...",
+    });
+  }, 800);
+
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "transcribing",
+      percent: 75,
+      message: "Transcribing audio with Scribe v2...",
+    });
+  }, 1500);
+
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "writing_files",
+      percent: 90,
+      message: "Generating SRT, VTT, and TXT subtitle files...",
+    });
+  }, 2200);
+
+  setTimeout(() => {
+    emitMockTranscriptionProgress({
+      taskId,
+      stage: "completed",
+      percent: 100,
+      message: "Transcript created successfully!",
+      srtPath: `Videos/xDownloader/${params.customName || "transcript"}.srt`,
+    });
+  }, 2800);
+
+  return taskId;
+}
+
+export async function cancelTranscription(taskId: string): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    return await invoke<boolean>("cancel_transcription", { taskId });
+  }
+  emitMockTranscriptionProgress({
+    taskId,
+    stage: "cancelled",
+    percent: 0,
+    message: "Transcription cancelled by user",
+  });
+  return true;
+}
+
 // --- 6. EVENT LISTENERS ---
 
 export async function onDownloadProgress(
@@ -1031,7 +1229,7 @@ export async function getAppVersion(): Promise<string> {
       // fallback
     }
   }
-  return "1.0.4";
+  return "1.1.0";
 }
 
 export function isVersionNewer(remoteVersion: string, currentVersion: string): boolean {

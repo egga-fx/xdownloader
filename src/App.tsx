@@ -18,6 +18,8 @@ import {
   VideoInfo,
   AppUpdateInfo,
   TimeRange,
+  TranscriptionConfig,
+  TranscriptionProgress,
 } from "./types";
 import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage, sanitizeTitle } from "./lib/utils";
 import {
@@ -35,6 +37,10 @@ import {
   startDownload,
   cancelDownload,
   copyToClipboard,
+  getTranscriptionConfig,
+  startTranscription,
+  cancelTranscription,
+  onTranscriptionProgress,
 } from "./lib/tauri-api";
 import {
   ensureNotificationPermission,
@@ -105,6 +111,7 @@ export function App() {
   const [checkingBinaries, setCheckingBinaries] = useState<boolean>(true);
   const [setupModalOpen, setSetupModalOpen] = useState<boolean>(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<"general" | "transcription">("general");
   const [aboutModalOpen, setAboutModalOpen] = useState<boolean>(false);
   const [appSettings, setAppSettings] = useState<AppSettings>({
     outputFolder: "Videos\\xDownloader",
@@ -114,6 +121,10 @@ export function App() {
     downloadSubtitles: false,
     checkUpdatesOnStartup: true,
   });
+
+  // AI Transcription state
+  const [transcriptionConfig, setTranscriptionConfig] = useState<TranscriptionConfig | null>(null);
+  const [activeTranscriptions, setActiveTranscriptions] = useState<Map<string, TranscriptionProgress>>(new Map());
 
   // Auto-Updater status
   const [availableUpdate, setAvailableUpdate] = useState<AppUpdateInfo | null>(null);
@@ -165,6 +176,11 @@ export function App() {
       if (settings.desktopNotifications !== false) {
         ensureNotificationPermission().catch(() => {});
       }
+
+      // Load transcription settings
+      getTranscriptionConfig()
+        .then((cfg) => setTranscriptionConfig(cfg))
+        .catch((err) => console.error("Failed to load transcription config:", err));
     } catch (err) {
       console.error("Initial load error:", err);
       setCheckingBinaries(false);
@@ -228,6 +244,59 @@ export function App() {
         }
         return next;
       });
+    }).then((fn) => {
+      if (isCancelled) {
+        fn();
+      } else {
+        unlistenFn = fn;
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+      if (unlistenFn) {
+        unlistenFn();
+      }
+    };
+  }, []);
+
+  // 2b. Listen to real-time transcription progress events
+  useEffect(() => {
+    let isCancelled = false;
+    let unlistenFn: (() => void) | null = null;
+
+    onTranscriptionProgress((p) => {
+      if (p.stage === "completed") {
+        loadRecords();
+        showToast(p.message || "Transkrip berhasil dibuat!");
+        setActiveTranscriptions((prev) => {
+          const next = new Map(prev);
+          next.delete(p.taskId);
+          return next;
+        });
+      } else if (p.stage === "error") {
+        loadRecords();
+        showToast(`Transkripsi gagal: ${p.error || p.message}`);
+        setActiveTranscriptions((prev) => {
+          const next = new Map(prev);
+          next.delete(p.taskId);
+          return next;
+        });
+      } else if (p.stage === "cancelled") {
+        loadRecords();
+        showToast("Transkripsi dibatalkan");
+        setActiveTranscriptions((prev) => {
+          const next = new Map(prev);
+          next.delete(p.taskId);
+          return next;
+        });
+      } else {
+        setActiveTranscriptions((prev) => {
+          const next = new Map(prev);
+          next.set(p.taskId, p);
+          return next;
+        });
+      }
     }).then((fn) => {
       if (isCancelled) {
         fn();
@@ -392,6 +461,10 @@ export function App() {
         : formatType === "image"
         ? "video"
         : formatType;
+
+    if (finalFormatType === "subtitle") {
+      return handleStartTranscription();
+    }
     const finalQuality =
       matchedInfo?.description === "image"
         ? "best"
@@ -486,16 +559,26 @@ export function App() {
     }
   };
 
-  // 5. Cancel active task
+  // 5. Cancel active task (supports both download and transcription)
   const handleCancelTask = async (taskId: string) => {
     try {
-      await cancelDownload(taskId);
-      setActiveTasks((prev) => {
-        const next = new Map(prev);
-        next.delete(taskId);
-        return next;
-      });
-      showToast("Download cancelled");
+      if (activeTranscriptions.has(taskId) || taskId.startsWith("tr_")) {
+        await cancelTranscription(taskId);
+        setActiveTranscriptions((prev) => {
+          const next = new Map(prev);
+          next.delete(taskId);
+          return next;
+        });
+        showToast("Transkripsi dibatalkan");
+      } else {
+        await cancelDownload(taskId);
+        setActiveTasks((prev) => {
+          const next = new Map(prev);
+          next.delete(taskId);
+          return next;
+        });
+        showToast("Download cancelled");
+      }
       setTimeout(dequeueAndStartNext, 200);
     } catch (err: unknown) {
       console.error("Failed to cancel task:", err);
@@ -581,6 +664,72 @@ export function App() {
     (t) => t.url === url && t.status === "downloading"
   );
 
+  // 8. Trigger AI Video-to-SRT Transcription
+  const handleStartTranscription = async () => {
+    if (!transcriptionConfig || transcriptionConfig.keyStatus !== "saved") {
+      setSettingsInitialSection("transcription");
+      setSettingsModalOpen(true);
+      showToast("Silakan atur ElevenLabs API Key di Pengaturan");
+      return;
+    }
+
+    const currentInput = url.trim();
+    const targetUrl = (
+      (currentInput && isSupportedMediaUrl(currentInput) ? currentInput : "") ||
+      videoInfo?.webpageUrl ||
+      currentInput
+    ).trim();
+
+    if (!targetUrl || !isSupportedMediaUrl(targetUrl)) {
+      setError("Masukkan tautan media yang valid untuk membuat transkrip");
+      return;
+    }
+
+    try {
+      setError(null);
+      const taskId = await startTranscription({
+        url: targetUrl,
+        languageCode: transcriptionConfig.languageCode || undefined,
+        customName: sanitizeTitle(customName) || (videoInfo ? sanitizeTitle(videoInfo.title) : undefined),
+        outputFolder: outputFolder || undefined,
+      });
+
+      setActiveTranscriptions((prev) => {
+        const next = new Map(prev);
+        next.set(taskId, {
+          taskId,
+          stage: "downloading_audio",
+          percent: 10,
+          message: "Mengunduh audio untuk transkrip...",
+        });
+        return next;
+      });
+
+      setVaultOpen(true);
+      showToast("Transkripsi dimulai di Media Vault");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || "Gagal memulai transkripsi");
+      showToast("Gagal memulai transkripsi");
+    }
+  };
+
+  const transcriptionTasks: ActiveDownloadTask[] = Array.from(activeTranscriptions.values()).map((t) => ({
+    taskId: t.taskId,
+    url: url || "",
+    title: `${customName || videoInfo?.title || "Media"} [Transkrip SRT]`,
+    platform: detectedPlatform,
+    formatType: "audio" as DownloaderFormatType,
+    quality: "mp3" as DownloaderQuality,
+    status: t.stage === "completed" ? "completed" : t.stage === "error" ? "error" : "downloading",
+    progress: {
+      percent: t.percent,
+      speedStr: t.message || "Memproses transkrip...",
+      etaStr: "--:--",
+    },
+  }));
+
+  const allActiveTasks = [...Array.from(activeTasks.values()), ...transcriptionTasks];
+
   return (
     <div className="flex flex-col h-screen w-screen bg-[#09090b] text-[#f4f4f5] overflow-hidden select-none font-sans">
       {/* Top Header */}
@@ -594,8 +743,11 @@ export function App() {
         vaultOpen={vaultOpen}
         onToggleVault={() => setVaultOpen(!vaultOpen)}
         vaultCount={records.length}
-        activeDownloadingCount={activeTasks.size}
-        onOpenSettings={() => setSettingsModalOpen(true)}
+        activeDownloadingCount={allActiveTasks.length}
+        onOpenSettings={() => {
+          setSettingsInitialSection("general");
+          setSettingsModalOpen(true);
+        }}
         onOpenAbout={() => setAboutModalOpen(true)}
         hasUpdate={!!availableUpdate?.available}
       />
@@ -639,6 +791,20 @@ export function App() {
                 setCustomName={setCustomName}
                 onDownload={(selectedIndices) => handleStartDownload(videoInfo.webpageUrl || url, selectedIndices)}
                 isDownloadingCurrentUrl={isDownloadingCurrentUrl}
+                transcriptionReady={transcriptionConfig?.keyStatus === "saved"}
+                transcriptionBlockReason={
+                  transcriptionConfig?.keyStatus === "invalid"
+                    ? "ElevenLabs API Key Tidak Valid"
+                    : transcriptionConfig?.keyStatus === "missing"
+                    ? "ElevenLabs API Key Belum Dikonfigurasi"
+                    : null
+                }
+                isTranscribing={activeTranscriptions.size > 0}
+                onTranscribe={handleStartTranscription}
+                onOpenTranscriptionSettings={() => {
+                  setSettingsInitialSection("transcription");
+                  setSettingsModalOpen(true);
+                }}
               />
             </div>
           )}
@@ -674,7 +840,7 @@ export function App() {
       <MediaVaultDrawer
         open={vaultOpen}
         onClose={() => setVaultOpen(false)}
-        activeTasks={Array.from(activeTasks.values())}
+        activeTasks={allActiveTasks}
         onCancelTask={handleCancelTask}
         records={records}
         onRefresh={loadRecords}
@@ -712,6 +878,8 @@ export function App() {
         onPickFolder={handlePickFolder}
         onOpenAbout={() => setAboutModalOpen(true)}
         initialUpdateInfo={availableUpdate}
+        initialSection={settingsInitialSection}
+        onTranscriptionConfigChange={(cfg) => setTranscriptionConfig(cfg)}
       />
 
       {/* About Application Modal */}

@@ -5,18 +5,20 @@ pub mod image_extractor;
 pub mod logger;
 pub mod metadata;
 pub mod models;
+pub mod transcriber;
 
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use db::Database;
 use downloader::ProcessManager;
 use models::{
-    AppSettings, BinariesStatus, DownloadRecord, LogEntry, TimeRange, VideoInfo,
+    AppSettings, BinariesStatus, DownloadRecord, LogEntry, TimeRange, TranscriptionConfig, VideoInfo,
 };
 
 pub struct AppState {
     pub db: Arc<Database>,
     pub process_mgr: Arc<ProcessManager>,
+    pub transcription_mgr: Arc<transcriber::TranscriptionManager>,
 }
 
 #[tauri::command]
@@ -158,12 +160,90 @@ fn clear_app_logs(state: State<'_, AppState>) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn get_transcription_config(state: State<'_, AppState>) -> Result<TranscriptionConfig, String> {
+    transcriber::load_config(&state.db).map(|c| c.to_public())
+}
+
+/// `api_key`: `None` keeps the stored key, `Some("")` clears it, `Some(k)` replaces it.
+/// Returns the updated UI-safe config (never contains the key).
+#[tauri::command]
+fn save_transcription_config(
+    state: State<'_, AppState>,
+    config: TranscriptionConfig,
+    api_key: Option<String>,
+) -> Result<TranscriptionConfig, String> {
+    let mut stored = transcriber::load_config(&state.db)?;
+    stored.apply_save(&config, api_key.as_deref())?;
+    transcriber::save_config(&state.db, &stored)?;
+    Ok(stored.to_public())
+}
+
+/// `Ok(true)` valid, `Ok(false)` rejected (status becomes `invalid`), `Err` inconclusive.
+#[tauri::command]
+async fn test_transcription_key(state: State<'_, AppState>) -> Result<bool, String> {
+    let db = state.db.clone();
+    transcriber::test_api_key(&db).await
+}
+
+#[tauri::command]
+async fn start_transcription(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    language_code: Option<String>,
+    custom_name: Option<String>,
+    output_folder: Option<String>,
+    time_range: Option<TimeRange>,
+) -> Result<String, String> {
+    let task_id = format!("tr_{}_{}", chrono::Utc::now().timestamp_millis(), uuid_short());
+    let db = state.db.clone();
+    let process_mgr = state.process_mgr.clone();
+    let transcription_mgr = state.transcription_mgr.clone();
+
+    // Guard: Verify key is configured before doing any async work
+    let cfg = transcriber::load_config(&db)?;
+    cfg.ensure_ready()?;
+
+    let task_id_clone = task_id.clone();
+    let app_clone = app.clone();
+    let task_mgr_for_cleanup = transcription_mgr.clone();
+    let task_id_for_cleanup = task_id.clone();
+
+    let join_handle = tokio::spawn(async move {
+        let _ = transcriber::run_transcription(
+            app_clone,
+            db,
+            process_mgr,
+            transcription_mgr,
+            task_id_clone,
+            url,
+            language_code,
+            custom_name,
+            output_folder,
+            time_range,
+        )
+        .await;
+        task_mgr_for_cleanup.remove(&task_id_for_cleanup);
+    });
+
+    state.transcription_mgr.register(task_id.clone(), join_handle.abort_handle());
+    Ok(task_id)
+}
+
+#[tauri::command]
+fn cancel_transcription(state: State<'_, AppState>, task_id: String) -> bool {
+    let audio_task_id = format!("{}_audio", task_id);
+    let _ = state.process_mgr.cancel(&audio_task_id);
+    state.transcription_mgr.cancel(&task_id)
+}
+
+#[tauri::command]
 fn open_logs_folder() -> bool {
     let logs_dir = logger::get_logs_dir();
     open_in_explorer(logs_dir.to_string_lossy().to_string())
 }
 
-fn uuid_short() -> String {
+pub fn uuid_short() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -281,7 +361,12 @@ pub fn run() {
     };
 
     let process_mgr = Arc::new(ProcessManager::new());
-    let state = AppState { db, process_mgr };
+    let transcription_mgr = Arc::new(transcriber::TranscriptionManager::new());
+    let state = AppState {
+        db,
+        process_mgr,
+        transcription_mgr,
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -310,6 +395,11 @@ pub fn run() {
             get_clipboard_text,
             set_clipboard_text,
             install_app_update_from_url,
+            get_transcription_config,
+            save_transcription_config,
+            test_transcription_key,
+            start_transcription,
+            cancel_transcription,
         ])
         .run(tauri::generate_context!())
         .expect("error while running xDownloader application");
