@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { X, Check, Layers, Download, CheckSquare, Square } from "lucide-react";
+import { X, Check, Layers, Download, CheckSquare, Square, Film } from "lucide-react";
+import { MediaItem } from "@/types";
 
 interface CarouselSelectionModalProps {
   isOpen: boolean;
   onClose: () => void;
   images: string[];
+  mediaItems?: MediaItem[];
   postTitle?: string;
   initialSelectedIndices?: number[];
   onConfirm: (selectedIndices: number[]) => void;
@@ -14,11 +16,14 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
   isOpen,
   onClose,
   images,
+  mediaItems,
   postTitle,
   initialSelectedIndices,
   onConfirm,
 }) => {
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const hasVideos = mediaItems?.some((m) => m.kind === "video");
+  const mediaLabel = hasVideos ? "Media" : "Foto";
 
   // Initialize selected set when modal opens
   useEffect(() => {
@@ -90,9 +95,9 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
               <Layers className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-semibold text-zinc-100 text-sm">Pilih Foto Carousel</h3>
+              <h3 className="font-semibold text-zinc-100 text-sm">Pilih {mediaLabel} Carousel</h3>
               <p className="text-xs text-zinc-400 line-clamp-1">
-                {postTitle || `Tersedia ${images.length} foto dalam album ini`}
+                {postTitle || `Tersedia ${images.length} ${mediaLabel.toLowerCase()} dalam album ini`}
               </p>
             </div>
           </div>
@@ -125,7 +130,7 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
           </button>
 
           <span className="text-zinc-400 font-medium">
-            <strong className="text-zinc-100">{selected.size}</strong> dari {images.length} foto dipilih
+            <strong className="text-zinc-100">{selected.size}</strong> dari {images.length} {mediaLabel.toLowerCase()} dipilih
           </span>
         </div>
 
@@ -133,6 +138,9 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
         <div className="p-4 overflow-y-auto max-h-[55vh] grid grid-cols-2 sm:grid-cols-3 gap-3">
           {images.map((imgUrl, idx) => {
             const isChecked = selected.has(idx);
+            const isItemVideo = mediaItems && mediaItems[idx]?.kind === "video";
+            const itemDuration = mediaItems && mediaItems[idx]?.duration;
+
             return (
               <div
                 key={idx}
@@ -154,6 +162,16 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
                 <span className="absolute bottom-2 left-2 px-1.5 py-0.5 bg-black/75 backdrop-blur-xs text-[10px] font-semibold text-zinc-200 rounded">
                   #{idx + 1}
                 </span>
+
+                {/* Video indicator badge */}
+                {isItemVideo && (
+                  <span className="absolute bottom-2 right-2 px-1.5 py-0.5 bg-black/85 backdrop-blur-xs text-[10px] font-bold text-white rounded flex items-center gap-1 border border-white/10">
+                    <Film className="w-2.5 h-2.5 text-blue-400" />
+                    {itemDuration && itemDuration > 0
+                      ? `${Math.floor(itemDuration / 60)}:${(itemDuration % 60).toString().padStart(2, "0")}`
+                      : "Video"}
+                  </span>
+                )}
 
                 {/* Selection indicator */}
                 <div className="absolute top-2 right-2">
@@ -193,10 +211,10 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
             <Download className="w-3.5 h-3.5" />
             <span>
               {selected.size === 0
-                ? "Pilih Setidaknya 1 Foto"
+                ? `Pilih Setidaknya 1 ${mediaLabel}`
                 : selected.size === images.length
-                ? `Download Semua (${images.length} Foto)`
-                : `Download ${selected.size} Foto Pilihan`}
+                ? `Download Semua (${images.length} ${mediaLabel})`
+                : `Download ${selected.size} ${mediaLabel} Pilihan`}
             </span>
           </button>
         </div>

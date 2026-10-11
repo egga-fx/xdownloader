@@ -22,6 +22,7 @@ import {
   TimeRange,
   TranscriptionConfig,
   TranscriptionProgress,
+  MediaItem,
 } from "./types";
 import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage, sanitizeTitle } from "./lib/utils";
 import {
@@ -77,6 +78,7 @@ interface QueuedDownloadItem {
   timeRange?: TimeRange;
   selectedIndices?: number[];
   imageUrls?: string[];
+  mediaItems?: MediaItem[];
 }
 
 const MAX_CONCURRENT_DOWNLOADS = 2;
@@ -501,6 +503,7 @@ export function App() {
       durationSec: finalDuration,
       selectedIndices,
       imageUrls: matchedInfo?.images,
+      mediaItems: matchedInfo?.mediaItems,
     };
 
     if (activeTasksRef.current.size >= MAX_CONCURRENT_DOWNLOADS) {
@@ -544,6 +547,7 @@ export function App() {
         timeRange: item.timeRange,
         selectedIndices: item.selectedIndices,
         imageUrls: item.imageUrls,
+        mediaItems: item.mediaItems,
       });
 
       // Optimistically add active task
@@ -627,13 +631,18 @@ export function App() {
 
   // 7. Folder actions
   const handlePickFolder = async () => {
-    const selected = await pickFolder();
-    if (selected) {
-      setOutputFolder(selected);
-      await saveAppSettings({ outputFolder: selected });
-      setAppSettings((prev) => ({ ...prev, outputFolder: selected }));
-      showToast(`Output folder set to: ${selected}`);
-      notifyOutputFolderChanged(selected);
+    try {
+      const selected = await pickFolder();
+      if (selected) {
+        setOutputFolder(selected);
+        const updated = { ...appSettings, outputFolder: selected };
+        setAppSettings(updated);
+        await saveAppSettings(updated);
+        showToast(`Output folder set to: ${selected}`);
+        notifyOutputFolderChanged(selected);
+      }
+    } catch (err) {
+      console.error("Failed to pick or save folder:", err);
     }
   };
 

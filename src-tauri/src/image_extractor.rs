@@ -5,8 +5,10 @@ use regex::Regex;
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 
+use tokio::io::{AsyncWriteExt, BufWriter};
+
 use crate::db::Database;
-use crate::models::{ActiveDownloadTask, DownloadRecord, TaskProgress, VideoInfo};
+use crate::models::{ActiveDownloadTask, DownloadRecord, MediaItem, TaskProgress, VideoInfo};
 
 #[derive(Debug, Clone)]
 pub struct ImageMediaItem {
@@ -26,14 +28,41 @@ pub struct ImageMediaBundle {
     pub audio_url: Option<String>,
 }
 
-fn create_http_client() -> reqwest::Client {
+#[derive(Debug, Clone)]
+pub struct MediaBundleItem {
+    pub kind: String,
+    pub url: String,
+    pub filename: String,
+    pub thumbnail: String,
+    pub duration: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MediaBundle {
+    pub id: String,
+    pub source_url: String,
+    pub title: String,
+    pub author: String,
+    pub platform: String,
+    pub thumbnail: String,
+    pub items: Vec<MediaBundleItem>,
+    pub audio_url: Option<String>,
+}
+
+static SHARED_HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .redirect(reqwest::redirect::Policy::limited(10))
         .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(45))
+        .timeout(Duration::from_secs(60))
+        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_max_idle_per_host(10)
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
+});
+
+fn create_http_client() -> reqwest::Client {
+    SHARED_HTTP_CLIENT.clone()
 }
 
 fn sanitize_name(name: &str) -> String {
@@ -796,6 +825,70 @@ pub fn clean_scraped_url(raw: &str) -> String {
         .to_string()
 }
 
+/// Traverses a JSON Value iteratively to locate the Threads media node matching `post_code`.
+fn find_threads_media_node<'a>(val: &'a serde_json::Value, post_code: &str) -> Option<&'a serde_json::Value> {
+    let mut stack = vec![val];
+    while let Some(current) = stack.pop() {
+        if let Some(obj) = current.as_object() {
+            let code_matches = if !post_code.is_empty() {
+                obj.get("code").and_then(|c| c.as_str()) == Some(post_code)
+            } else {
+                false
+            };
+
+            if code_matches {
+                if obj.contains_key("media_type") || obj.contains_key("carousel_media") || obj.contains_key("video_versions") {
+                    return Some(current);
+                }
+            }
+
+            for (_, v) in obj {
+                if v.is_object() || v.is_array() {
+                    stack.push(v);
+                }
+            }
+        } else if let Some(arr) = current.as_array() {
+            for v in arr.iter().rev() {
+                if v.is_object() || v.is_array() {
+                    stack.push(v);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Fallback search in JSON if exact `post_code` match was not found
+fn find_any_threads_media_node<'a>(val: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
+    let mut stack = vec![val];
+    while let Some(current) = stack.pop() {
+        if let Some(obj) = current.as_object() {
+            if let Some(cm) = obj.get("carousel_media").and_then(|c| c.as_array()) {
+                if !cm.is_empty() {
+                    return Some(current);
+                }
+            }
+            if let Some(vv) = obj.get("video_versions").and_then(|v| v.as_array()) {
+                if !vv.is_empty() {
+                    return Some(current);
+                }
+            }
+            for (_, v) in obj {
+                if v.is_object() || v.is_array() {
+                    stack.push(v);
+                }
+            }
+        } else if let Some(arr) = current.as_array() {
+            for v in arr.iter().rev() {
+                if v.is_object() || v.is_array() {
+                    stack.push(v);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Parses HTML response from Threads using Googlebot User-Agent
 pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Result<VideoInfo, String> {
     // 1. Author resolution from URL or OpenGraph
@@ -824,10 +917,7 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         .map(|m| unescape_html_entities(m.as_str()))
         .unwrap_or_default();
 
-    // 2b. High-resolution thumbnail resolution (Priority: candidates in image_versions2, then meta tags)
     let mut resolved_thumbnail = String::new();
-
-    // Priority 1: Check embedded candidates array (highest resolution video cover / post image)
     if let Ok(cand_re) = Regex::new(r#""candidates"\s*:\s*\[\s*\{[^}]*?"url"\s*:\s*"([^"]+)""#) {
         if let Some(caps) = cand_re.captures(html) {
             if let Some(m) = caps.get(1) {
@@ -839,7 +929,6 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         }
     }
 
-    // Priority 2: Flexible OpenGraph & Twitter meta tags
     if resolved_thumbnail.is_empty() {
         let meta_img_re = Regex::new(r#"<meta\s+[^>]*(?:property|name)=["'](?:og:image|twitter:image)["'][^>]*content=["']([^"']+)["']"#).ok();
         let meta_img_alt_re = Regex::new(r#"<meta\s+[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["'](?:og:image|twitter:image)["']"#).ok();
@@ -875,15 +964,15 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         "Threads Post"
     };
     let sanitized_title = crate::downloader::sanitize_filename(raw_title);
-    let base_title = if sanitized_title.is_empty() || sanitized_title == "media_download" {
+    let mut base_title = if sanitized_title.is_empty() || sanitized_title == "media_download" {
         "Threads Post".to_string()
     } else {
         sanitized_title
     };
 
-    // ID resolution
+    // ID / post code resolution
     let mut post_id = String::new();
-    if let Ok(id_re) = Regex::new(r"/post/([A-Za-z0-9_-]+)") {
+    if let Ok(id_re) = Regex::new(r"/(?:post|t)/([A-Za-z0-9_-]+)") {
         if let Some(caps) = id_re.captures(final_url).or_else(|| id_re.captures(original_url)) {
             if let Some(m) = caps.get(1) {
                 post_id = m.as_str().to_string();
@@ -894,7 +983,229 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         post_id = format!("threads_{}", chrono::Utc::now().timestamp_millis());
     }
 
-    // 3. Search for video_versions in embedded JSON
+    // --- 3. Structured JSON extraction ---
+    // Search <script ...application/json...> tags for the exact target media node
+    if let Ok(script_re) = regex::RegexBuilder::new(r#"<script[^>]*application/json[^>]*>(.*?)</script>"#)
+        .dot_matches_new_line(true)
+        .build()
+    {
+        // First pass: scripts containing post_id. Second pass: other scripts.
+        let mut script_candidates = Vec::new();
+        let mut fallback_scripts = Vec::new();
+        for caps in script_re.captures_iter(html) {
+            if let Some(m) = caps.get(1) {
+                let text = m.as_str();
+                if text.contains(&post_id) {
+                    script_candidates.push(text);
+                } else if text.contains("carousel_media") || text.contains("video_versions") {
+                    fallback_scripts.push(text);
+                }
+            }
+        }
+        script_candidates.extend(fallback_scripts);
+
+        for script_json in script_candidates {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(script_json) {
+                let target_node = find_threads_media_node(&val, &post_id)
+                    .or_else(|| find_any_threads_media_node(&val));
+
+                if let Some(node) = target_node {
+                    // Extract author if available
+                    if let Some(u) = node.get("user").and_then(|u| u.get("username")).and_then(|s| s.as_str()) {
+                        if !u.is_empty() {
+                            author = format!("@{}", u);
+                        }
+                    }
+
+                    // Extract caption text if available
+                    if let Some(cap) = node.get("caption").and_then(|c| c.get("text")).and_then(|s| s.as_str()) {
+                        let clean_cap = crate::downloader::sanitize_filename(cap.trim());
+                        if !clean_cap.is_empty() {
+                            base_title = clean_cap;
+                        }
+                    }
+
+                    // Check for carousel items
+                    if let Some(carousel_arr) = node.get("carousel_media").and_then(|c| c.as_array()) {
+                        if !carousel_arr.is_empty() {
+                            let mut items: Vec<MediaItem> = Vec::new();
+                            for item in carousel_arr {
+                                let orig_w = item.get("original_width").and_then(|w| w.as_i64());
+                                let orig_h = item.get("original_height").and_then(|h| h.as_i64());
+
+                                // Thumbnail candidate
+                                let item_thumb = item
+                                    .get("image_versions2")
+                                    .and_then(|iv| iv.get("candidates"))
+                                    .and_then(|c| c.as_array())
+                                    .and_then(|cands| cands.first())
+                                    .and_then(|cand| cand.get("url"))
+                                    .and_then(|u| u.as_str())
+                                    .map(|u| clean_scraped_url(u))
+                                    .unwrap_or_default();
+
+                                let item_dur = item
+                                    .get("video_duration")
+                                    .and_then(|d| d.as_f64())
+                                    .map(|d| d as i64)
+                                    .unwrap_or(0);
+
+                                // Check if this item is video
+                                let video_candidate = item
+                                    .get("video_versions")
+                                    .and_then(|vv| vv.as_array())
+                                    .and_then(|arr| arr.first())
+                                    .and_then(|v| v.get("url"))
+                                    .and_then(|u| u.as_str())
+                                    .map(|u| clean_scraped_url(u));
+
+                                if let Some(v_url) = video_candidate {
+                                    items.push(MediaItem {
+                                        kind: "video".to_string(),
+                                        url: v_url,
+                                        thumbnail: if !item_thumb.is_empty() { item_thumb } else { resolved_thumbnail.clone() },
+                                        duration: item_dur,
+                                        width: orig_w,
+                                        height: orig_h,
+                                    });
+                                } else if !item_thumb.is_empty() {
+                                    items.push(MediaItem {
+                                        kind: "image".to_string(),
+                                        url: item_thumb.clone(),
+                                        thumbnail: item_thumb,
+                                        duration: 0,
+                                        width: orig_w,
+                                        height: orig_h,
+                                    });
+                                }
+                            }
+
+                            if !items.is_empty() {
+                                let v_count = items.iter().filter(|i| i.kind == "video").count();
+                                let img_count = items.iter().filter(|i| i.kind == "image").count();
+                                let count = items.len();
+
+                                let formatted_title = if count > 1 {
+                                    if v_count > 0 && img_count > 0 {
+                                        format!("{} [Carousel: {} Media]", base_title, count)
+                                    } else if v_count > 0 {
+                                        format!("{} [Carousel: {} Videos]", base_title, count)
+                                    } else {
+                                        format!("{} [Carousel: {} Images]", base_title, count)
+                                    }
+                                } else {
+                                    base_title.clone()
+                                };
+
+                                let primary_thumb = items.first().map(|i| i.thumbnail.clone()).unwrap_or_else(|| resolved_thumbnail.clone());
+                                let thumbs: Vec<String> = items.iter().map(|i| i.thumbnail.clone()).collect();
+                                let total_dur: i64 = items.iter().map(|i| i.duration).sum();
+
+                                let desc_tag = if v_count == 0 {
+                                    "image".to_string()
+                                } else {
+                                    "carousel".to_string()
+                                };
+
+                                return Ok(VideoInfo {
+                                    id: post_id,
+                                    title: formatted_title,
+                                    duration: total_dur,
+                                    thumbnail: primary_thumb,
+                                    uploader: if !author.is_empty() { author } else { "Threads Creator".to_string() },
+                                    channel: "Threads".to_string(),
+                                    description: Some(desc_tag),
+                                    webpage_url: final_url.to_string(),
+                                    images: Some(thumbs),
+                                    media_items: Some(items),
+                                });
+                            }
+                        }
+                    }
+
+                    // Check for single video on target node
+                    if let Some(vv) = node.get("video_versions").and_then(|v| v.as_array()) {
+                        if let Some(v_url) = vv.first().and_then(|v| v.get("url")).and_then(|u| u.as_str()) {
+                            let clean_v_url = clean_scraped_url(v_url);
+                            let dur = node.get("video_duration").and_then(|d| d.as_f64()).map(|d| d as i64).unwrap_or(0);
+                            let orig_w = node.get("original_width").and_then(|w| w.as_i64());
+                            let orig_h = node.get("original_height").and_then(|h| h.as_i64());
+
+                            let single_thumb = node
+                                .get("image_versions2")
+                                .and_then(|iv| iv.get("candidates"))
+                                .and_then(|c| c.as_array())
+                                .and_then(|cands| cands.first())
+                                .and_then(|c| c.get("url"))
+                                .and_then(|u| u.as_str())
+                                .map(|u| clean_scraped_url(u))
+                                .unwrap_or_else(|| resolved_thumbnail.clone());
+
+                            let single_item = MediaItem {
+                                kind: "video".to_string(),
+                                url: clean_v_url.clone(),
+                                thumbnail: single_thumb.clone(),
+                                duration: dur,
+                                width: orig_w,
+                                height: orig_h,
+                            };
+
+                            return Ok(VideoInfo {
+                                id: post_id,
+                                title: base_title,
+                                duration: if dur > 0 { dur } else { 30 },
+                                thumbnail: single_thumb,
+                                uploader: if !author.is_empty() { author } else { "Threads Creator".to_string() },
+                                channel: "Threads".to_string(),
+                                description: Some(clean_v_url),
+                                webpage_url: final_url.to_string(),
+                                images: None,
+                                media_items: Some(vec![single_item]),
+                            });
+                        }
+                    }
+
+                    // Check for single image on target node
+                    if let Some(cand_url) = node
+                        .get("image_versions2")
+                        .and_then(|iv| iv.get("candidates"))
+                        .and_then(|c| c.as_array())
+                        .and_then(|cands| cands.first())
+                        .and_then(|c| c.get("url"))
+                        .and_then(|u| u.as_str())
+                    {
+                        let clean_img = clean_scraped_url(cand_url);
+                        let orig_w = node.get("original_width").and_then(|w| w.as_i64());
+                        let orig_h = node.get("original_height").and_then(|h| h.as_i64());
+
+                        let single_item = MediaItem {
+                            kind: "image".to_string(),
+                            url: clean_img.clone(),
+                            thumbnail: clean_img.clone(),
+                            duration: 0,
+                            width: orig_w,
+                            height: orig_h,
+                        };
+
+                        return Ok(VideoInfo {
+                            id: post_id,
+                            title: base_title,
+                            duration: 0,
+                            thumbnail: clean_img.clone(),
+                            uploader: if !author.is_empty() { author } else { "Threads Creator".to_string() },
+                            channel: "Threads".to_string(),
+                            description: Some("image".to_string()),
+                            webpage_url: final_url.to_string(),
+                            images: Some(vec![clean_img]),
+                            media_items: Some(vec![single_item]),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // --- 4. Fallback: Regex extraction for static or legacy HTML ---
     let mut found_video_url: Option<String> = None;
     let mut video_duration: i64 = 0;
     if let Ok(video_re) = regex::RegexBuilder::new(r#""video_versions"\s*:\s*\[\s*\{[^}]*?"url"\s*:\s*"([^"]+)""#)
@@ -926,22 +1237,31 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         }
     }
 
-    // If video found, return VideoInfo with the direct MP4 stream URL stored in description for the downloader
     if let Some(v_url) = found_video_url {
+        let single_item = MediaItem {
+            kind: "video".to_string(),
+            url: v_url.clone(),
+            thumbnail: resolved_thumbnail.clone(),
+            duration: video_duration,
+            width: None,
+            height: None,
+        };
+
         return Ok(VideoInfo {
             id: post_id,
             title: base_title,
             duration: if video_duration > 0 { video_duration } else { 30 },
             thumbnail: resolved_thumbnail,
-            uploader: if !author.is_empty() { author.clone() } else { "Threads Creator".to_string() },
+            uploader: if !author.is_empty() { author } else { "Threads Creator".to_string() },
             channel: "Threads".to_string(),
             description: Some(v_url),
             webpage_url: final_url.to_string(),
             images: None,
+            media_items: Some(vec![single_item]),
         });
     }
 
-    // 4. If no video, check for carousel images
+    // Check for carousel images fallback
     let mut image_urls: Vec<String> = Vec::new();
     if let Ok(carousel_re) = regex::RegexBuilder::new(r#""carousel_media"\s*:\s*(\[\s*\{.*?\}\s*\])"#)
         .dot_matches_new_line(true)
@@ -967,7 +1287,6 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         }
     }
 
-    // 5. If not carousel, check single image candidates
     if image_urls.is_empty() {
         if let Ok(single_img_re) = regex::RegexBuilder::new(r#""image_versions2"\s*:\s*\{[^}]*?"candidates"\s*:\s*\[\s*\{[^}]*?"url"\s*:\s*"([^"]+)""#)
             .dot_matches_new_line(true)
@@ -984,7 +1303,6 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
         }
     }
 
-    // Fallback to resolved_thumbnail if candidates array was not found
     if image_urls.is_empty() && !resolved_thumbnail.is_empty() {
         image_urls.push(resolved_thumbnail.clone());
     }
@@ -1115,6 +1433,17 @@ pub fn bundle_to_video_info(bundle: &ImageMediaBundle, url: &str) -> VideoInfo {
         }
     }
 
+    let media_items: Vec<MediaItem> = bundle.images.iter().map(|img| {
+        MediaItem {
+            kind: "image".to_string(),
+            url: img.url.clone(),
+            thumbnail: img.url.clone(),
+            duration: 0,
+            width: None,
+            height: None,
+        }
+    }).collect();
+
     VideoInfo {
         id: bundle.id.clone(),
         title: formatted_title,
@@ -1125,6 +1454,7 @@ pub fn bundle_to_video_info(bundle: &ImageMediaBundle, url: &str) -> VideoInfo {
         description: Some("image".to_string()),
         webpage_url: url.to_string(),
         images: if count > 1 { Some(image_urls) } else { None },
+        media_items: Some(media_items),
     }
 }
 
@@ -1334,6 +1664,352 @@ pub async fn download_image_bundle(
     );
 
     Ok(final_record_path)
+}
+
+/// Creates a MediaBundle directly from a list of MediaItem structs
+pub fn create_media_bundle_from_items(
+    id: &str,
+    source_url: &str,
+    title: &str,
+    platform: &str,
+    author: &str,
+    items: &[MediaItem],
+) -> MediaBundle {
+    let clean_title = sanitize_name(title);
+    let total = items.len();
+    let bundle_items = items
+        .iter()
+        .enumerate()
+        .map(|(idx, m)| {
+            let ext = if m.kind == "video" {
+                if m.url.contains(".webm") { "webm" } else { "mp4" }
+            } else {
+                if m.url.contains(".png") { "png" } else { "jpg" }
+            };
+            let filename = if total > 1 {
+                format!("{}_{:02}.{}", clean_title, idx + 1, ext)
+            } else {
+                format!("{}.{}", clean_title, ext)
+            };
+            MediaBundleItem {
+                kind: m.kind.clone(),
+                url: m.url.clone(),
+                filename,
+                thumbnail: m.thumbnail.clone(),
+                duration: m.duration,
+            }
+        })
+        .collect();
+
+    MediaBundle {
+        id: id.to_string(),
+        source_url: source_url.to_string(),
+        title: title.to_string(),
+        author: author.to_string(),
+        platform: platform.to_string(),
+        thumbnail: items.first().map(|i| i.thumbnail.clone()).unwrap_or_default(),
+        items: bundle_items,
+        audio_url: None,
+    }
+}
+
+/// Downloads media bundle items (video and/or image) with chunk streaming, accurate byte tracking, and cancellation safety
+pub async fn download_media_bundle(
+    app: &AppHandle,
+    db: Arc<Database>,
+    task_id: &str,
+    bundle: &MediaBundle,
+    output_folder: &Path,
+    custom_name: Option<String>,
+    selected_indices: Option<Vec<usize>>,
+) -> Result<String, String> {
+    let client = create_http_client();
+
+    let raw_name = custom_name.as_deref().unwrap_or(&bundle.title);
+    let carousel_badge_re = Regex::new(r"(?i)\s*\[carousel:?\s*\d+\s*(?:images?|videos?|media)\]").unwrap();
+    let stripped = carousel_badge_re.replace_all(raw_name, "");
+    let clean_base_name = sanitize_name(stripped.trim());
+
+    let target_dir = output_folder.to_path_buf();
+    let _ = std::fs::create_dir_all(&target_dir);
+
+    let items_to_download: Vec<(usize, MediaBundleItem)> = match selected_indices {
+        Some(ref indices) if !indices.is_empty() => {
+            bundle.items
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| indices.contains(idx))
+                .map(|(idx, item)| (idx + 1, item.clone()))
+                .collect()
+        }
+        _ => {
+            bundle.items
+                .iter()
+                .enumerate()
+                .map(|(idx, item)| (idx + 1, item.clone()))
+                .collect()
+        }
+    };
+
+    if items_to_download.is_empty() {
+        return Err("No media items selected for download".to_string());
+    }
+
+    let total_items = items_to_download.len();
+    let mut primary_saved_path = String::new();
+    let mut overall_downloaded_bytes: i64 = 0;
+    let mut created_files: Vec<PathBuf> = Vec::new();
+
+    let is_all_video = items_to_download.iter().all(|(_, it)| it.kind == "video");
+    let is_all_image = items_to_download.iter().all(|(_, it)| it.kind == "image");
+    let format_type = if is_all_image { "image" } else { "video" };
+
+    let count = items_to_download.len();
+    let display_title = if count > 1 && !raw_name.contains("[Carousel:") {
+        let label = if is_all_video { "Videos" } else if is_all_image { "Images" } else { "Media" };
+        format!("{} [Carousel: {} {}]", clean_base_name, count, label)
+    } else {
+        clean_base_name.to_string()
+    };
+
+    let initial_record = DownloadRecord {
+        id: task_id.to_string(),
+        platform: bundle.platform.clone(),
+        url: bundle.source_url.clone(),
+        title: display_title.clone(),
+        author: bundle.author.clone(),
+        duration_sec: 0,
+        thumbnail_url: bundle.thumbnail.clone(),
+        format_type: format_type.to_string(),
+        quality: "best".to_string(),
+        file_path: String::new(),
+        file_size_bytes: 0,
+        status: "downloading".to_string(),
+        error: None,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        time_range: None,
+        exists: false,
+    };
+    let _ = db.add_record(&initial_record);
+
+    for (step_idx, (slide_idx, item)) in items_to_download.iter().enumerate() {
+        let ext = if item.kind == "video" {
+            if item.url.contains(".webm") { "webm" } else { "mp4" }
+        } else {
+            if item.url.contains(".png") { "png" } else { "jpg" }
+        };
+
+        let filename = if bundle.items.len() > 1 {
+            format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
+        } else {
+            format!("{}.{}", clean_base_name, ext)
+        };
+        let dest_file = target_dir.join(&filename);
+        let part_file = target_dir.join(format!("{}.part", filename));
+
+        let mut resp = match client.get(&item.url).header("Accept", "*/*").send().await {
+            Ok(r) => r,
+            Err(e) => {
+                for f in &created_files {
+                    let _ = std::fs::remove_file(f);
+                }
+                let _ = std::fs::remove_file(&part_file);
+                let _ = db.update_record(task_id, "error", None, None, Some(&format!("Network error: {}", e)));
+                return Err(format!("Failed to connect to stream {}: {}", filename, e));
+            }
+        };
+
+        if !resp.status().is_success() {
+            for f in &created_files {
+                let _ = std::fs::remove_file(f);
+            }
+            let _ = std::fs::remove_file(&part_file);
+            let err_msg = format!("HTTP error {} downloading {}", resp.status(), filename);
+            let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+            return Err(err_msg);
+        }
+
+        let item_total_bytes = resp.content_length().unwrap_or(0);
+        let mut item_downloaded: i64 = 0;
+
+        let raw_file = match tokio::fs::File::create(&part_file).await {
+            Ok(f) => f,
+            Err(e) => {
+                for f in &created_files {
+                    let _ = std::fs::remove_file(f);
+                }
+                let err_msg = format!("Failed to create part file {:?}: {}", part_file, e);
+                let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+                return Err(err_msg);
+            }
+        };
+        let mut file = BufWriter::with_capacity(256 * 1024, raw_file);
+
+        let mut last_emit = std::time::Instant::now();
+        let start_time = std::time::Instant::now();
+
+        loop {
+            let chunk_opt = match resp.chunk().await {
+                Ok(c) => c,
+                Err(e) => {
+                    drop(file);
+                    let _ = std::fs::remove_file(&part_file);
+                    for f in &created_files {
+                        let _ = std::fs::remove_file(f);
+                    }
+                    let err_msg = format!("Stream interrupted for {}: {}", filename, e);
+                    let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+                    return Err(err_msg);
+                }
+            };
+
+            let chunk = match chunk_opt {
+                Some(c) => c,
+                None => break,
+            };
+
+            if let Err(e) = file.write_all(&chunk).await {
+                drop(file);
+                let _ = std::fs::remove_file(&part_file);
+                for f in &created_files {
+                    let _ = std::fs::remove_file(f);
+                }
+                let err_msg = format!("Write error for {}: {}", filename, e);
+                let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+                return Err(err_msg);
+            }
+
+            let chunk_len = chunk.len() as i64;
+            item_downloaded += chunk_len;
+            overall_downloaded_bytes += chunk_len;
+
+            if last_emit.elapsed() >= Duration::from_millis(120) {
+                let elapsed_sec = start_time.elapsed().as_secs_f64();
+                let speed_mbps = if elapsed_sec > 0.05 {
+                    (item_downloaded as f64 / 1_048_576.0) / elapsed_sec
+                } else {
+                    0.0
+                };
+
+                let item_percent = if item_total_bytes > 0 {
+                    (item_downloaded as f64 / item_total_bytes as f64).clamp(0.0, 1.0)
+                } else {
+                    0.5
+                };
+
+                let overall_percent = (((step_idx as f64) + item_percent) / total_items as f64) * 100.0;
+
+                let _ = app.emit(
+                    "download-progress",
+                    ActiveDownloadTask {
+                        task_id: task_id.to_string(),
+                        url: item.url.clone(),
+                        title: display_title.clone(),
+                        platform: bundle.platform.clone(),
+                        format_type: format_type.to_string(),
+                        quality: "best".to_string(),
+                        status: "downloading".to_string(),
+                        progress: TaskProgress {
+                            percent: overall_percent.clamp(0.5, 99.5),
+                            speed_str: format!("{}/{} · {:.1} MB/s", step_idx + 1, total_items, speed_mbps),
+                            eta_str: if total_items > 1 { format!("Item {} of {}", step_idx + 1, total_items) } else { "Downloading...".to_string() },
+                            downloaded_bytes: Some(overall_downloaded_bytes),
+                            total_bytes: None,
+                        },
+                        error: None,
+                    },
+                );
+
+                last_emit = std::time::Instant::now();
+            }
+        }
+
+        if let Err(e) = file.flush().await {
+            drop(file);
+            let _ = std::fs::remove_file(&part_file);
+            for f in &created_files {
+                let _ = std::fs::remove_file(f);
+            }
+            return Err(format!("Flush failed for {}: {}", filename, e));
+        }
+        drop(file);
+
+        if item_downloaded == 0 {
+            let _ = std::fs::remove_file(&part_file);
+            for f in &created_files {
+                let _ = std::fs::remove_file(f);
+            }
+            return Err(format!("Downloaded file {} is 0 bytes", filename));
+        }
+
+        if let Err(e) = tokio::fs::rename(&part_file, &dest_file).await {
+            let _ = std::fs::remove_file(&part_file);
+            for f in &created_files {
+                let _ = std::fs::remove_file(f);
+            }
+            return Err(format!("Rename failed for {:?}: {}", dest_file, e));
+        }
+
+        created_files.push(dest_file.clone());
+        if primary_saved_path.is_empty() {
+            primary_saved_path = dest_file.to_string_lossy().to_string();
+        }
+    }
+
+    if created_files.is_empty() || primary_saved_path.is_empty() {
+        return Err("No files were saved".to_string());
+    }
+
+    let final_record = DownloadRecord {
+        id: task_id.to_string(),
+        platform: bundle.platform.clone(),
+        url: bundle.source_url.clone(),
+        title: display_title.clone(),
+        author: bundle.author.clone(),
+        duration_sec: 0,
+        thumbnail_url: bundle.thumbnail.clone(),
+        format_type: format_type.to_string(),
+        quality: "best".to_string(),
+        file_path: primary_saved_path.clone(),
+        file_size_bytes: overall_downloaded_bytes,
+        status: "completed".to_string(),
+        error: None,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        time_range: None,
+        exists: true,
+    };
+    let _ = db.add_record(&final_record);
+
+    let _ = app.emit(
+        "download-progress",
+        ActiveDownloadTask {
+            task_id: task_id.to_string(),
+            url: bundle.source_url.clone(),
+            title: display_title,
+            platform: bundle.platform.clone(),
+            format_type: format_type.to_string(),
+            quality: "best".to_string(),
+            status: "completed".to_string(),
+            progress: TaskProgress {
+                percent: 100.0,
+                speed_str: "Complete".to_string(),
+                eta_str: "00:00".to_string(),
+                downloaded_bytes: Some(overall_downloaded_bytes),
+                total_bytes: Some(overall_downloaded_bytes),
+            },
+            error: None,
+        },
+    );
+
+    let _ = db.log_event(
+        task_id,
+        "INFO",
+        "DOWNLOAD",
+        &format!("Bundle download complete: {} files ({} bytes)", created_files.len(), overall_downloaded_bytes),
+        Some(&primary_saved_path),
+    );
+
+    Ok(primary_saved_path)
 }
 
 #[cfg(test)]
@@ -1742,5 +2418,151 @@ mod tests {
             info.description,
             Some("https://instagram.fna.fbcdn.net/v/video.mp4?_nc_cat=102&ccb=7-5".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_threads_html_multi_video_carousel() {
+        let sample_html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta property="og:title" content="Ricky on Threads">
+                <meta property="og:description" content="Innalillahi banjir bandang Padang">
+            </head>
+            <body>
+                <!-- Noise: Another reply post appears first in the page -->
+                <script type="application/json">
+                    {
+                        "code": "reply_other_999",
+                        "media_type": 2,
+                        "video_versions": [{"url": "https:\/\/instagram.fna.fbcdn.net\/wrong_reply.mp4", "duration": 5.0}],
+                        "user": {"username": "random_commenter"}
+                    }
+                </script>
+                <!-- Target Post: multi-video carousel -->
+                <script type="application/json" data-sjs>
+                    {
+                        "require": [
+                            [
+                                "RelayPrefetchedStreamCache",
+                                "next",
+                                [],
+                                [
+                                    {
+                                        "__bbox": {
+                                            "result": {
+                                                "data": {
+                                                    "media": {
+                                                        "code": "DeT2s0skjxt",
+                                                        "media_type": 8,
+                                                        "caption": {"text": "Innalillahi, banjir bandang kembali terjadi di Padang"},
+                                                        "user": {"username": "mrickybarman"},
+                                                        "carousel_media": [
+                                                            {
+                                                                "media_type": 2,
+                                                                "original_width": 576,
+                                                                "original_height": 774,
+                                                                "video_duration": 9.5,
+                                                                "video_versions": [
+                                                                    {"url": "https:\/\/instagram.fcgk6-3.fna.fbcdn.net\/v1.mp4", "width": 576, "height": 774}
+                                                                ],
+                                                                "image_versions2": {
+                                                                    "candidates": [
+                                                                        {"url": "https:\/\/instagram.fcgk6-3.fna.fbcdn.net\/thumb1.jpg", "width": 640, "height": 860}
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "media_type": 2,
+                                                                "original_width": 480,
+                                                                "original_height": 640,
+                                                                "video_duration": 12.0,
+                                                                "video_versions": [
+                                                                    {"url": "https:\/\/instagram.fcgk6-3.fna.fbcdn.net\/v2.mp4", "width": 480, "height": 640}
+                                                                ],
+                                                                "image_versions2": {
+                                                                    "candidates": [
+                                                                        {"url": "https:\/\/instagram.fcgk6-3.fna.fbcdn.net\/thumb2.jpg", "width": 640, "height": 860}
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "media_type": 2,
+                                                                "original_width": 480,
+                                                                "original_height": 640,
+                                                                "video_duration": 15.0,
+                                                                "video_versions": [
+                                                                    {"url": "https:\/\/instagram.fcgk6-3.fna.fbcdn.net\/v3.mp4", "width": 480, "height": 640}
+                                                                ],
+                                                                "image_versions2": {
+                                                                    "candidates": [
+                                                                        {"url": "https:\/\/instagram.fcgk6-3.fna.fbcdn.net\/thumb3.jpg", "width": 640, "height": 860}
+                                                                    ]
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                ]
+                            ]
+                        ]
+                    }
+                </script>
+            </body>
+            </html>
+        "#;
+        let url = "https://www.threads.com/@mrickybarman/post/DeT2s0skjxt/media";
+        let res = parse_threads_html(sample_html, url, url);
+        assert!(res.is_ok(), "Failed to parse threads carousel: {:?}", res.err());
+        let info = res.unwrap();
+
+        assert_eq!(info.id, "DeT2s0skjxt");
+        assert_eq!(info.uploader, "@mrickybarman");
+        assert!(info.title.contains("Innalillahi"));
+        assert!(info.title.contains("[Carousel: 3 Videos]"));
+        assert_eq!(info.description, Some("carousel".to_string()));
+
+        let media_items = info.media_items.expect("media_items should be populated");
+        assert_eq!(media_items.len(), 3, "Expected 3 videos in carousel");
+        assert_eq!(media_items[0].kind, "video");
+        assert_eq!(media_items[0].url, "https://instagram.fcgk6-3.fna.fbcdn.net/v1.mp4");
+        assert_eq!(media_items[0].thumbnail, "https://instagram.fcgk6-3.fna.fbcdn.net/thumb1.jpg");
+        assert_eq!(media_items[0].duration, 9);
+
+        assert_eq!(media_items[1].kind, "video");
+        assert_eq!(media_items[1].url, "https://instagram.fcgk6-3.fna.fbcdn.net/v2.mp4");
+        assert_eq!(media_items[1].duration, 12);
+
+        assert_eq!(media_items[2].kind, "video");
+        assert_eq!(media_items[2].url, "https://instagram.fcgk6-3.fna.fbcdn.net/v3.mp4");
+        assert_eq!(media_items[2].duration, 15);
+
+        let images = info.images.expect("images thumbs should be populated");
+        assert_eq!(images.len(), 3);
+        assert_eq!(images[0], "https://instagram.fcgk6-3.fna.fbcdn.net/thumb1.jpg");
+    }
+
+    #[test]
+    fn test_parse_real_threads_html_file() {
+        let path = std::path::Path::new("C:/Users/precore/.gemini/antigravity-ide/brain/a4f8b1b9-95c5-41bb-8f84-a6c753bc7fff/scratch/threads_multi.html");
+        if let Ok(content) = std::fs::read_to_string(path) {
+            let url = "https://www.threads.com/@mrickybarman/post/DeT2s0skjxt/media";
+            let res = parse_threads_html(&content, url, url);
+            assert!(res.is_ok(), "Real threads HTML parsing failed: {:?}", res.err());
+            let info = res.unwrap();
+            let items = info.media_items.expect("media_items should be populated");
+            println!("REAL TEST DETECTED: {} items in carousel", items.len());
+            for (i, it) in items.iter().enumerate() {
+                println!("Item #{}: kind={}, url={}, dur={}", i + 1, it.kind, it.url, it.duration);
+            }
+            assert_eq!(items.len(), 3, "Expected 3 video items from real threads HTML");
+            for it in &items {
+                assert_eq!(it.kind, "video", "Each item must be a video");
+                assert!(it.url.starts_with("http"), "Valid video URL required");
+            }
+        }
     }
 }

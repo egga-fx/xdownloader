@@ -12,7 +12,7 @@ use tauri::{AppHandle, State};
 use db::Database;
 use downloader::ProcessManager;
 use models::{
-    AppSettings, BinariesStatus, DownloadRecord, LogEntry, TimeRange, TranscriptionConfig, VideoInfo,
+    AppSettings, BinariesStatus, DownloadRecord, LogEntry, MediaItem, TimeRange, TranscriptionConfig, VideoInfo,
 };
 
 pub struct AppState {
@@ -60,18 +60,26 @@ async fn start_download(
     time_range: Option<TimeRange>,
     selected_indices: Option<Vec<usize>>,
     image_urls: Option<Vec<String>>,
+    media_items: Option<Vec<MediaItem>>,
 ) -> Result<String, String> {
     let task_id = format!("dl_{}_{}", chrono::Utc::now().timestamp_millis(), &uuid_short());
     let db = state.db.clone();
     let process_mgr = state.process_mgr.clone();
 
+    let raw_stem = custom_name.as_deref().or(title.as_deref()).unwrap_or("media_download").to_string();
+    let out_dir = match output_folder {
+        Some(ref f) if !f.trim().is_empty() => std::path::PathBuf::from(f),
+        _ => downloader::get_default_download_dir(),
+    };
+
     let task_id_clone = task_id.clone();
-    tokio::spawn(async move {
+    let process_mgr_clone = process_mgr.clone();
+    let task_handle = tokio::spawn(async move {
         let _ = downloader::run_download(
             app,
             db,
-            process_mgr,
-            task_id_clone,
+            process_mgr_clone.clone(),
+            task_id_clone.clone(),
             url,
             format_type,
             quality,
@@ -85,9 +93,13 @@ async fn start_download(
             time_range,
             selected_indices,
             image_urls,
+            media_items,
         )
         .await;
+        process_mgr_clone.remove(&task_id_clone);
     });
+
+    process_mgr.register_native(task_id.clone(), task_handle.abort_handle(), out_dir, raw_stem);
 
     Ok(task_id)
 }
@@ -141,8 +153,39 @@ fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
-fn save_app_settings(state: State<'_, AppState>, settings: AppSettings) -> Result<bool, String> {
-    state.db.save_settings(&settings).map(|_| true)
+fn save_app_settings(state: State<'_, AppState>, settings: serde_json::Value) -> Result<bool, String> {
+    let mut current = state.db.get_settings().unwrap_or_default();
+
+    if let Some(folder) = settings.get("outputFolder").and_then(|v| v.as_str()) {
+        let trimmed = folder.trim();
+        if !trimmed.is_empty() {
+            current.output_folder = trimmed.to_string();
+        }
+    }
+    if let Some(vq) = settings.get("defaultVideoQuality").and_then(|v| v.as_str()) {
+        if !vq.trim().is_empty() {
+            current.default_video_quality = vq.to_string();
+        }
+    }
+    if let Some(aq) = settings.get("defaultAudioQuality").and_then(|v| v.as_str()) {
+        if !aq.trim().is_empty() {
+            current.default_audio_quality = aq.to_string();
+        }
+    }
+    if let Some(clip) = settings.get("autoClipboardDetect").and_then(|v| v.as_bool()) {
+        current.auto_clipboard_detect = clip;
+    }
+    if let Some(subs) = settings.get("downloadSubtitles").and_then(|v| v.as_bool()) {
+        current.download_subtitles = subs;
+    }
+    if let Some(upd) = settings.get("checkUpdatesOnStartup").and_then(|v| v.as_bool()) {
+        current.check_updates_on_startup = upd;
+    }
+    if let Some(notif) = settings.get("desktopNotifications").and_then(|v| v.as_bool()) {
+        current.desktop_notifications = notif;
+    }
+
+    state.db.save_settings(&current).map(|_| true)
 }
 
 #[tauri::command]

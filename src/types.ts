@@ -69,6 +69,15 @@ export interface ActiveDownloadTask {
   error?: string;
 }
 
+export interface MediaItem {
+  kind: "video" | "image";
+  url: string;
+  thumbnail: string;
+  duration: number; // in seconds
+  width?: number | null;
+  height?: number | null;
+}
+
 export interface VideoInfo {
   id: string;
   title: string;
@@ -79,6 +88,7 @@ export interface VideoInfo {
   description?: string;
   webpageUrl: string;
   images?: string[];
+  mediaItems?: MediaItem[];
 }
 
 export interface BinariesStatus {
@@ -135,6 +145,7 @@ export interface DownloadRequestParams {
   timeRange?: TimeRange;
   selectedIndices?: number[];
   imageUrls?: string[];
+  mediaItems?: MediaItem[];
 }
 
 export type TranscriptionKeyStatus = "missing" | "saved" | "invalid";

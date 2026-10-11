@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter};
 use crate::binaries::find_binary;
 use crate::db::Database;
 use crate::models::{
-    ActiveDownloadTask, DownloadRecord, TaskProgress, TimeRange,
+    ActiveDownloadTask, DownloadRecord, MediaItem, TaskProgress, TimeRange,
 };
 
 #[cfg(target_os = "windows")]
@@ -26,6 +26,7 @@ pub struct ProcessTaskInfo {
 
 pub struct ProcessManager {
     children: Mutex<HashMap<String, ProcessTaskInfo>>,
+    native_tasks: Mutex<HashMap<String, (tokio::task::AbortHandle, PathBuf, String)>>,
 }
 
 impl Default for ProcessManager {
@@ -38,6 +39,7 @@ impl ProcessManager {
     pub fn new() -> Self {
         Self {
             children: Mutex::new(HashMap::new()),
+            native_tasks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -47,13 +49,23 @@ impl ProcessManager {
         }
     }
 
+    pub fn register_native(&self, task_id: String, handle: tokio::task::AbortHandle, out_dir: PathBuf, stem: String) {
+        if let Ok(mut map) = self.native_tasks.lock() {
+            map.insert(task_id, (handle, out_dir, stem));
+        }
+    }
+
     pub fn remove(&self, task_id: &str) {
         if let Ok(mut map) = self.children.lock() {
+            map.remove(task_id);
+        }
+        if let Ok(mut map) = self.native_tasks.lock() {
             map.remove(task_id);
         }
     }
 
     pub fn cancel(&self, task_id: &str) -> bool {
+        let mut cancelled = false;
         if let Ok(mut map) = self.children.lock() {
             if let Some(info) = map.remove(task_id) {
                 crate::logger::write_file_log("WARN", "PROCESS", task_id, &format!("Killed process PID: {}", info.pid));
@@ -73,10 +85,20 @@ impl ProcessManager {
 
                 // Immediately clean up any partial artifacts (.part, .ytdl, .temp.*, .f*.mp4)
                 cleanup_task_artifacts(&info.out_dir, Some(&info.stem));
-                return true;
+                cancelled = true;
             }
         }
-        false
+
+        if let Ok(mut map) = self.native_tasks.lock() {
+            if let Some((handle, out_dir, stem)) = map.remove(task_id) {
+                crate::logger::write_file_log("WARN", "PROCESS", task_id, "Aborted native download task");
+                handle.abort();
+                cleanup_task_artifacts(&out_dir, Some(&stem));
+                cancelled = true;
+            }
+        }
+
+        cancelled
     }
 }
 
@@ -226,6 +248,7 @@ pub async fn run_download(
     time_range: Option<TimeRange>,
     selected_indices: Option<Vec<usize>>,
     image_urls: Option<Vec<String>>,
+    media_items: Option<Vec<MediaItem>>,
 ) -> Result<(), String> {
     let out_dir = match output_folder {
         Some(ref f) if !f.trim().is_empty() => PathBuf::from(f),
@@ -242,9 +265,45 @@ pub async fn run_download(
         None,
     );
 
+    let is_threads = crate::image_extractor::is_threads_url(&url);
+
+    // 0. Direct Multi-Media / MediaBundle Interceptor (e.g. Threads multi-video carousel, mixed albums)
+    if let Some(ref items) = media_items {
+        if !items.is_empty() && (items.len() > 1 || is_threads) {
+            let platform_name = if is_threads {
+                "threads"
+            } else if url.contains("instagram.com") {
+                "instagram"
+            } else {
+                "media"
+            };
+
+            let bundle = crate::image_extractor::create_media_bundle_from_items(
+                &task_id,
+                &url,
+                title.as_deref().unwrap_or("media"),
+                platform_name,
+                author.as_deref().unwrap_or("creator"),
+                items,
+            );
+
+            crate::image_extractor::download_media_bundle(
+                &app,
+                db,
+                &task_id,
+                &bundle,
+                &out_dir,
+                custom_name,
+                selected_indices,
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+
     // 1. Direct Image Extraction Interceptor
     if format_type == "image" {
-        let platform_name = if crate::image_extractor::is_threads_url(&url) {
+        let platform_name = if is_threads {
             "threads"
         } else if url.contains("instagram.com") {
             "instagram"
@@ -294,6 +353,60 @@ pub async fn run_download(
         }
     }
 
+    // Resolve direct download URL and metadata for platforms that require extraction preprocessing (Threads)
+    let mut download_url = url.clone();
+    let mut resolved_title = title.clone();
+    let mut resolved_author = author.clone();
+    let mut resolved_thumbnail = thumbnail_url.clone();
+    let mut resolved_duration = duration_sec;
+
+    if is_threads {
+        if let Ok(vinfo) = crate::image_extractor::extract_threads_post(&url).await {
+            // If Threads post contains multiple media items (e.g. 3 videos), download directly as MediaBundle
+            if let Some(ref items) = vinfo.media_items {
+                if !items.is_empty() {
+                    let bundle = crate::image_extractor::create_media_bundle_from_items(
+                        &task_id,
+                        &url,
+                        vinfo.title.as_str(),
+                        "threads",
+                        vinfo.uploader.as_str(),
+                        items,
+                    );
+                    crate::image_extractor::download_media_bundle(
+                        &app,
+                        db,
+                        &task_id,
+                        &bundle,
+                        &out_dir,
+                        custom_name,
+                        selected_indices,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+
+            if let Some(ref direct_v_url) = vinfo.description {
+                if !direct_v_url.is_empty() && direct_v_url.starts_with("http") {
+                    download_url = direct_v_url.clone();
+                }
+            }
+            if resolved_title.is_none() || resolved_title.as_deref() == Some(&url) {
+                resolved_title = Some(vinfo.title.clone());
+            }
+            if resolved_author.is_none() {
+                resolved_author = Some(vinfo.uploader.clone());
+            }
+            if resolved_thumbnail.is_none() || resolved_thumbnail.as_deref() == Some("") {
+                resolved_thumbnail = Some(vinfo.thumbnail.clone());
+            }
+            if resolved_duration.is_none() || resolved_duration == Some(0) {
+                resolved_duration = Some(vinfo.duration);
+            }
+        }
+    }
+
     let ytdlp_path = match find_binary("yt-dlp") {
         Some(p) => p,
         None => {
@@ -316,35 +429,6 @@ pub async fn run_download(
     };
 
     let ffmpeg_path = find_binary("ffmpeg");
-
-    // Resolve direct download URL and metadata for platforms that require extraction preprocessing (Threads)
-    let mut download_url = url.clone();
-    let mut resolved_title = title.clone();
-    let mut resolved_author = author.clone();
-    let mut resolved_thumbnail = thumbnail_url.clone();
-    let mut resolved_duration = duration_sec;
-
-    if crate::image_extractor::is_threads_url(&url) {
-        if let Ok(vinfo) = crate::image_extractor::extract_threads_post(&url).await {
-            if let Some(ref direct_v_url) = vinfo.description {
-                if !direct_v_url.is_empty() && direct_v_url.starts_with("http") {
-                    download_url = direct_v_url.clone();
-                }
-            }
-            if resolved_title.is_none() || resolved_title.as_deref() == Some(&url) {
-                resolved_title = Some(vinfo.title.clone());
-            }
-            if resolved_author.is_none() {
-                resolved_author = Some(vinfo.uploader.clone());
-            }
-            if resolved_thumbnail.is_none() || resolved_thumbnail.as_deref() == Some("") {
-                resolved_thumbnail = Some(vinfo.thumbnail.clone());
-            }
-            if resolved_duration.is_none() || resolved_duration == Some(0) {
-                resolved_duration = Some(vinfo.duration);
-            }
-        }
-    }
 
     // Template output filename and stem identification (sanitized for Windows filesystem)
     let raw_stem = match custom_name.as_deref() {
@@ -537,12 +621,11 @@ pub async fn run_download(
             }
         }
 
-        // High throughput connection optimizations for DASH & HLS video streams (avoid burst concurrency on audio)
-        if format_type == "video" {
-            cmd.arg("--concurrent-fragments").arg("4");
-        }
-        cmd.arg("--retries").arg("10")
-            .arg("--fragment-retries").arg("10");
+        // High throughput connection optimizations: multi-fragment concurrent downloads (2x - 5x faster)
+        cmd.arg("--concurrent-fragments").arg("4")
+            .arg("--retries").arg("10")
+            .arg("--fragment-retries").arg("10")
+            .arg("--buffer-size").arg("16K");
 
         // Pass --ffmpeg-location so yt-dlp can reliably merge separate audio and video streams into a single mp4
         if let Some(ref ff_path) = ffmpeg_path {
@@ -665,6 +748,7 @@ pub async fn run_download(
 
         let reader = BufReader::new(stdout);
         let mut downloaded_path = String::new();
+        let mut last_progress_emit = std::time::Instant::now() - std::time::Duration::from_millis(200);
 
         for line_res in reader.lines() {
             if let Ok(line) = line_res {
@@ -673,45 +757,53 @@ pub async fn run_download(
                     let speed_str = caps[3].to_string();
                     let eta_str = caps[4].to_string();
 
-                    let task_update = ActiveDownloadTask {
-                        task_id: task_id.clone(),
-                        url: url.clone(),
-                        title: initial_record.title.clone(),
-                        platform: initial_record.platform.clone(),
-                        format_type: format_type.clone(),
-                        quality: quality.clone(),
-                        status: "downloading".to_string(),
-                        progress: TaskProgress {
-                            percent,
-                            speed_str,
-                            eta_str,
-                            downloaded_bytes: None,
-                            total_bytes: None,
-                        },
-                        error: None,
-                    };
+                    let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(100);
+                    if should_emit {
+                        last_progress_emit = std::time::Instant::now();
+                        let task_update = ActiveDownloadTask {
+                            task_id: task_id.clone(),
+                            url: url.clone(),
+                            title: initial_record.title.clone(),
+                            platform: initial_record.platform.clone(),
+                            format_type: format_type.clone(),
+                            quality: quality.clone(),
+                            status: "downloading".to_string(),
+                            progress: TaskProgress {
+                                percent,
+                                speed_str,
+                                eta_str,
+                                downloaded_bytes: None,
+                                total_bytes: None,
+                            },
+                            error: None,
+                        };
 
-                    let _ = app.emit("download-progress", &task_update);
+                        let _ = app.emit("download-progress", &task_update);
+                    }
                 } else if let Some(caps) = progress_simple_regex.captures(&line) {
                     let percent: f64 = caps[1].parse().unwrap_or(0.0);
-                    let task_update = ActiveDownloadTask {
-                        task_id: task_id.clone(),
-                        url: url.clone(),
-                        title: initial_record.title.clone(),
-                        platform: initial_record.platform.clone(),
-                        format_type: format_type.clone(),
-                        quality: quality.clone(),
-                        status: "downloading".to_string(),
-                        progress: TaskProgress {
-                            percent,
-                            speed_str: "Downloading...".to_string(),
-                            eta_str: String::new(),
-                            downloaded_bytes: None,
-                            total_bytes: None,
-                        },
-                        error: None,
-                    };
-                    let _ = app.emit("download-progress", &task_update);
+                    let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(100);
+                    if should_emit {
+                        last_progress_emit = std::time::Instant::now();
+                        let task_update = ActiveDownloadTask {
+                            task_id: task_id.clone(),
+                            url: url.clone(),
+                            title: initial_record.title.clone(),
+                            platform: initial_record.platform.clone(),
+                            format_type: format_type.clone(),
+                            quality: quality.clone(),
+                            status: "downloading".to_string(),
+                            progress: TaskProgress {
+                                percent,
+                                speed_str: "Downloading...".to_string(),
+                                eta_str: String::new(),
+                                downloaded_bytes: None,
+                                total_bytes: None,
+                            },
+                            error: None,
+                        };
+                        let _ = app.emit("download-progress", &task_update);
+                    }
                 }
 
                 if let Some(caps) = merger_regex.captures(&line) {

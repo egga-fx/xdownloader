@@ -17,6 +17,7 @@ import {
   TranscriptionConfig,
   TranscriptionProgress,
   VideoInfo,
+  MediaItem,
 } from "../types";
 import { detectPlatform } from "./utils";
 
@@ -411,6 +412,7 @@ export async function startDownload(params: {
   timeRange?: TimeRange;
   selectedIndices?: number[];
   imageUrls?: string[];
+  mediaItems?: MediaItem[];
 }): Promise<string> {
   if (isTauriEnvironment()) {
     return await invoke<string>("start_download", {
@@ -427,6 +429,7 @@ export async function startDownload(params: {
       timeRange: params.timeRange || null,
       selectedIndices: params.selectedIndices || null,
       imageUrls: params.imageUrls || null,
+      mediaItems: params.mediaItems || null,
     });
   }
 

@@ -54,6 +54,17 @@ pub struct ActiveDownloadTask {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MediaItem {
+    pub kind: String,
+    pub url: String,
+    pub thumbnail: String,
+    pub duration: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VideoInfo {
     pub id: String,
     pub title: String,
@@ -64,6 +75,7 @@ pub struct VideoInfo {
     pub description: Option<String>,
     pub webpage_url: String,
     pub images: Option<Vec<String>>,
+    pub media_items: Option<Vec<MediaItem>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,10 +92,15 @@ pub struct BinariesStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
+    #[serde(default)]
     pub output_folder: String,
+    #[serde(default = "default_video_quality")]
     pub default_video_quality: String,
+    #[serde(default = "default_audio_quality")]
     pub default_audio_quality: String,
+    #[serde(default = "default_true")]
     pub auto_clipboard_detect: bool,
+    #[serde(default)]
     pub download_subtitles: bool,
     #[serde(default = "default_true")]
     pub check_updates_on_startup: bool,
@@ -93,6 +110,14 @@ pub struct AppSettings {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_video_quality() -> String {
+    "1080p".to_string()
+}
+
+fn default_audio_quality() -> String {
+    "mp3".to_string()
 }
 
 impl Default for AppSettings {

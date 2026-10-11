@@ -104,6 +104,25 @@ impl Database {
         )
         .map_err(|e| format!("Failed to create task_logs table: {}", e))?;
 
+        // Performance Indexes: accelerate vault sorting and log lookups to <1ms
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads(created_at DESC);",
+            [],
+        )
+        .map_err(|e| format!("Failed to create idx_downloads_created: {}", e))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);",
+            [],
+        )
+        .map_err(|e| format!("Failed to create idx_downloads_status: {}", e))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id);",
+            [],
+        )
+        .map_err(|e| format!("Failed to create idx_task_logs_task: {}", e))?;
+
         // Auto-migration: ensure time_range columns exist for partial clips
         let _ = conn.execute("ALTER TABLE downloads ADD COLUMN time_range_start TEXT;", []);
         let _ = conn.execute("ALTER TABLE downloads ADD COLUMN time_range_end TEXT;", []);
@@ -470,5 +489,23 @@ impl Database {
         conn.execute("DELETE FROM task_logs", [])
             .map_err(|e| format!("Failed to clear task logs: {}", e))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_save_and_get_settings_custom_output_folder() {
+        let db = Database::new_in_memory().unwrap();
+        let custom_folder = "D:\\Downloads\\CustomFolder".to_string();
+        let mut settings = AppSettings::default();
+        settings.output_folder = custom_folder.clone();
+
+        assert!(db.save_settings(&settings).is_ok());
+
+        let retrieved = db.get_settings().unwrap();
+        assert_eq!(retrieved.output_folder, custom_folder);
     }
 }

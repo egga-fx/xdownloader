@@ -225,5 +225,6 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         description,
         webpage_url,
         images,
+        media_items: None,
     })
 }

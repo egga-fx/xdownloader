@@ -3,7 +3,6 @@ import {
   Download,
   Film,
   Music,
-  Clock,
   User,
   ExternalLink,
   Loader2,
@@ -64,14 +63,20 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   onOpenTranscriptionSettings,
   onOpenTranscriptStudio,
 }) => {
-  const isImage = info.description === "image";
+  const mediaItems = info.mediaItems || [];
+  const hasMultipleMedia = mediaItems.length > 1;
+  const carouselVideosCount = mediaItems.filter((m) => m.kind === "video").length;
+  const carouselImagesCount = mediaItems.filter((m) => m.kind === "image").length;
+  const isImage = info.description === "image" && carouselVideosCount === 0;
   const carouselImages: string[] =
-    info.images && info.images.length > 0
+    mediaItems.length > 0
+      ? mediaItems.map((m) => m.thumbnail || m.url)
+      : info.images && info.images.length > 0
       ? info.images
       : info.thumbnail
       ? [info.thumbnail]
       : [];
-  const isCarousel = isImage && carouselImages.length > 1;
+  const isCarousel = (isImage || hasMultipleMedia) && carouselImages.length > 1;
 
   const getInitialIndex = (): number => {
     if (!info.webpageUrl) return 0;
@@ -88,6 +93,11 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   };
 
   const [activeImageIndex, setActiveImageIndex] = useState<number>(getInitialIndex());
+  const currentMediaItem = mediaItems[activeImageIndex];
+  const isCurrentSlideVideo = currentMediaItem
+    ? currentMediaItem.kind === "video"
+    : (!isImage && !hasMultipleMedia);
+
   const [isSelectionModalOpen, setIsSelectionModalOpen] = useState<boolean>(false);
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   const [aspectRatios, setAspectRatios] = useState<Record<number, number>>({});
@@ -137,14 +147,14 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   }, [currentThumbnail]);
 
   useEffect(() => {
-    if (info.description === "image" && formatType !== "image") {
+    if (isImage && formatType !== "image") {
       setFormatType("image");
       setQuality("best");
-    } else if (info.description !== "image" && formatType === "image") {
+    } else if (!isImage && formatType === "image") {
       setFormatType("video");
       setQuality("best");
     }
-  }, [info.description]);
+  }, [isImage]);
 
   // Pre-load all carousel images and cache their natural aspect ratios in background
   useEffect(() => {
@@ -238,10 +248,11 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
           )}
 
           {/* Duration badge for video */}
-          {!isImage && info.duration > 0 && (
-            <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-sm text-[11px] font-bold text-white flex items-center gap-1 z-10">
-              <Clock className="w-3 h-3 text-blue-400" />
-              <span>{formatDuration(info.duration)}</span>
+          {((isCurrentSlideVideo && currentMediaItem && currentMediaItem.duration > 0) ||
+            (!isCarousel && !isImage && info.duration > 0)) && (
+            <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-sm text-[11px] font-bold text-white flex items-center gap-1 z-10 shadow-sm border border-white/10">
+              <Film className="w-3 h-3 text-blue-400" />
+              <span>{formatDuration(currentMediaItem?.duration || info.duration)}</span>
             </div>
           )}
 
@@ -311,7 +322,13 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 <>
                   <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 text-[10px] font-semibold flex items-center gap-1">
                     <Images className="w-2.5 h-2.5 text-zinc-400" />
-                    <span>{carouselImages.length} Photos</span>
+                    <span>
+                      {carouselVideosCount > 0 && carouselImagesCount > 0
+                        ? `${carouselImages.length} Media (${carouselVideosCount} Video, ${carouselImagesCount} Foto)`
+                        : carouselVideosCount > 0
+                        ? `${carouselVideosCount} Videos`
+                        : `${carouselImages.length} Photos`}
+                    </span>
                   </span>
                   <span>•</span>
                 </>
@@ -329,18 +346,21 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
 
             {/* Format Type Selector (Custom Dropdown) */}
             <div className="flex items-center gap-2 mt-1">
-              {info.description === "image" ? (
+              {isCarousel ? (
                 <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#1e1e24] text-zinc-200 border border-[#3f3f46]">
-                  {isCarousel ? (
-                    <Images className="w-3.5 h-3.5 text-zinc-300" />
-                  ) : (
-                    <ImageIcon className="w-3.5 h-3.5 text-zinc-300" />
-                  )}
+                  <Images className="w-3.5 h-3.5 text-zinc-300" />
                   <span>
-                    {isCarousel
-                      ? `Photo Carousel (${carouselImages.length} Photos)`
-                      : "Photo (HD Lossless)"}
+                    {carouselVideosCount > 0 && carouselImagesCount > 0
+                      ? `Media Carousel (${carouselImages.length} Items)`
+                      : carouselVideosCount > 0
+                      ? `Video Carousel (${carouselVideosCount} Videos)`
+                      : `Photo Carousel (${carouselImages.length} Photos)`}
                   </span>
+                </div>
+              ) : isImage ? (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#1e1e24] text-zinc-200 border border-[#3f3f46]">
+                  <ImageIcon className="w-3.5 h-3.5 text-zinc-300" />
+                  <span>Photo (HD Lossless)</span>
                 </div>
               ) : (
                 <div className="relative inline-block text-left" ref={formatDropdownRef}>
@@ -630,16 +650,16 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-end">
           {isCarousel && (
             <>
-              {/* Button Pilih Foto */}
+              {/* Button Pilih Media / Foto */}
               <button
                 type="button"
                 onClick={() => setIsSelectionModalOpen(true)}
                 disabled={isDownloadingCurrentUrl}
                 className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
-                title="Pilih foto tertentu untuk diunduh"
+                title={carouselVideosCount > 0 ? "Pilih media tertentu untuk diunduh" : "Pilih foto tertentu untuk diunduh"}
               >
                 <Layers className="w-3.5 h-3.5 text-zinc-400" />
-                <span>Pilih Foto</span>
+                <span>{carouselVideosCount > 0 ? "Pilih Media" : "Pilih Foto"}</span>
               </button>
 
               {/* Quick Download Active Slide */}
@@ -650,8 +670,12 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
                 title={`Download hanya slide #${activeImageIndex + 1}`}
               >
-                <ImageIcon className="w-3.5 h-3.5 text-zinc-400" />
-                <span>Foto #{activeImageIndex + 1}</span>
+                {isCurrentSlideVideo ? (
+                  <Film className="w-3.5 h-3.5 text-zinc-400" />
+                ) : (
+                  <ImageIcon className="w-3.5 h-3.5 text-zinc-400" />
+                )}
+                <span>{isCurrentSlideVideo ? "Video" : "Foto"} #{activeImageIndex + 1}</span>
               </button>
             </>
           )}
@@ -709,10 +733,16 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                   <Download className="w-4 h-4" />
                 )}
                 <span>
-                  {isImage
-                    ? isCarousel
-                      ? `Download Semua (${carouselImages.length} Foto)`
-                      : "Download Photo (HD)"
+                  {isCarousel
+                    ? `Download Semua (${carouselImages.length} ${
+                        carouselVideosCount > 0 && carouselImagesCount > 0
+                          ? "Media"
+                          : carouselVideosCount > 0
+                          ? "Video"
+                          : "Foto"
+                      })`
+                    : isImage
+                    ? "Download Photo (HD)"
                     : formatType === "subtitle"
                     ? "Unduh Transkrip (SRT)"
                     : formatType === "audio"
@@ -731,6 +761,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
           isOpen={isSelectionModalOpen}
           onClose={() => setIsSelectionModalOpen(false)}
           images={carouselImages}
+          mediaItems={info.mediaItems}
           postTitle={info.title}
           initialSelectedIndices={[activeImageIndex]}
           onConfirm={(indices) => onDownload(indices)}

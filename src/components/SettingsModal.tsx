@@ -45,6 +45,7 @@ import {
   getTranscriptionConfig,
   saveTranscriptionConfig,
   testTranscriptionKey,
+  pickFolder,
 } from "../lib/tauri-api";
 import { LogViewerModal } from "./LogViewerModal";
 import { getErrorMessage } from "../lib/utils";
@@ -54,7 +55,7 @@ interface SettingsModalProps {
   onClose: () => void;
   settings: AppSettings;
   onSaveSettings: (newSettings: Partial<AppSettings>) => Promise<void>;
-  onPickFolder?: () => void;
+  onPickFolder?: (selected?: string) => void;
   onOpenAbout?: () => void;
   initialUpdateInfo?: AppUpdateInfo | null;
   initialSection?: "general" | "transcription";
@@ -302,6 +303,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleBrowseFolder = async () => {
+    try {
+      const selected = await pickFolder();
+      if (selected) {
+        setOutputFolder(selected);
+        onPickFolder?.(selected);
+      }
+    } catch (err) {
+      console.error("Failed to browse folder:", err);
+    }
+  };
+
   useEffect(() => {
     if (open) {
       setDefaultVideoQuality(settings.defaultVideoQuality || "best");
@@ -356,6 +369,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
     }
   }, [open, settings, initialUpdateInfo, initialSection]);
+
+  useEffect(() => {
+    if (settings.outputFolder) {
+      setOutputFolder(settings.outputFolder);
+    }
+  }, [settings.outputFolder]);
 
   if (!open) return null;
 
@@ -567,17 +586,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   placeholder="C:\Users\...\Videos\xDownloader"
                   className="flex-grow bg-[#121215] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-white placeholder-[#71717a] focus:outline-none focus:border-blue-500"
                 />
-                {onPickFolder && (
-                  <button
-                    type="button"
-                    onClick={onPickFolder}
-                    className="px-3 py-2 rounded-xl bg-[#27272a] hover:bg-[#3f3f46] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
-                    title="Browse Folder"
-                  >
-                    <FolderSearch className="w-3.5 h-3.5" />
-                    <span>Browse</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={handleBrowseFolder}
+                  className="px-3 py-2 rounded-xl bg-[#27272a] hover:bg-[#3f3f46] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
+                  title="Browse Folder"
+                >
+                  <FolderSearch className="w-3.5 h-3.5" />
+                  <span>Browse</span>
+                </button>
               </div>
             ) : (
               <div className="p-3 rounded-xl bg-[#18181b] border border-[#27272a] text-[#a1a1aa] flex items-center gap-2.5">

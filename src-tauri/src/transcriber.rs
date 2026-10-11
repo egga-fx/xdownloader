@@ -698,6 +698,7 @@ pub async fn run_transcription(
         time_range.clone(),
         None,
         None,
+        None,
     )
     .await;
 
