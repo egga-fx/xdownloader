@@ -42,7 +42,7 @@ export interface DownloadRecord {
   quality: DownloaderQuality;
   filePath: string;
   fileSizeBytes: number;
-  status: "downloading" | "completed" | "error";
+  status: "downloading" | "paused" | "completed" | "error";
   error?: string;
   createdAt: string;
   timeRange?: TimeRange;
@@ -64,7 +64,7 @@ export interface ActiveDownloadTask {
   platform: DownloaderPlatform;
   formatType: DownloaderFormatType;
   quality: DownloaderQuality;
-  status: "downloading" | "completed" | "error";
+  status: "downloading" | "paused" | "completed" | "error";
   progress: TaskProgress;
   error?: string;
 }

@@ -245,6 +245,75 @@ impl Database {
         false
     }
 
+    pub fn is_task_paused(&self, id: &str) -> bool {
+        if let Ok(conn) = self.conn.lock() {
+            if let Ok(mut stmt) = conn.prepare("SELECT status FROM downloads WHERE id = ?1") {
+                if let Ok(status) = stmt.query_row(params![id], |row| row.get::<_, String>(0)) {
+                    return status == "paused";
+                }
+            }
+        }
+        false
+    }
+
+    pub fn set_task_status(&self, id: &str, status: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        conn.execute(
+            "UPDATE downloads SET status = ?1 WHERE id = ?2",
+            params![status, id],
+        )
+        .map_err(|e| format!("Failed to update task status: {}", e))?;
+        Ok(())
+    }
+
+    pub fn get_record_by_id(&self, id: &str) -> Result<Option<DownloadRecord>, String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        let mut stmt = conn
+            .prepare("SELECT id, platform, url, title, author, duration_sec, thumbnail_url, format_type, quality, file_path, file_size_bytes, status, error, created_at, time_range_start, time_range_end FROM downloads WHERE id = ?1")
+            .map_err(|e| format!("SQL prepare error: {}", e))?;
+
+        let res = stmt.query_row(params![id], |row| {
+            let tr_start: Option<String> = row.get(14).ok();
+            let tr_end: Option<String> = row.get(15).ok();
+            let time_range = match (tr_start, tr_end) {
+                (Some(s), Some(e)) if !s.is_empty() && !e.is_empty() => Some(crate::models::TimeRange { start: s, end: e }),
+                _ => None,
+            };
+
+            let file_path: String = row.get(9).unwrap_or_default();
+            let exists = if !file_path.is_empty() {
+                Path::new(&file_path).exists()
+            } else {
+                false
+            };
+
+            Ok(DownloadRecord {
+                id: row.get(0)?,
+                platform: row.get(1)?,
+                url: row.get(2)?,
+                title: row.get(3)?,
+                author: row.get(4)?,
+                duration_sec: row.get(5)?,
+                thumbnail_url: row.get(6)?,
+                format_type: row.get(7)?,
+                quality: row.get(8)?,
+                file_path,
+                file_size_bytes: row.get(10)?,
+                status: row.get(11)?,
+                error: row.get(12)?,
+                created_at: row.get(13)?,
+                time_range,
+                exists,
+            })
+        });
+
+        match res {
+            Ok(rec) => Ok(Some(rec)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(format!("Failed to read record '{}': {}", id, e)),
+        }
+    }
+
     pub fn get_records(
         &self,
         platform: Option<String>,
@@ -507,5 +576,39 @@ mod tests {
 
         let retrieved = db.get_settings().unwrap();
         assert_eq!(retrieved.output_folder, custom_folder);
+    }
+
+    #[test]
+    fn test_pause_and_get_record_by_id() {
+        let db = Database::new_in_memory().unwrap();
+        let record = DownloadRecord {
+            id: "test_task_123".to_string(),
+            platform: "threads".to_string(),
+            url: "https://threads.com/@user/post/123".to_string(),
+            title: "Test Thread Post".to_string(),
+            author: "user".to_string(),
+            duration_sec: 0,
+            thumbnail_url: "https://example.com/thumb.jpg".to_string(),
+            format_type: "video".to_string(),
+            quality: "best".to_string(),
+            file_path: "".to_string(),
+            file_size_bytes: 0,
+            status: "downloading".to_string(),
+            error: None,
+            created_at: "2026-10-12T00:00:00Z".to_string(),
+            time_range: None,
+            exists: false,
+        };
+
+        assert!(db.add_record(&record).is_ok());
+        assert!(!db.is_task_paused("test_task_123"));
+
+        assert!(db.set_task_status("test_task_123", "paused").is_ok());
+        assert!(db.is_task_paused("test_task_123"));
+
+        let fetched = db.get_record_by_id("test_task_123").unwrap().unwrap();
+        assert_eq!(fetched.id, "test_task_123");
+        assert_eq!(fetched.status, "paused");
+        assert_eq!(fetched.title, "Test Thread Post");
     }
 }

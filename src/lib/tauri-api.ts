@@ -679,6 +679,27 @@ export async function cancelDownload(taskId: string): Promise<boolean> {
   return false;
 }
 
+export async function pauseDownload(taskId: string): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    return await invoke<boolean>("pause_download", { taskId });
+  }
+
+  const timer = browserActiveSimulations.get(taskId);
+  if (timer) {
+    clearInterval(timer);
+    return true;
+  }
+  return false;
+}
+
+export async function resumeDownload(taskId: string): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    return await invoke<boolean>("resume_download", { taskId });
+  }
+
+  return true;
+}
+
 // --- 4. MEDIA VAULT & RECORDS ---
 
 function getBrowserMockRecords(): DownloadRecord[] {

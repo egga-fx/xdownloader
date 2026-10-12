@@ -5,6 +5,8 @@ import {
   Clock,
   Loader2,
   AlertTriangle,
+  Pause,
+  Play,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
 import { VaultItemActions } from "./VaultItemActions";
@@ -19,6 +21,8 @@ import {
 
 interface VaultHistoryGridProps {
   activeTasks: ActiveDownloadTask[];
+  onPauseTask?: (taskId: string) => void;
+  onResumeTask?: (taskId: string) => void;
   onCancelTask: (taskId: string) => void;
   records: DownloadRecord[];
   onSelectRecord: (record: DownloadRecord) => void;
@@ -31,6 +35,8 @@ interface VaultHistoryGridProps {
 
 export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
   activeTasks,
+  onPauseTask,
+  onResumeTask,
   onCancelTask,
   records,
   onSelectRecord,
@@ -43,49 +49,88 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
   return (
     <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
       {/* 1. PINNED ACTIVE DOWNLOAD TASKS */}
-      {activeTasks.map((task) => (
-        <div
-          key={task.taskId}
-          className="col-span-1 sm:col-span-2 bg-[#121215] border border-blue-500/30 rounded-xl p-3 flex flex-col gap-2 shadow-md shadow-blue-500/5"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Loader2 className="w-4 h-4 text-blue-400 animate-spin shrink-0" />
-              <span className="text-xs font-bold text-white truncate" title={task.title}>
-                {task.title}
+      {activeTasks.map((task) => {
+        const isPaused = task.status === "paused";
+        return (
+          <div
+            key={task.taskId}
+            className={`col-span-1 sm:col-span-2 bg-[#121215] border rounded-xl p-3 flex flex-col gap-2 shadow-md transition-colors ${
+              isPaused
+                ? "border-amber-500/30 shadow-amber-500/5 bg-amber-500/[0.02]"
+                : "border-blue-500/30 shadow-blue-500/5"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                {isPaused ? (
+                  <Pause className="w-4 h-4 text-amber-400 shrink-0" />
+                ) : (
+                  <Loader2 className="w-4 h-4 text-blue-400 animate-spin shrink-0" />
+                )}
+                <span className="text-xs font-bold text-white truncate" title={task.title}>
+                  {task.title}
+                </span>
+                {isPaused && (
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
+                    Paused
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {isPaused ? (
+                  <button
+                    onClick={() => onResumeTask?.(task.taskId)}
+                    className="w-6 h-6 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                    title="Resume Download"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-amber-400/20" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onPauseTask?.(task.taskId)}
+                    className="w-6 h-6 rounded text-[#a1a1aa] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                    title="Pause Download"
+                  >
+                    <Pause className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  onClick={() => onCancelTask(task.taskId)}
+                  className="w-6 h-6 rounded text-[#71717a] hover:text-red-400 flex items-center justify-center cursor-pointer transition-colors"
+                  title="Cancel Download"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-[#a1a1aa]">
+              <span className={`font-bold ${isPaused ? "text-amber-400" : "text-blue-400"}`}>
+                {task.progress.percent > 0
+                  ? `${Math.round(task.progress.percent)}%`
+                  : isPaused
+                  ? "Paused"
+                  : "Connecting..."}
+              </span>
+              <span>
+                {task.progress.speedStr || (isPaused ? "Paused" : "Starting...")}{" "}
+                {task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused
+                  ? `· ETA ${task.progress.etaStr}`
+                  : ""}
               </span>
             </div>
-            <button
-              onClick={() => onCancelTask(task.taskId)}
-              className="w-6 h-6 rounded text-[#71717a] hover:text-red-400 flex items-center justify-center cursor-pointer shrink-0"
-              title="Cancel Download"
-            >
-              <XCircle className="w-3.5 h-3.5" />
-            </button>
-          </div>
 
-          <div className="flex items-center justify-between text-[11px] text-[#a1a1aa]">
-            <span className="font-bold text-blue-400">
-              {task.progress.percent > 0
-                ? `${Math.round(task.progress.percent)}%`
-                : "Connecting..."}
-            </span>
-            <span>
-              {task.progress.speedStr || "Starting..."}{" "}
-              {task.progress.etaStr && task.progress.etaStr !== "--:--"
-                ? `· ETA ${task.progress.etaStr}`
-                : ""}
-            </span>
+            <div className="w-full h-1.5 bg-[#27272a] rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  isPaused ? "bg-amber-500" : "bg-blue-500"
+                }`}
+                style={{ width: `${Math.max(task.progress.percent, 3)}%` }}
+              />
+            </div>
           </div>
-
-          <div className="w-full h-1.5 bg-[#27272a] rounded-full overflow-hidden">
-            <div
-              className="h-full bg-blue-500 transition-all duration-300"
-              style={{ width: `${Math.max(task.progress.percent, 3)}%` }}
-            />
-          </div>
-        </div>
-      ))}
+        );
+      })}
 
       {/* 2. COMPLETED RECORDS */}
       {records.map((item) => {

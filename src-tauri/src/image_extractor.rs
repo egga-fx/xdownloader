@@ -1807,56 +1807,108 @@ pub async fn download_media_bundle(
         let dest_file = target_dir.join(&filename);
         let part_file = target_dir.join(format!("{}.part", filename));
 
-        let mut resp = match client.get(&item.url).header("Accept", "*/*").send().await {
-            Ok(r) => r,
-            Err(e) => {
-                for f in &created_files {
-                    let _ = std::fs::remove_file(f);
+        // 1. Skip items that were already completed in a previous session
+        if dest_file.exists() && dest_file.is_file() {
+            if let Ok(meta) = std::fs::metadata(&dest_file) {
+                if meta.len() > 0 {
+                    overall_downloaded_bytes += meta.len() as i64;
+                    created_files.push(dest_file.clone());
+                    if primary_saved_path.is_empty() {
+                        primary_saved_path = dest_file.to_string_lossy().to_string();
+                    }
+                    continue;
                 }
-                let _ = std::fs::remove_file(&part_file);
-                let _ = db.update_record(task_id, "error", None, None, Some(&format!("Network error: {}", e)));
-                return Err(format!("Failed to connect to stream {}: {}", filename, e));
             }
-        };
-
-        if !resp.status().is_success() {
-            for f in &created_files {
-                let _ = std::fs::remove_file(f);
-            }
-            let _ = std::fs::remove_file(&part_file);
-            let err_msg = format!("HTTP error {} downloading {}", resp.status(), filename);
-            let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
-            return Err(err_msg);
         }
 
-        let item_total_bytes = resp.content_length().unwrap_or(0);
-        let mut item_downloaded: i64 = 0;
+        // 2. Check for existing partial .part file bytes
+        let mut existing_bytes: u64 = 0;
+        if part_file.exists() && part_file.is_file() {
+            if let Ok(meta) = std::fs::metadata(&part_file) {
+                existing_bytes = meta.len();
+            }
+        }
 
-        let raw_file = match tokio::fs::File::create(&part_file).await {
-            Ok(f) => f,
+        // 3. Formulate request with conditional HTTP Range header
+        let mut req = client.get(&item.url).header("Accept", "*/*");
+        if existing_bytes > 0 {
+            req = req.header("Range", format!("bytes={}-", existing_bytes));
+        }
+
+        let mut resp = match req.send().await {
+            Ok(r) => r,
             Err(e) => {
-                for f in &created_files {
-                    let _ = std::fs::remove_file(f);
-                }
-                let err_msg = format!("Failed to create part file {:?}: {}", part_file, e);
+                let err_msg = format!("Failed to connect to stream {}: {}", filename, e);
                 let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
                 return Err(err_msg);
             }
         };
-        let mut file = BufWriter::with_capacity(256 * 1024, raw_file);
 
+        let status = resp.status();
+        let (raw_file, mut item_downloaded, item_total_bytes) = if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            // Server supports Range! Append to existing partial file
+            let file = match tokio::fs::OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open(&part_file)
+                .await
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    let err_msg = format!("Failed to open existing part file {:?} in append mode: {}", part_file, e);
+                    let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+                    return Err(err_msg);
+                }
+            };
+            let content_len = resp.content_length().unwrap_or(0);
+            let total = content_len + existing_bytes;
+            overall_downloaded_bytes += existing_bytes as i64;
+            (file, existing_bytes as i64, total)
+        } else if status == reqwest::StatusCode::OK {
+            // Server returned 200 OK: non-range fallback or brand new stream
+            let file = match tokio::fs::File::create(&part_file).await {
+                Ok(f) => f,
+                Err(e) => {
+                    let err_msg = format!("Failed to create part file {:?}: {}", part_file, e);
+                    let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+                    return Err(err_msg);
+                }
+            };
+            let total = resp.content_length().unwrap_or(0);
+            (file, 0i64, total)
+        } else if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            // Range 416: Local file might already be complete
+            if existing_bytes > 0 {
+                if tokio::fs::rename(&part_file, &dest_file).await.is_ok() {
+                    created_files.push(dest_file.clone());
+                    if primary_saved_path.is_empty() {
+                        primary_saved_path = dest_file.to_string_lossy().to_string();
+                    }
+                    overall_downloaded_bytes += existing_bytes as i64;
+                    continue;
+                }
+            }
+            let _ = std::fs::remove_file(&part_file);
+            let err_msg = format!("HTTP 416 Range Not Satisfiable for {}", filename);
+            let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+            return Err(err_msg);
+        } else {
+            let err_msg = format!("HTTP error {} downloading {}", status, filename);
+            let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+            return Err(err_msg);
+        };
+
+        let mut file = BufWriter::with_capacity(256 * 1024, raw_file);
         let mut last_emit = std::time::Instant::now();
-        let start_time = std::time::Instant::now();
+        let session_start_time = std::time::Instant::now();
+        let mut session_bytes_downloaded: i64 = 0;
 
         loop {
             let chunk_opt = match resp.chunk().await {
                 Ok(c) => c,
                 Err(e) => {
                     drop(file);
-                    let _ = std::fs::remove_file(&part_file);
-                    for f in &created_files {
-                        let _ = std::fs::remove_file(f);
-                    }
+                    // Do NOT delete partial file on pause or interruption! Keep it for resumption.
                     let err_msg = format!("Stream interrupted for {}: {}", filename, e);
                     let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
                     return Err(err_msg);
@@ -1870,10 +1922,6 @@ pub async fn download_media_bundle(
 
             if let Err(e) = file.write_all(&chunk).await {
                 drop(file);
-                let _ = std::fs::remove_file(&part_file);
-                for f in &created_files {
-                    let _ = std::fs::remove_file(f);
-                }
                 let err_msg = format!("Write error for {}: {}", filename, e);
                 let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
                 return Err(err_msg);
@@ -1881,12 +1929,13 @@ pub async fn download_media_bundle(
 
             let chunk_len = chunk.len() as i64;
             item_downloaded += chunk_len;
+            session_bytes_downloaded += chunk_len;
             overall_downloaded_bytes += chunk_len;
 
             if last_emit.elapsed() >= Duration::from_millis(120) {
-                let elapsed_sec = start_time.elapsed().as_secs_f64();
+                let elapsed_sec = session_start_time.elapsed().as_secs_f64();
                 let speed_mbps = if elapsed_sec > 0.05 {
-                    (item_downloaded as f64 / 1_048_576.0) / elapsed_sec
+                    (session_bytes_downloaded as f64 / 1_048_576.0) / elapsed_sec
                 } else {
                     0.0
                 };
@@ -1926,27 +1975,18 @@ pub async fn download_media_bundle(
 
         if let Err(e) = file.flush().await {
             drop(file);
-            let _ = std::fs::remove_file(&part_file);
-            for f in &created_files {
-                let _ = std::fs::remove_file(f);
-            }
-            return Err(format!("Flush failed for {}: {}", filename, e));
+            let err_msg = format!("Flush failed for {}: {}", filename, e);
+            let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+            return Err(err_msg);
         }
         drop(file);
 
         if item_downloaded == 0 {
             let _ = std::fs::remove_file(&part_file);
-            for f in &created_files {
-                let _ = std::fs::remove_file(f);
-            }
             return Err(format!("Downloaded file {} is 0 bytes", filename));
         }
 
         if let Err(e) = tokio::fs::rename(&part_file, &dest_file).await {
-            let _ = std::fs::remove_file(&part_file);
-            for f in &created_files {
-                let _ = std::fs::remove_file(f);
-            }
             return Err(format!("Rename failed for {:?}: {}", dest_file, e));
         }
 

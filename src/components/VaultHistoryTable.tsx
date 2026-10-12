@@ -5,6 +5,8 @@ import {
   Loader2,
   AlertTriangle,
   Captions,
+  Pause,
+  Play,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
 import { VaultItemActions } from "./VaultItemActions";
@@ -18,6 +20,8 @@ import {
 
 interface VaultHistoryTableProps {
   activeTasks: ActiveDownloadTask[];
+  onPauseTask?: (taskId: string) => void;
+  onResumeTask?: (taskId: string) => void;
   onCancelTask: (taskId: string) => void;
   records: DownloadRecord[];
   onSelectRecord: (record: DownloadRecord) => void;
@@ -30,6 +34,8 @@ interface VaultHistoryTableProps {
 
 export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
   activeTasks,
+  onPauseTask,
+  onResumeTask,
   onCancelTask,
   records,
   onSelectRecord,
@@ -42,53 +48,98 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
   return (
     <div className="flex flex-col divide-y divide-[#1f1f23]">
       {/* 1. ACTIVE RUNNING TASKS */}
-      {activeTasks.map((task) => (
-        <div
-          key={task.taskId}
-          className="flex items-center justify-between p-3.5 sm:p-4 min-h-[78px] bg-[#121215]/80 border-b border-blue-500/20 gap-3"
-        >
-          <div className="flex items-center gap-3.5 min-w-0 flex-grow">
-            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center shrink-0">
-              <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
-            </div>
-            <div className="flex flex-col min-w-0 flex-grow gap-1">
-              <span className="text-xs sm:text-sm font-bold text-white truncate" title={task.title}>
-                {task.title}
-              </span>
-              <div className="flex items-center gap-2 text-[11px] text-[#a1a1aa]">
-                <span className="font-bold text-blue-400">
-                  {task.progress.percent > 0
-                    ? `${Math.round(task.progress.percent)}%`
-                    : "Connecting..."}
-                </span>
-                <span>•</span>
-                <span>{task.progress.speedStr || "Starting..."}</span>
-                {task.progress.etaStr && task.progress.etaStr !== "--:--" && (
-                  <>
-                    <span>•</span>
-                    <span>ETA {task.progress.etaStr}</span>
-                  </>
+      {activeTasks.map((task) => {
+        const isPaused = task.status === "paused";
+        return (
+          <div
+            key={task.taskId}
+            className={`flex items-center justify-between p-3.5 sm:p-4 min-h-[78px] bg-[#121215]/80 border-b gap-3 transition-colors ${
+              isPaused ? "border-amber-500/20 bg-amber-500/[0.02]" : "border-blue-500/20"
+            }`}
+          >
+            <div className="flex items-center gap-3.5 min-w-0 flex-grow">
+              <div
+                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
+                  isPaused
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                    : "bg-blue-500/10 border-blue-500/30 text-blue-400"
+                }`}
+              >
+                {isPaused ? (
+                  <Pause className="w-4 h-4" />
+                ) : (
+                  <Loader2 className="w-5 h-5 animate-spin" />
                 )}
               </div>
-              {/* Progress Bar */}
-              <div className="w-full h-1 bg-[#27272a] rounded-full overflow-hidden mt-0.5">
-                <div
-                  className="h-full bg-blue-500 transition-all duration-300"
-                  style={{ width: `${Math.max(task.progress.percent, 3)}%` }}
-                />
+              <div className="flex flex-col min-w-0 flex-grow gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs sm:text-sm font-bold text-white truncate" title={task.title}>
+                    {task.title}
+                  </span>
+                  {isPaused && (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
+                      Paused
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-[#a1a1aa]">
+                  <span className={`font-bold ${isPaused ? "text-amber-400" : "text-blue-400"}`}>
+                    {task.progress.percent > 0
+                      ? `${Math.round(task.progress.percent)}%`
+                      : isPaused
+                      ? "Paused"
+                      : "Connecting..."}
+                  </span>
+                  <span>•</span>
+                  <span>{task.progress.speedStr || (isPaused ? "Paused" : "Starting...")}</span>
+                  {task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused && (
+                    <>
+                      <span>•</span>
+                      <span>ETA {task.progress.etaStr}</span>
+                    </>
+                  )}
+                </div>
+                {/* Progress Bar */}
+                <div className="w-full h-1 bg-[#27272a] rounded-full overflow-hidden mt-0.5">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      isPaused ? "bg-amber-500" : "bg-blue-500"
+                    }`}
+                    style={{ width: `${Math.max(task.progress.percent, 3)}%` }}
+                  />
+                </div>
               </div>
             </div>
-          </div>
 
-          <button
-            onClick={() => onCancelTask(task.taskId)}
-            className="w-7 h-7 rounded-md text-[#71717a] hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center cursor-pointer transition-colors shrink-0"
-            title="Cancel Download"
-          >
-            <XCircle className="w-4 h-4" />
-          </button>
-        </div>
-      ))}
+            <div className="flex items-center gap-1 shrink-0">
+              {isPaused ? (
+                <button
+                  onClick={() => onResumeTask?.(task.taskId)}
+                  className="w-7 h-7 rounded-md text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                  title="Resume Download"
+                >
+                  <Play className="w-4 h-4 fill-amber-400/20" />
+                </button>
+              ) : (
+                <button
+                  onClick={() => onPauseTask?.(task.taskId)}
+                  className="w-7 h-7 rounded-md text-[#a1a1aa] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                  title="Pause Download"
+                >
+                  <Pause className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                onClick={() => onCancelTask(task.taskId)}
+                className="w-7 h-7 rounded-md text-[#71717a] hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                title="Cancel Download"
+              >
+                <XCircle className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        );
+      })}
 
       {/* 2. COMPLETED RECORDS */}
       {records.map((item) => {

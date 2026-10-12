@@ -38,6 +38,8 @@ import {
   pickFolder,
   saveAppSettings,
   startDownload,
+  pauseDownload,
+  resumeDownload,
   cancelDownload,
   copyToClipboard,
   getTranscriptionConfig,
@@ -601,6 +603,59 @@ export function App() {
     }
   };
 
+  // 5b. Pause active task
+  const handlePauseTask = async (taskId: string) => {
+    try {
+      await pauseDownload(taskId);
+      setActiveTasks((prev) => {
+        const next = new Map(prev);
+        const task = next.get(taskId);
+        if (task) {
+          next.set(taskId, {
+            ...task,
+            status: "paused",
+            progress: {
+              ...task.progress,
+              speedStr: "Paused",
+              etaStr: "",
+            },
+          });
+        }
+        return next;
+      });
+      showToast("Download dijeda (Paused)");
+    } catch (err: unknown) {
+      console.error("Failed to pause task:", err);
+      showToast("Gagal menjeda download");
+    }
+  };
+
+  // 5c. Resume paused task
+  const handleResumeTask = async (taskId: string) => {
+    try {
+      await resumeDownload(taskId);
+      setActiveTasks((prev) => {
+        const next = new Map(prev);
+        const task = next.get(taskId);
+        if (task) {
+          next.set(taskId, {
+            ...task,
+            status: "downloading",
+            progress: {
+              ...task.progress,
+              speedStr: "Resuming...",
+            },
+          });
+        }
+        return next;
+      });
+      showToast("Melanjutkan download...");
+    } catch (err: unknown) {
+      console.error("Failed to resume task:", err);
+      showToast("Gagal melanjutkan download");
+    }
+  };
+
   // 6. Direct Delete for records
   const handleDeleteRecordDirectly = async (id: string, title?: string) => {
     try {
@@ -877,6 +932,8 @@ export function App() {
         open={vaultOpen}
         onClose={() => setVaultOpen(false)}
         activeTasks={allActiveTasks}
+        onPauseTask={handlePauseTask}
+        onResumeTask={handleResumeTask}
         onCancelTask={handleCancelTask}
         records={records}
         onRefresh={loadRecords}

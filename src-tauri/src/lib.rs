@@ -72,6 +72,27 @@ async fn start_download(
         _ => downloader::get_default_download_dir(),
     };
 
+    let context = downloader::DownloadTaskContext {
+        task_id: task_id.clone(),
+        url: url.clone(),
+        format_type: format_type.clone(),
+        quality: quality.clone(),
+        title: title.clone(),
+        thumbnail_url: thumbnail_url.clone(),
+        author: author.clone(),
+        duration_sec,
+        custom_name: custom_name.clone(),
+        output_folder: output_folder.clone(),
+        download_subtitles,
+        time_range: time_range.clone(),
+        selected_indices: selected_indices.clone(),
+        image_urls: image_urls.clone(),
+        media_items: media_items.clone(),
+        out_dir: out_dir.clone(),
+        raw_stem: raw_stem.clone(),
+    };
+    process_mgr.register_context(context);
+
     let task_id_clone = task_id.clone();
     let process_mgr_clone = process_mgr.clone();
     let task_handle = tokio::spawn(async move {
@@ -105,7 +126,113 @@ async fn start_download(
 }
 
 #[tauri::command]
+async fn pause_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<bool, String> {
+    let _ = state.db.set_task_status(&task_id, "paused");
+    let _ = state.db.log_event(&task_id, "INFO", "DOWNLOAD", "Download paused by user", None);
+
+    let paused = state.process_mgr.pause(&task_id);
+
+    if let Some(mut task) = state.process_mgr.get_active_task_snapshot(&task_id) {
+        task.status = "paused".to_string();
+        task.progress.speed_str = "Paused".to_string();
+        task.progress.eta_str = String::new();
+        state.process_mgr.update_active_task_snapshot(&task);
+        let _ = tauri::Emitter::emit(&app, "download-progress", &task);
+    }
+
+    Ok(paused)
+}
+
+#[tauri::command]
+async fn resume_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<bool, String> {
+    let ctx = match state.process_mgr.get_context(&task_id) {
+        Some(c) => c,
+        None => {
+            if let Ok(Some(rec)) = state.db.get_record_by_id(&task_id) {
+                let raw_stem = downloader::sanitize_filename(&rec.title);
+                let out_dir = downloader::get_default_download_dir();
+                downloader::DownloadTaskContext {
+                    task_id: task_id.clone(),
+                    url: rec.url,
+                    format_type: rec.format_type,
+                    quality: rec.quality,
+                    title: Some(rec.title),
+                    thumbnail_url: Some(rec.thumbnail_url),
+                    author: Some(rec.author),
+                    duration_sec: Some(rec.duration_sec),
+                    custom_name: None,
+                    output_folder: None,
+                    download_subtitles: false,
+                    time_range: rec.time_range,
+                    selected_indices: None,
+                    image_urls: None,
+                    media_items: None,
+                    out_dir,
+                    raw_stem,
+                }
+            } else {
+                return Err(format!("Task context for '{}' not found", task_id));
+            }
+        }
+    };
+
+    let _ = state.db.set_task_status(&task_id, "downloading");
+    let _ = state.db.log_event(&task_id, "INFO", "DOWNLOAD", "Resuming download...", None);
+    state.process_mgr.unmark_paused(&task_id);
+
+    if let Some(mut task) = state.process_mgr.get_active_task_snapshot(&task_id) {
+        task.status = "downloading".to_string();
+        task.progress.speed_str = "Resuming...".to_string();
+        state.process_mgr.update_active_task_snapshot(&task);
+        let _ = tauri::Emitter::emit(&app, "download-progress", &task);
+    }
+
+    let app_clone = app.clone();
+    let db_clone = state.db.clone();
+    let process_mgr_clone = state.process_mgr.clone();
+    let task_id_clone = task_id.clone();
+    let ctx_clone = ctx.clone();
+
+    let task_handle = tokio::spawn(async move {
+        let _ = downloader::run_download(
+            app_clone,
+            db_clone,
+            process_mgr_clone.clone(),
+            task_id_clone.clone(),
+            ctx_clone.url,
+            ctx_clone.format_type,
+            ctx_clone.quality,
+            ctx_clone.title,
+            ctx_clone.thumbnail_url,
+            ctx_clone.author,
+            ctx_clone.duration_sec,
+            ctx_clone.custom_name,
+            ctx_clone.output_folder,
+            ctx_clone.download_subtitles,
+            ctx_clone.time_range,
+            ctx_clone.selected_indices,
+            ctx_clone.image_urls,
+            ctx_clone.media_items,
+        )
+        .await;
+        process_mgr_clone.remove(&task_id_clone);
+    });
+
+    state.process_mgr.register_native(task_id, task_handle.abort_handle(), ctx.out_dir, ctx.raw_stem);
+    Ok(true)
+}
+
+#[tauri::command]
 fn cancel_download(state: State<'_, AppState>, task_id: String) -> bool {
+    let _ = state.db.set_task_status(&task_id, "cancelled");
     state.process_mgr.cancel(&task_id)
 }
 
@@ -592,6 +719,8 @@ pub fn run() {
             update_engine,
             get_video_metadata,
             start_download,
+            pause_download,
+            resume_download,
             cancel_download,
             get_download_records,
             delete_download_record,

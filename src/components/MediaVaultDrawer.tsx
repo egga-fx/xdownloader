@@ -18,6 +18,8 @@ interface MediaVaultDrawerProps {
   open: boolean;
   onClose: () => void;
   activeTasks: ActiveDownloadTask[];
+  onPauseTask?: (taskId: string) => void;
+  onResumeTask?: (taskId: string) => void;
   onCancelTask: (taskId: string) => void;
   records: DownloadRecord[];
   onRefresh: () => void;
@@ -34,6 +36,8 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
   open,
   onClose,
   activeTasks,
+  onPauseTask,
+  onResumeTask,
   onCancelTask,
   records,
   onRefresh,
@@ -246,6 +250,8 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
           ) : viewMode === "table" ? (
             <VaultHistoryTable
               activeTasks={activeTasks}
+              onPauseTask={onPauseTask}
+              onResumeTask={onResumeTask}
               onCancelTask={onCancelTask}
               records={filteredRecords}
               onSelectRecord={onSelectRecord}
@@ -258,6 +264,8 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
           ) : (
             <VaultHistoryGrid
               activeTasks={activeTasks}
+              onPauseTask={onPauseTask}
+              onResumeTask={onResumeTask}
               onCancelTask={onCancelTask}
               records={filteredRecords}
               onSelectRecord={onSelectRecord}

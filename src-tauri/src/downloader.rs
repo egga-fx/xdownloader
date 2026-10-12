@@ -24,9 +24,33 @@ pub struct ProcessTaskInfo {
     pub stem: String,
 }
 
+#[derive(Clone)]
+pub struct DownloadTaskContext {
+    pub task_id: String,
+    pub url: String,
+    pub format_type: String,
+    pub quality: String,
+    pub title: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub author: Option<String>,
+    pub duration_sec: Option<i64>,
+    pub custom_name: Option<String>,
+    pub output_folder: Option<String>,
+    pub download_subtitles: bool,
+    pub time_range: Option<TimeRange>,
+    pub selected_indices: Option<Vec<usize>>,
+    pub image_urls: Option<Vec<String>>,
+    pub media_items: Option<Vec<MediaItem>>,
+    pub out_dir: PathBuf,
+    pub raw_stem: String,
+}
+
 pub struct ProcessManager {
     children: Mutex<HashMap<String, ProcessTaskInfo>>,
     native_tasks: Mutex<HashMap<String, (tokio::task::AbortHandle, PathBuf, String)>>,
+    contexts: Mutex<HashMap<String, DownloadTaskContext>>,
+    paused: Mutex<HashMap<String, bool>>,
+    snapshots: Mutex<HashMap<String, ActiveDownloadTask>>,
 }
 
 impl Default for ProcessManager {
@@ -40,6 +64,9 @@ impl ProcessManager {
         Self {
             children: Mutex::new(HashMap::new()),
             native_tasks: Mutex::new(HashMap::new()),
+            contexts: Mutex::new(HashMap::new()),
+            paused: Mutex::new(HashMap::new()),
+            snapshots: Mutex::new(HashMap::new()),
         }
     }
 
@@ -55,6 +82,42 @@ impl ProcessManager {
         }
     }
 
+    pub fn register_context(&self, context: DownloadTaskContext) {
+        if let Ok(mut map) = self.contexts.lock() {
+            map.insert(context.task_id.clone(), context);
+        }
+    }
+
+    pub fn get_context(&self, task_id: &str) -> Option<DownloadTaskContext> {
+        self.contexts.lock().ok().and_then(|map| map.get(task_id).cloned())
+    }
+
+    pub fn remove_context(&self, task_id: &str) {
+        if let Ok(mut map) = self.contexts.lock() {
+            map.remove(task_id);
+        }
+    }
+
+    pub fn update_active_task_snapshot(&self, task: &ActiveDownloadTask) {
+        if let Ok(mut map) = self.snapshots.lock() {
+            map.insert(task.task_id.clone(), task.clone());
+        }
+    }
+
+    pub fn get_active_task_snapshot(&self, task_id: &str) -> Option<ActiveDownloadTask> {
+        self.snapshots.lock().ok().and_then(|map| map.get(task_id).cloned())
+    }
+
+    pub fn is_paused(&self, task_id: &str) -> bool {
+        self.paused.lock().ok().and_then(|map| map.get(task_id).copied()).unwrap_or(false)
+    }
+
+    pub fn unmark_paused(&self, task_id: &str) {
+        if let Ok(mut map) = self.paused.lock() {
+            map.remove(task_id);
+        }
+    }
+
     pub fn remove(&self, task_id: &str) {
         if let Ok(mut map) = self.children.lock() {
             map.remove(task_id);
@@ -62,6 +125,45 @@ impl ProcessManager {
         if let Ok(mut map) = self.native_tasks.lock() {
             map.remove(task_id);
         }
+    }
+
+    pub fn pause(&self, task_id: &str) -> bool {
+        let mut paused_any = false;
+        if let Ok(mut map) = self.paused.lock() {
+            map.insert(task_id.to_string(), true);
+        }
+
+        if let Ok(mut map) = self.children.lock() {
+            if let Some(info) = map.remove(task_id) {
+                crate::logger::write_file_log("WARN", "PROCESS", task_id, &format!("Paused process PID: {}", info.pid));
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = Command::new("taskkill")
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .args(["/F", "/T", "/PID", &info.pid.to_string()])
+                        .output();
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let _ = Command::new("kill")
+                        .args(["-9", &info.pid.to_string()])
+                        .output();
+                }
+                // Partial files (.part / .ytdl) are intentionally preserved for resumption.
+                paused_any = true;
+            }
+        }
+
+        if let Ok(mut map) = self.native_tasks.lock() {
+            if let Some((handle, _out_dir, _stem)) = map.remove(task_id) {
+                crate::logger::write_file_log("WARN", "PROCESS", task_id, "Aborted native download task for pause");
+                handle.abort();
+                // Partial files are intentionally preserved for resumption.
+                paused_any = true;
+            }
+        }
+
+        paused_any
     }
 
     pub fn cancel(&self, task_id: &str) -> bool {
@@ -91,11 +193,22 @@ impl ProcessManager {
 
         if let Ok(mut map) = self.native_tasks.lock() {
             if let Some((handle, out_dir, stem)) = map.remove(task_id) {
-                crate::logger::write_file_log("WARN", "PROCESS", task_id, "Aborted native download task");
+                crate::logger::write_file_log("WARN", "PROCESS", task_id, "Aborted native download task for cancel");
                 handle.abort();
                 cleanup_task_artifacts(&out_dir, Some(&stem));
                 cancelled = true;
             }
+        }
+
+        if let Some(ctx) = self.get_context(task_id) {
+            cleanup_task_artifacts(&ctx.out_dir, Some(&ctx.raw_stem));
+            cancelled = true;
+        }
+
+        self.remove_context(task_id);
+        self.unmark_paused(task_id);
+        if let Ok(mut map) = self.snapshots.lock() {
+            map.remove(task_id);
         }
 
         cancelled
@@ -168,6 +281,16 @@ pub fn sweep_orphaned_temp_files(dir: &Path) {
                 || name_lower.ends_with(".temp.webm")
                 || name_lower.ends_with(".temp.m4a")
             {
+                // Protect files that were modified within the last 24 hours (could be active or paused downloads)
+                if let Ok(metadata) = p.metadata() {
+                    if let Ok(modified) = metadata.modified() {
+                        if let Ok(elapsed) = modified.elapsed() {
+                            if elapsed < std::time::Duration::from_secs(3600 * 24) {
+                                continue;
+                            }
+                        }
+                    }
+                }
                 let _ = std::fs::remove_file(&p);
             }
         }
@@ -534,6 +657,7 @@ pub async fn run_download(
         },
         error: None,
     };
+    process_mgr.update_active_task_snapshot(&startup_task);
     let _ = app.emit("download-progress", &startup_task);
 
     // Robust regex supporting space after '~' e.g. '[download] 5.2% of ~ 780.14MiB at 2.45MiB/s ETA 05:12'
@@ -556,11 +680,21 @@ pub async fn run_download(
             return Err("Download cancelled by user".to_string());
         }
 
+        if db.is_task_paused(&task_id) || process_mgr.is_paused(&task_id) {
+            let _ = db.log_event(&task_id, "INFO", "DOWNLOAD", "Download paused by user", None);
+            return Ok(());
+        }
+
         if attempt > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             if db.is_task_cancelled(&task_id) {
                 cleanup_task_artifacts(&out_dir, Some(&task_stem));
                 return Err("Download cancelled by user".to_string());
+            }
+
+            if db.is_task_paused(&task_id) || process_mgr.is_paused(&task_id) {
+                let _ = db.log_event(&task_id, "INFO", "DOWNLOAD", "Download paused by user", None);
+                return Ok(());
             }
 
             let _ = db.log_event(
@@ -778,6 +912,7 @@ pub async fn run_download(
                             error: None,
                         };
 
+                        process_mgr.update_active_task_snapshot(&task_update);
                         let _ = app.emit("download-progress", &task_update);
                     }
                 } else if let Some(caps) = progress_simple_regex.captures(&line) {
@@ -802,6 +937,7 @@ pub async fn run_download(
                             },
                             error: None,
                         };
+                        process_mgr.update_active_task_snapshot(&task_update);
                         let _ = app.emit("download-progress", &task_update);
                     }
                 }
@@ -810,7 +946,7 @@ pub async fn run_download(
                     downloaded_path = caps["path"].trim().to_string();
                 } else if let Some(caps) = destination_regex.captures(&line) {
                     downloaded_path = caps[1].trim().to_string();
-                    let _ = app.emit("download-progress", &ActiveDownloadTask {
+                    let receiving_task = ActiveDownloadTask {
                         task_id: task_id.clone(),
                         url: url.clone(),
                         title: initial_record.title.clone(),
@@ -826,7 +962,9 @@ pub async fn run_download(
                             total_bytes: None,
                         },
                         error: None,
-                    });
+                    };
+                    process_mgr.update_active_task_snapshot(&receiving_task);
+                    let _ = app.emit("download-progress", &receiving_task);
                 } else if let Some(caps) = already_downloaded_regex.captures(&line) {
                     downloaded_path = caps[1].trim().to_string();
                 }
@@ -840,6 +978,11 @@ pub async fn run_download(
         if db.is_task_cancelled(&task_id) {
             cleanup_task_artifacts(&out_dir, Some(&task_stem));
             return Err("Download cancelled by user".to_string());
+        }
+
+        if db.is_task_paused(&task_id) || process_mgr.is_paused(&task_id) {
+            let _ = db.log_event(&task_id, "INFO", "DOWNLOAD", "Download process paused by user", None);
+            return Ok(());
         }
 
         if status.success() {
@@ -970,10 +1113,16 @@ pub async fn run_download(
                 },
                 error: None,
             };
+            process_mgr.remove_context(&task_id);
             let _ = app.emit("download-progress", &final_task);
             return Ok(());
         } else {
             let _ = std::fs::remove_file(&meta_file_path);
+
+            if db.is_task_paused(&task_id) || process_mgr.is_paused(&task_id) {
+                let _ = db.log_event(&task_id, "INFO", "DOWNLOAD", "Subprocess halted due to user pause", None);
+                return Ok(());
+            }
 
             let last_err_line = {
                 let lock = stderr_lines.lock().ok();
