@@ -248,9 +248,20 @@ pub fn cleanup_task_artifacts(dir: &Path, expected_stem: Option<&str>) {
                 false
             };
 
-            let is_format_fragment = matches_stem && (
-                name_lower.contains(".f") && (name_lower.ends_with(".mp4") || name_lower.ends_with(".m4a") || name_lower.ends_with(".webm"))
-            );
+            // Critical B02 protection: Never delete the primary output file whose stem matches the expected stem!
+            if let Some(ref stem) = clean_stem {
+                let file_stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if file_stem == stem.as_str() {
+                    continue;
+                }
+            }
+
+            let is_format_fragment = matches_stem && {
+                static FORMAT_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+                    Regex::new(r"\.f\d{1,5}\.(?:mp4|m4a|webm|mkv)$").unwrap()
+                });
+                FORMAT_RE.is_match(&name_lower)
+            };
 
             if (matches_stem && (is_temp_extension || is_format_fragment)) || (clean_stem.is_none() && is_temp_extension) {
                 let _ = std::fs::remove_file(&p);
@@ -811,6 +822,10 @@ pub async fn run_download(
                     cmd.arg("-f").arg("bestvideo[height<=480][protocol^=http][ext=mp4]+bestaudio[protocol^=http][ext=m4a]/bestvideo[height<=480][protocol^=http]+bestaudio[protocol^=http]/bestvideo[height<=480]+bestaudio/best");
                     cmd.arg("-S").arg("res:480,fps,proto:https,ext:mp4:m4a");
                 }
+                "360p" => {
+                    cmd.arg("-f").arg("bestvideo[height<=360][protocol^=http][ext=mp4]+bestaudio[protocol^=http][ext=m4a]/bestvideo[height<=360][protocol^=http]+bestaudio[protocol^=http]/bestvideo[height<=360]+bestaudio/best");
+                    cmd.arg("-S").arg("res:360,fps,proto:https,ext:mp4:m4a");
+                }
                 _ => {
                     // "best" / Original HD: Download top native resolution without artificial cap, prioritizing direct HTTPS DASH streams
                     cmd.arg("-f").arg("bestvideo[protocol^=http][ext=mp4]+bestaudio[protocol^=http][ext=m4a]/bestvideo[protocol^=http]+bestaudio[protocol^=http]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best");
@@ -1214,6 +1229,37 @@ pub async fn run_download(
     let fallback_err = "Download process failed after multiple attempts.".to_string();
     let _ = db.update_record(&task_id, "error", None, None, Some(&fallback_err));
     Err(fallback_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cleanup_task_artifacts_protects_valid_files() {
+        let temp_dir = std::env::temp_dir().join(format!("xd_test_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Valid file: my.film.mp4 with stem my.film (was falsely deleted under B02 bug)
+        let valid_file = temp_dir.join("my.film.mp4");
+        std::fs::write(&valid_file, b"video content").unwrap();
+
+        // Real fragment: my.film.f137.mp4 (should be deleted)
+        let frag_file = temp_dir.join("my.film.f137.mp4");
+        std::fs::write(&frag_file, b"fragment content").unwrap();
+
+        // Real temp file: my.film.mp4.part (should be deleted)
+        let part_file = temp_dir.join("my.film.mp4.part");
+        std::fs::write(&part_file, b"part content").unwrap();
+
+        cleanup_task_artifacts(&temp_dir, Some("my.film"));
+
+        assert!(valid_file.exists(), "my.film.mp4 must NOT be deleted by cleanup!");
+        assert!(!frag_file.exists(), "my.film.f137.mp4 must be deleted!");
+        assert!(!part_file.exists(), "my.film.mp4.part must be deleted!");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
 
 

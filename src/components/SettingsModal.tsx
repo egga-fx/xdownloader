@@ -272,7 +272,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [saving, setSaving] = useState<boolean>(false);
 
   // Auto-Updater state
-  const [appVersion, setAppVersion] = useState<string>("1.1.0");
+  const [appVersion, setAppVersion] = useState<string>("1.1.1");
   const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [updateChecked, setUpdateChecked] = useState<boolean>(false);
@@ -303,7 +303,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  const handleBrowseFolder = async () => {
+  const handleSetOutputFolder = async () => {
     try {
       const selected = await pickFolder();
       if (selected) {
@@ -311,7 +311,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         onPickFolder?.(selected);
       }
     } catch (err) {
-      console.error("Failed to browse folder:", err);
+      console.error("Failed to set output folder:", err);
     }
   };
 
@@ -588,12 +588,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
                 <button
                   type="button"
-                  onClick={handleBrowseFolder}
+                  onClick={handleSetOutputFolder}
                   className="px-3 py-2 rounded-xl bg-[#27272a] hover:bg-[#3f3f46] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
-                  title="Browse Folder"
+                  title="Set Output Folder"
                 >
                   <FolderSearch className="w-3.5 h-3.5" />
-                  <span>Browse</span>
+                  <span>Set Output Folder</span>
                 </button>
               </div>
             ) : (
@@ -919,7 +919,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span>Application Updates</span>
                 </span>
                 <span className="text-[11px] font-mono text-[#71717a]">
-                  v{appVersion || updateInfo?.currentVersion || "1.1.0"}
+                  v{appVersion || updateInfo?.currentVersion || "1.1.1"}
                 </span>
               </div>
 

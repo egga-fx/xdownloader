@@ -1014,9 +1014,26 @@ pub async fn run_transcription(
     tokio::fs::write(&vtt_tmp, vtt_content.as_bytes()).await.map_err(|e| e.to_string())?;
     tokio::fs::write(&txt_tmp, txt_content.as_bytes()).await.map_err(|e| e.to_string())?;
 
-    let _ = tokio::fs::rename(&srt_tmp, &srt_path).await;
-    let _ = tokio::fs::rename(&vtt_tmp, &vtt_path).await;
-    let _ = tokio::fs::rename(&txt_tmp, &txt_path).await;
+    if tokio::fs::try_exists(&srt_path).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_file(&srt_path).await;
+    }
+    tokio::fs::rename(&srt_tmp, &srt_path)
+        .await
+        .map_err(|e| format!("Failed to finalize SRT file: {}", e))?;
+
+    if tokio::fs::try_exists(&vtt_path).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_file(&vtt_path).await;
+    }
+    tokio::fs::rename(&vtt_tmp, &vtt_path)
+        .await
+        .map_err(|e| format!("Failed to finalize VTT file: {}", e))?;
+
+    if tokio::fs::try_exists(&txt_path).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_file(&txt_path).await;
+    }
+    tokio::fs::rename(&txt_tmp, &txt_path)
+        .await
+        .map_err(|e| format!("Failed to finalize TXT file: {}", e))?;
 
     let srt_size = tokio::fs::metadata(&srt_path)
         .await

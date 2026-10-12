@@ -1356,7 +1356,7 @@ export async function getAppVersion(): Promise<string> {
       // fallback
     }
   }
-  return "1.1.0";
+  return "1.1.1";
 }
 
 export function isVersionNewer(remoteVersion: string, currentVersion: string): boolean {

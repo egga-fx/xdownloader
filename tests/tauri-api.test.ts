@@ -270,16 +270,16 @@ describe("AI Spec-First Contract Tests: src/lib/tauri-api.ts", () => {
       expect(isVersionNewer("1.0.4", "")).toBe(false);
     });
 
-    it("should return the correct fallback version 1.1.0 from getAppVersion() in test runner", async () => {
+    it("should return the correct fallback version 1.1.1 from getAppVersion() in test runner", async () => {
       const version = await getAppVersion();
-      expect(version).toBe("1.1.0");
+      expect(version).toBe("1.1.1");
     });
 
     it("should run checkForAppUpdate() safely and return valid AppUpdateInfo structure", async () => {
       const updateInfo = await checkForAppUpdate();
       expect(updateInfo).toBeDefined();
       expect(typeof updateInfo.available).toBe("boolean");
-      expect(updateInfo.currentVersion).toBe("1.1.0");
+      expect(updateInfo.currentVersion).toBe("1.1.1");
     });
 
     it("should safely handle downloadAndInstallAppUpdate() when no update is pending", async () => {

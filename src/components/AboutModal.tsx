@@ -35,7 +35,7 @@ interface AboutModalProps {
 }
 
 export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
-  const [appVersion, setAppVersion] = useState<string>("1.1.0");
+  const [appVersion, setAppVersion] = useState<string>("1.1.1");
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [toolsAgentsExpanded, setToolsAgentsExpanded] = useState<boolean>(false);
 

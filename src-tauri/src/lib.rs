@@ -12,7 +12,8 @@ use tauri::{AppHandle, State};
 use db::Database;
 use downloader::ProcessManager;
 use models::{
-    AppSettings, BinariesStatus, DownloadRecord, LogEntry, MediaItem, TimeRange, TranscriptionConfig, VideoInfo,
+    ActiveDownloadTask, AppSettings, BinariesStatus, DownloadRecord, LogEntry, MediaItem, TaskProgress, TimeRange,
+    TranscriptionConfig, VideoInfo,
 };
 
 pub struct AppState {
@@ -95,10 +96,17 @@ async fn start_download(
 
     let task_id_clone = task_id.clone();
     let process_mgr_clone = process_mgr.clone();
+    let app_spawn = app.clone();
+    let db_spawn = db.clone();
+    let url_fallback = url.clone();
+    let title_fallback = title.clone();
+    let format_type_fallback = format_type.clone();
+    let quality_fallback = quality.clone();
+
     let task_handle = tokio::spawn(async move {
-        let _ = downloader::run_download(
-            app,
-            db,
+        let res = downloader::run_download(
+            app_spawn.clone(),
+            db_spawn.clone(),
             process_mgr_clone.clone(),
             task_id_clone.clone(),
             url,
@@ -117,6 +125,41 @@ async fn start_download(
             media_items,
         )
         .await;
+
+        if let Err(err_msg) = res {
+            let _ = db_spawn.update_record(&task_id_clone, "error", None, None, Some(&err_msg));
+            let _ = db_spawn.log_event(
+                &task_id_clone,
+                "ERROR",
+                "DOWNLOAD",
+                &format!("Download supervisor caught error: {}", err_msg),
+                None,
+            );
+            let mut err_task = process_mgr_clone
+                .get_active_task_snapshot(&task_id_clone)
+                .unwrap_or_else(|| ActiveDownloadTask {
+                    task_id: task_id_clone.clone(),
+                    url: url_fallback,
+                    title: title_fallback.unwrap_or_else(|| "Media".to_string()),
+                    platform: "media".to_string(),
+                    format_type: format_type_fallback,
+                    quality: quality_fallback,
+                    status: "error".to_string(),
+                    progress: TaskProgress {
+                        percent: 0.0,
+                        speed_str: "Failed".to_string(),
+                        eta_str: "--:--".to_string(),
+                        downloaded_bytes: None,
+                        total_bytes: None,
+                    },
+                    error: Some(err_msg.clone()),
+                });
+            err_task.status = "error".to_string();
+            err_task.error = Some(err_msg.clone());
+            process_mgr_clone.update_active_task_snapshot(&err_task);
+            let _ = tauri::Emitter::emit(&app_spawn, "download-progress", &err_task);
+        }
+
         process_mgr_clone.remove(&task_id_clone);
     });
 
@@ -202,15 +245,15 @@ async fn resume_download(
     let ctx_clone = ctx.clone();
 
     let task_handle = tokio::spawn(async move {
-        let _ = downloader::run_download(
-            app_clone,
-            db_clone,
+        let res = downloader::run_download(
+            app_clone.clone(),
+            db_clone.clone(),
             process_mgr_clone.clone(),
             task_id_clone.clone(),
-            ctx_clone.url,
-            ctx_clone.format_type,
-            ctx_clone.quality,
-            ctx_clone.title,
+            ctx_clone.url.clone(),
+            ctx_clone.format_type.clone(),
+            ctx_clone.quality.clone(),
+            ctx_clone.title.clone(),
             ctx_clone.thumbnail_url,
             ctx_clone.author,
             ctx_clone.duration_sec,
@@ -223,6 +266,41 @@ async fn resume_download(
             ctx_clone.media_items,
         )
         .await;
+
+        if let Err(err_msg) = res {
+            let _ = db_clone.update_record(&task_id_clone, "error", None, None, Some(&err_msg));
+            let _ = db_clone.log_event(
+                &task_id_clone,
+                "ERROR",
+                "DOWNLOAD",
+                &format!("Resume download supervisor caught error: {}", err_msg),
+                None,
+            );
+            let mut err_task = process_mgr_clone
+                .get_active_task_snapshot(&task_id_clone)
+                .unwrap_or_else(|| ActiveDownloadTask {
+                    task_id: task_id_clone.clone(),
+                    url: ctx_clone.url.clone(),
+                    title: ctx_clone.title.clone().unwrap_or_else(|| "Media".to_string()),
+                    platform: "media".to_string(),
+                    format_type: ctx_clone.format_type.clone(),
+                    quality: ctx_clone.quality.clone(),
+                    status: "error".to_string(),
+                    progress: TaskProgress {
+                        percent: 0.0,
+                        speed_str: "Failed".to_string(),
+                        eta_str: "--:--".to_string(),
+                        downloaded_bytes: None,
+                        total_bytes: None,
+                    },
+                    error: Some(err_msg.clone()),
+                });
+            err_task.status = "error".to_string();
+            err_task.error = Some(err_msg.clone());
+            process_mgr_clone.update_active_task_snapshot(&err_task);
+            let _ = tauri::Emitter::emit(&app_clone, "download-progress", &err_task);
+        }
+
         process_mgr_clone.remove(&task_id_clone);
     });
 
@@ -404,6 +482,7 @@ async fn start_transcription(
 fn cancel_transcription(state: State<'_, AppState>, task_id: String) -> bool {
     let audio_task_id = format!("{}_audio", task_id);
     let _ = state.process_mgr.cancel(&audio_task_id);
+    let _ = state.process_mgr.cancel(&task_id);
     state.transcription_mgr.cancel(&task_id)
 }
 

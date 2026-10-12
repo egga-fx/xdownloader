@@ -173,20 +173,22 @@ export function App() {
       await loadRecords();
 
       // Check for application updates on startup
-      setCheckingUpdate(true);
-      checkForAppUpdate()
-        .then((info) => {
-          setAvailableUpdate(info);
-          if (info.available) {
-            showToast(`Update v${info.version} tersedia!`);
-          }
-        })
-        .catch((err) => {
-          console.debug("Update check failed/skipped:", err);
-        })
-        .finally(() => {
-          setCheckingUpdate(false);
-        });
+      if (settings.checkUpdatesOnStartup !== false) {
+        setCheckingUpdate(true);
+        checkForAppUpdate()
+          .then((info) => {
+            setAvailableUpdate(info);
+            if (info.available) {
+              showToast(`Update v${info.version} tersedia!`);
+            }
+          })
+          .catch((err) => {
+            console.debug("Update check failed/skipped:", err);
+          })
+          .finally(() => {
+            setCheckingUpdate(false);
+          });
+      }
 
       // Check/request desktop notification permissions gracefully
       if (settings.desktopNotifications !== false) {
@@ -859,6 +861,7 @@ export function App() {
             onStartDownload={(targetUrl) => handleStartDownload(targetUrl)}
             onPaste={handlePaste}
             error={error}
+            autoClipboardDetect={appSettings.autoClipboardDetect}
           />
 
           {/* Metadata Preview & Settings Box */}
@@ -887,14 +890,6 @@ export function App() {
                 onOpenTranscriptionSettings={() => {
                   setSettingsInitialSection("transcription");
                   setSettingsModalOpen(true);
-                }}
-                onOpenTranscriptStudio={() => {
-                  setStudioMediaInput({
-                    type: "url",
-                    url: videoInfo.webpageUrl || url,
-                    title: videoInfo.title,
-                  });
-                  setTranscriptStudioOpen(true);
                 }}
               />
             </div>

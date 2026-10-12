@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Link2,
   Clipboard,
@@ -27,6 +27,7 @@ interface UrlInputSectionProps {
   onStartDownload: (url?: string) => void;
   onPaste: () => void;
   error?: string | null;
+  autoClipboardDetect?: boolean;
 }
 
 export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
@@ -38,15 +39,25 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
   onStartDownload,
   onPaste,
   error,
+  autoClipboardDetect = true,
 }) => {
   const [clipboardUrl, setClipboardUrl] = useState<string>("");
   const [clipboardPlatform, setClipboardPlatform] = useState<DownloaderPlatform>("generic");
+  const isCheckingRef = useRef<boolean>(false);
 
   // Check clipboard periodically on window focus and visibility change
   const checkClipboard = async (isUserGesture = false) => {
+    if (!autoClipboardDetect && !isUserGesture) {
+      setClipboardUrl("");
+      return;
+    }
+
     // Only auto-poll in native desktop shell to avoid browser security permission popups,
     // unless explicitly triggered by a user gesture (hover, focus, click).
     if (!isTauriEnvironment() && !isUserGesture) return;
+
+    if (isCheckingRef.current) return;
+    isCheckingRef.current = true;
 
     try {
       const text = await getClipboardUrl();
@@ -61,10 +72,17 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
       }
     } catch {
       // clipboard access not granted or unavailable
+    } finally {
+      isCheckingRef.current = false;
     }
   };
 
   useEffect(() => {
+    if (autoClipboardDetect === false) {
+      setClipboardUrl("");
+      return;
+    }
+
     let active = true;
     const runCheck = async () => {
       if (active) await checkClipboard();
@@ -93,7 +111,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
       window.removeEventListener("pointerdown", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, []);
+  }, [autoClipboardDetect]);
 
   const hasValidInputUrl = Boolean(url.trim() && isSupportedMediaUrl(url.trim()));
   const hasValidClipboardUrl = Boolean(clipboardUrl && isSupportedMediaUrl(clipboardUrl));

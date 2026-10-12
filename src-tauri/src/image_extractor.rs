@@ -2587,22 +2587,52 @@ mod tests {
 
     #[test]
     fn test_parse_real_threads_html_file() {
-        let path = std::path::Path::new("C:/Users/precore/.gemini/antigravity-ide/brain/a4f8b1b9-95c5-41bb-8f84-a6c753bc7fff/scratch/threads_multi.html");
-        if let Ok(content) = std::fs::read_to_string(path) {
-            let url = "https://www.threads.com/@mrickybarman/post/DeT2s0skjxt/media";
-            let res = parse_threads_html(&content, url, url);
-            assert!(res.is_ok(), "Real threads HTML parsing failed: {:?}", res.err());
-            let info = res.unwrap();
-            let items = info.media_items.expect("media_items should be populated");
-            println!("REAL TEST DETECTED: {} items in carousel", items.len());
-            for (i, it) in items.iter().enumerate() {
-                println!("Item #{}: kind={}, url={}, dur={}", i + 1, it.kind, it.url, it.duration);
-            }
-            assert_eq!(items.len(), 3, "Expected 3 video items from real threads HTML");
-            for it in &items {
-                assert_eq!(it.kind, "video", "Each item must be a video");
-                assert!(it.url.starts_with("http"), "Valid video URL required");
-            }
+        let local_path = std::path::Path::new("C:/Users/precore/.gemini/antigravity-ide/brain/a4f8b1b9-95c5-41bb-8f84-a6c753bc7fff/scratch/threads_multi.html");
+        let content = if local_path.exists() {
+            std::fs::read_to_string(local_path).unwrap_or_default()
+        } else {
+            // Self-contained embedded fixture representation of Threads multi-video carousel
+            r#"<!DOCTYPE html><html><head>
+                <meta property="og:title" content="Ricky Barman (@mrickybarman) on Threads" />
+                <script type="application/json" data-sjs>
+                {
+                    "require": [
+                        [
+                            "RelayPrefetchedStreamCache", "next", [],
+                            [{
+                                "__bbox": {
+                                    "result": {
+                                        "data": {
+                                            "media": {
+                                                "code": "DeT2s0skjxt",
+                                                "media_type": 8,
+                                                "user": {"username": "mrickybarman"},
+                                                "carousel_media": [
+                                                    {"media_type": 2, "video_duration": 9.5, "video_versions": [{"url": "https://cdn.example.com/v1.mp4"}], "image_versions2": {"candidates": [{"url": "https://cdn.example.com/t1.jpg"}]}},
+                                                    {"media_type": 2, "video_duration": 12.0, "video_versions": [{"url": "https://cdn.example.com/v2.mp4"}], "image_versions2": {"candidates": [{"url": "https://cdn.example.com/t2.jpg"}]}},
+                                                    {"media_type": 2, "video_duration": 15.0, "video_versions": [{"url": "https://cdn.example.com/v3.mp4"}], "image_versions2": {"candidates": [{"url": "https://cdn.example.com/t3.jpg"}]}}
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            }]
+                        ]
+                    ]
+                }
+                </script>
+            </head><body></body></html>"#.to_string()
+        };
+
+        let url = "https://www.threads.com/@mrickybarman/post/DeT2s0skjxt/media";
+        let res = parse_threads_html(&content, url, url);
+        assert!(res.is_ok(), "Real threads HTML parsing failed: {:?}", res.err());
+        let info = res.unwrap();
+        let items = info.media_items.expect("media_items should be populated");
+        assert_eq!(items.len(), 3, "Expected 3 video items from threads HTML");
+        for it in &items {
+            assert_eq!(it.kind, "video", "Each item must be a video");
+            assert!(it.url.starts_with("http"), "Valid video URL required");
         }
     }
 }

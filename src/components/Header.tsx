@@ -165,7 +165,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onPickFolder}
               className="w-7 h-7 rounded-md hover:bg-[#27272a] text-[#a1a1aa] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-              title="Browse download folder"
+              title="Set output folder"
             >
               <FolderSearch className="w-3.5 h-3.5" />
             </button>

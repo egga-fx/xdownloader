@@ -40,11 +40,29 @@ interface MetadataPreviewCardProps {
   isTranscribing?: boolean;
   onTranscribe?: () => void;
   onOpenTranscriptionSettings?: () => void;
-  onOpenTranscriptStudio?: () => void;
 }
 
-const VIDEO_QUALITIES: DownloaderQuality[] = ["best", "1080p", "720p", "480p", "360p"];
-const AUDIO_QUALITIES: DownloaderQuality[] = ["mp3", "m4a", "wav", "flac"];
+interface QualityOptionDef {
+  id: DownloaderQuality;
+  label: string;
+  badge: string;
+  desc: string;
+}
+
+const VIDEO_QUALITY_OPTIONS: QualityOptionDef[] = [
+  { id: "best", label: "Original HD", badge: "MAX", desc: "Kualitas tertinggi yang tersedia (4K/2K/1080p)" },
+  { id: "1080p", label: "1080p", badge: "FHD", desc: "Full High Definition (1920x1080)" },
+  { id: "720p", label: "720p", badge: "HD", desc: "High Definition standar (1280x720)" },
+  { id: "480p", label: "480p", badge: "SD", desc: "Resolusi standar, hemat kuota (854x480)" },
+  { id: "360p", label: "360p", badge: "LOW", desc: "Resolusi rendah, ukuran file paling kecil" },
+];
+
+const AUDIO_QUALITY_OPTIONS: QualityOptionDef[] = [
+  { id: "mp3", label: "MP3", badge: "320K", desc: "Format universal, kompatibel di semua pemutar" },
+  { id: "m4a", label: "M4A", badge: "AAC", desc: "Format native Apple/AAC, efisien dan jernih" },
+  { id: "wav", label: "WAV", badge: "LOSSLESS", desc: "Audio uncompressed tanpa kompresi" },
+  { id: "flac", label: "FLAC", badge: "HI-RES", desc: "Kompresi lossless audiophile" },
+];
 
 export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   info,
@@ -61,7 +79,6 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   isTranscribing = false,
   onTranscribe,
   onOpenTranscriptionSettings,
-  onOpenTranscriptStudio,
 }) => {
   const mediaItems = info.mediaItems || [];
   const hasMultipleMedia = mediaItems.length > 1;
@@ -104,6 +121,8 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   const [imgError, setImgError] = useState<boolean>(false);
   const [isFormatDropdownOpen, setIsFormatDropdownOpen] = useState<boolean>(false);
   const formatDropdownRef = useRef<HTMLDivElement>(null);
+  const [isQualityDropdownOpen, setIsQualityDropdownOpen] = useState<boolean>(false);
+  const qualityDropdownRef = useRef<HTMLDivElement>(null);
 
   // Close format dropdown on outside click or Escape key
   useEffect(() => {
@@ -130,6 +149,32 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isFormatDropdownOpen]);
+
+  // Close quality dropdown on outside click or Escape key
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        qualityDropdownRef.current &&
+        !qualityDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsQualityDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsQualityDropdownOpen(false);
+      }
+    };
+
+    if (isQualityDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isQualityDropdownOpen]);
 
   useEffect(() => {
     setActiveImageIndex(getInitialIndex());
@@ -630,19 +675,80 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
               </div>
             </div>
           ) : (
-            (formatType === "video" ? VIDEO_QUALITIES : AUDIO_QUALITIES).map((q) => (
+            <div className="relative inline-block text-left" ref={qualityDropdownRef}>
               <button
-                key={q}
-                onClick={() => setQuality(q)}
-                className={`h-10 px-3 rounded-xl text-xs font-bold uppercase cursor-pointer transition-all shrink-0 ${
-                  quality === q
-                    ? "bg-blue-500/20 text-blue-400 border border-blue-500/50"
-                    : "bg-[#18181c] text-[#71717a] hover:text-[#a1a1aa] border border-[#27272a]"
+                type="button"
+                onClick={() => setIsQualityDropdownOpen((prev) => !prev)}
+                className={`h-10 px-3.5 rounded-xl border flex items-center gap-2 cursor-pointer transition-all duration-150 select-none shadow-sm shrink-0 ${
+                  isQualityDropdownOpen
+                    ? "bg-[#1f1f26] border-blue-500 ring-2 ring-blue-500/20 text-white"
+                    : "bg-[#18181c] hover:bg-[#1f1f24] border-[#27272a] hover:border-[#3f3f46] text-white"
                 }`}
+                title="Pilih kualitas atau resolusi media"
               >
-                {q === "best" ? "Original HD" : q}
+                {formatType === "video" ? (
+                  <Film className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                ) : (
+                  <Music className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                )}
+
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-[#71717a] font-normal">Kualitas:</span>
+                  <span className="text-white font-bold uppercase">
+                    {quality === "best" ? "Original HD" : quality}
+                  </span>
+                </div>
+
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-[#71717a] transition-transform duration-200 ${
+                    isQualityDropdownOpen ? "rotate-180 text-white" : ""
+                  }`}
+                />
               </button>
-            ))
+
+              {isQualityDropdownOpen && (
+                <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-64 sm:w-72 origin-bottom-left bg-[#16161a]/98 backdrop-blur-xl border border-[#27272a] rounded-xl shadow-2xl shadow-black/95 p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 zoom-in-95 duration-150">
+                  <div className="px-2.5 py-1 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider border-b border-[#27272a]/60">
+                    {formatType === "video" ? "Pilihan Resolusi Video" : "Pilihan Format Audio"}
+                  </div>
+                  {(formatType === "video" ? VIDEO_QUALITY_OPTIONS : AUDIO_QUALITY_OPTIONS).map((opt) => {
+                    const isSelected = quality === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          setQuality(opt.id as DownloaderQuality);
+                          setIsQualityDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between p-2 rounded-lg text-left cursor-pointer transition-all ${
+                          isSelected
+                            ? "bg-blue-500/15 border border-blue-500/30 text-white shadow-sm"
+                            : "border border-transparent text-[#d4d4d8] hover:bg-[#202026] hover:text-white"
+                        }`}
+                      >
+                        <div className="flex flex-col min-w-0 pr-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-xs text-white uppercase">{opt.label}</span>
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold border ${
+                                isSelected
+                                  ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                                  : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                              }`}
+                            >
+                              {opt.badge}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-[#71717a] line-clamp-1 mt-0.5">{opt.desc}</span>
+                        </div>
+                        {isSelected && <Check className="w-4 h-4 text-blue-400 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -680,18 +786,6 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
             </>
           )}
 
-          {onOpenTranscriptStudio && !isImage && (
-            <button
-              type="button"
-              onClick={onOpenTranscriptStudio}
-              disabled={isDownloadingCurrentUrl || isTranscribing}
-              className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-purple-500/30 bg-purple-950/40 text-purple-200 hover:bg-purple-900/60 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
-              title="Buka media ini langsung di Transcript Studio"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              <span>Buka di Studio</span>
-            </button>
-          )}
 
           <button
             onClick={() => {

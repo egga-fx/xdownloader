@@ -64,6 +64,7 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
     }
 
     cmd.arg(url);
+    cmd.kill_on_drop(true);
 
     // Run async command with 20 seconds safety timeout to prevent UI freezes
     let output = match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {
