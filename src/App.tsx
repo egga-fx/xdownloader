@@ -384,6 +384,32 @@ export function App() {
           setQuality((appSettings.defaultVideoQuality as DownloaderQuality) || "best");
         }
       }
+
+      // Seamlessly upgrade active task title if task was started before metadata finished
+      setActiveTasks((prev) => {
+        let updated = false;
+        const next = new Map(prev);
+        for (const [id, task] of next.entries()) {
+          if (
+            task.url === cleanTarget &&
+            (task.title.startsWith("http") ||
+              task.title === cleanTarget ||
+              task.title === "Media" ||
+              task.title.includes("://"))
+          ) {
+            const rawTitle = info.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
+            const cleanTitle = sanitizeTitle(rawTitle);
+            if (cleanTitle) {
+              next.set(id, {
+                ...task,
+                title: cleanTitle,
+              });
+              updated = true;
+            }
+          }
+        }
+        return updated ? next : prev;
+      });
     } catch (err: unknown) {
       if (currentUrlRef.current.trim() === cleanTarget) {
         setError(getErrorMessage(err) || "Failed to retrieve video information");
@@ -406,7 +432,7 @@ export function App() {
     }
   };
 
-  // 4. Trigger Download
+  // 4. Trigger Download (Instant Execution - No Blocking on Metadata)
   const handleStartDownload = async (directUrl?: string, selectedIndices?: number[]) => {
     // Strictly prioritize:
     // 1. Explicit directUrl if provided
@@ -432,36 +458,13 @@ export function App() {
       setDetectedPlatform(detectPlatform(targetUrl));
     }
 
-    // Strictly ensure metadata belongs to this exact targetUrl
-    let matchedInfo =
+    // Check if metadata is already available for this exact targetUrl
+    const matchedInfo =
       videoInfo &&
       (videoInfo.webpageUrl === targetUrl ||
         (videoInfo.id && targetUrl.includes(videoInfo.id)))
         ? videoInfo
         : null;
-
-    // If metadata has not been fetched yet for this targetUrl (e.g. Smart Download clicked immediately), fetch it now!
-    if (!matchedInfo && isSupportedMediaUrl(targetUrl)) {
-      try {
-        const freshInfo = await getVideoMetadata(targetUrl);
-        matchedInfo = freshInfo;
-        if (currentUrlRef.current.trim() === targetUrl) {
-          setVideoInfo(freshInfo);
-          const rawFreshTitle = freshInfo.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
-          const cleanFreshTitle = sanitizeTitle(rawFreshTitle);
-          setCustomName(cleanFreshTitle);
-          if (freshInfo.description === "image") {
-            setFormatType("image");
-            setQuality("best");
-          } else {
-            setFormatType("video");
-            setQuality((appSettings.defaultVideoQuality as DownloaderQuality) || "best");
-          }
-        }
-      } catch {
-        // continue with fallback
-      }
-    }
 
     let finalThumb = matchedInfo?.thumbnail || "";
     if (!finalThumb) {
@@ -490,7 +493,10 @@ export function App() {
         ? (appSettings.defaultVideoQuality as DownloaderQuality) || "1080p"
         : quality;
 
-    const finalTitle = sanitizeTitle(customName) || sanitizeTitle(matchedInfo?.title) || targetUrl;
+    const finalTitle =
+      sanitizeTitle(customName) ||
+      sanitizeTitle(matchedInfo?.title) ||
+      cleanMediaUrl(targetUrl);
     const finalAuthor = matchedInfo?.uploader || matchedInfo?.channel || "";
     const finalDuration = matchedInfo?.duration || 0;
 

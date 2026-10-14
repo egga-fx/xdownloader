@@ -176,28 +176,30 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                       : "cursor-pointer"
                   }`}
                 >
-                  {thumb ? (
+                  {thumb && (
                     <img
                       src={thumb}
                       alt={item.title}
                       referrerPolicy="no-referrer"
-                      className={`w-full h-full object-cover ${
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                      className={`w-full h-full object-cover absolute inset-0 z-1 ${
                         corruptOrMissing ? "grayscale saturate-0" : ""
                       }`}
                     />
-                  ) : (
-                    <div
-                      className={`w-full h-full flex items-center justify-center text-[#71717a] ${
-                        corruptOrMissing ? "grayscale saturate-0" : ""
-                      }`}
-                    >
-                      {item.formatType === "audio" ? (
-                        <Music className="w-6 h-6" />
-                      ) : (
-                        <Film className="w-6 h-6" />
-                      )}
-                    </div>
                   )}
+                  <div
+                    className={`w-full h-full flex items-center justify-center text-[#71717a] ${
+                      corruptOrMissing ? "grayscale saturate-0" : ""
+                    }`}
+                  >
+                    {item.formatType === "audio" ? (
+                      <Music className="w-6 h-6" />
+                    ) : (
+                      <Film className="w-6 h-6" />
+                    )}
+                  </div>
 
                   {/* Status Badge in bottom-right corner */}
                   <div

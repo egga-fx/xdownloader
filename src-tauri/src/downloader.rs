@@ -358,6 +358,93 @@ pub fn sanitize_filename(name: &str) -> String {
     }
 }
 
+pub fn generate_local_thumbnail(media_path: &Path, task_id: &str) -> Option<String> {
+    if !media_path.exists() || !media_path.is_file() {
+        return None;
+    }
+
+    let ext = media_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+
+    // Direct image: if it's already an image, use it directly
+    if ["jpg", "jpeg", "png", "webp", "gif"].contains(&ext.as_str()) {
+        return Some(media_path.to_string_lossy().to_string());
+    }
+
+    let thumb_dir = crate::db::get_thumbnails_dir();
+    let safe_stem = sanitize_filename(task_id);
+    let target = thumb_dir.join(format!("{}.jpg", safe_stem));
+
+    if target.exists() && std::fs::metadata(&target).map(|m| m.len() > 0).unwrap_or(false) {
+        return Some(target.to_string_lossy().to_string());
+    }
+
+    let ffmpeg_bin = crate::binaries::find_binary("ffmpeg")?;
+
+    #[cfg(target_os = "windows")]
+    use std::os::windows::process::CommandExt;
+    #[cfg(target_os = "windows")]
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    if ["mp4", "webm", "mkv", "mov", "avi", "flv", "ts", "m4v", "wmv"].contains(&ext.as_str()) {
+        // Try frame at 1s first
+        let mut cmd = std::process::Command::new(&ffmpeg_bin);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        cmd.arg("-y")
+            .arg("-ss").arg("00:00:01")
+            .arg("-i").arg(media_path)
+            .arg("-vframes").arg("1")
+            .arg("-vf").arg("scale=640:-1")
+            .arg("-q:v").arg("3")
+            .arg(&target);
+
+        let _ = cmd.output();
+
+        if target.exists() && std::fs::metadata(&target).map(|m| m.len() > 0).unwrap_or(false) {
+            return Some(target.to_string_lossy().to_string());
+        }
+
+        // Fallback for short clips (<1 sec): frame at 0s
+        let mut cmd_fallback = std::process::Command::new(&ffmpeg_bin);
+        #[cfg(target_os = "windows")]
+        cmd_fallback.creation_flags(CREATE_NO_WINDOW);
+
+        cmd_fallback.arg("-y")
+            .arg("-ss").arg("00:00:00")
+            .arg("-i").arg(media_path)
+            .arg("-vframes").arg("1")
+            .arg("-vf").arg("scale=640:-1")
+            .arg("-q:v").arg("3")
+            .arg(&target);
+
+        let _ = cmd_fallback.output();
+
+        if target.exists() && std::fs::metadata(&target).map(|m| m.len() > 0).unwrap_or(false) {
+            return Some(target.to_string_lossy().to_string());
+        }
+    } else if ["mp3", "m4a", "flac", "wav", "aac", "ogg"].contains(&ext.as_str()) {
+        // Extract embedded album art if any
+        let mut cmd_audio = std::process::Command::new(&ffmpeg_bin);
+        #[cfg(target_os = "windows")]
+        cmd_audio.creation_flags(CREATE_NO_WINDOW);
+
+        cmd_audio.arg("-y")
+            .arg("-i").arg(media_path)
+            .arg("-an")
+            .arg("-vcodec").arg("copy")
+            .arg(&target);
+
+        let _ = cmd_audio.output();
+
+        if target.exists() && std::fs::metadata(&target).map(|m| m.len() > 0).unwrap_or(false) {
+            return Some(target.to_string_lossy().to_string());
+        }
+    }
+
+    None
+}
+
 fn extract_youtube_id(url: &str) -> Option<String> {
     let re = Regex::new(r"(?:youtube\.com/(?:watch\?v=|shorts/|live/)|youtu\.be/)([a-zA-Z0-9_-]{11})").ok()?;
     let caps = re.captures(url)?;
@@ -1095,6 +1182,26 @@ pub async fn run_download(
 
             let file_size = std::fs::metadata(&downloaded_path).map(|m| m.len() as i64).unwrap_or(0);
 
+            // If initial title was a raw fallback URL or generic, resolve it from the actual downloaded filename stem
+            let resolved_title = if initial_record.title.starts_with("http")
+                || initial_record.title == "Media"
+                || initial_record.title.trim().is_empty()
+            {
+                let stem = Path::new(&downloaded_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&initial_record.title);
+                let _ = db.update_record_title(&task_id, stem);
+                stem.to_string()
+            } else {
+                initial_record.title
+            };
+
+            // Extract reliable local thumbnail so Media Vault never has broken/missing thumbnails
+            if let Some(local_thumb) = generate_local_thumbnail(Path::new(&downloaded_path), &task_id) {
+                let _ = db.update_record_thumbnail(&task_id, &local_thumb);
+            }
+
             let _ = db.update_record(
                 &task_id,
                 "completed",
@@ -1114,7 +1221,7 @@ pub async fn run_download(
             let final_task = ActiveDownloadTask {
                 task_id: task_id.clone(),
                 url: url.clone(),
-                title: initial_record.title,
+                title: resolved_title,
                 platform: initial_record.platform,
                 format_type,
                 quality,

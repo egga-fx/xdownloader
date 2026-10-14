@@ -37,6 +37,14 @@ pub fn get_database_path() -> PathBuf {
     PathBuf::from("vault.db")
 }
 
+pub fn get_thumbnails_dir() -> PathBuf {
+    let db_path = get_database_path();
+    let parent = db_path.parent().unwrap_or(Path::new("."));
+    let thumb_dir = parent.join("thumbnails");
+    let _ = fs::create_dir_all(&thumb_dir);
+    thumb_dir
+}
+
 impl Database {
     pub fn new() -> Result<Self, String> {
         let db_path = get_database_path();
@@ -231,6 +239,26 @@ impl Database {
             )
         }
         .map_err(|e| format!("Failed to update record: {}", e))?;
+        Ok(())
+    }
+
+    pub fn update_record_title(&self, id: &str, title: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        conn.execute(
+            "UPDATE downloads SET title = ?1 WHERE id = ?2",
+            params![title, id],
+        )
+        .map_err(|e| format!("Failed to update record title: {}", e))?;
+        Ok(())
+    }
+
+    pub fn update_record_thumbnail(&self, id: &str, thumbnail_url: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        conn.execute(
+            "UPDATE downloads SET thumbnail_url = ?1 WHERE id = ?2",
+            params![thumbnail_url, id],
+        )
+        .map_err(|e| format!("Failed to update record thumbnail: {}", e))?;
         Ok(())
     }
 

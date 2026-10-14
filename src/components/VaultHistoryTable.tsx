@@ -185,30 +185,32 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                         : "border-[#27272a] cursor-pointer hover:border-blue-500/50"
                     }`}
                   >
-                    {thumb ? (
+                    {thumb && (
                       <img
                         src={thumb}
                         alt={item.title}
                         referrerPolicy="no-referrer"
-                        className={`w-full h-full object-cover ${
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                        className={`w-full h-full object-cover absolute inset-0 z-1 ${
                           corruptOrMissing ? "grayscale saturate-0" : ""
                         }`}
                       />
-                    ) : (
-                      <div
-                        className={`w-full h-full flex items-center justify-center text-[#71717a] ${
-                          corruptOrMissing ? "grayscale saturate-0" : ""
-                        }`}
-                      >
-                        {item.formatType === "subtitle" ? (
-                          <Captions className="w-4 h-4 text-purple-400" />
-                        ) : item.formatType === "audio" ? (
-                          <Music className="w-4 h-4" />
-                        ) : (
-                          <Film className="w-4 h-4" />
-                        )}
-                      </div>
                     )}
+                    <div
+                      className={`w-full h-full flex items-center justify-center text-[#71717a] ${
+                        corruptOrMissing ? "grayscale saturate-0" : ""
+                      }`}
+                    >
+                      {item.formatType === "subtitle" ? (
+                        <Captions className="w-4 h-4 text-purple-400" />
+                      ) : item.formatType === "audio" ? (
+                        <Music className="w-4 h-4" />
+                      ) : (
+                        <Film className="w-4 h-4" />
+                      )}
+                    </div>
 
                     {/* Broken / Missing Visual Overlay */}
                     {corruptOrMissing && (

@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { DownloadRecord, DownloaderPlatform } from "../types";
+import { convertFileSrc } from "./tauri-api";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -235,10 +236,31 @@ export function getSourceAccount(item: DownloadRecord): SourceAccountInfo {
  * Safely resolves the thumbnail image URL for a download record.
  * Falls back to YouTube video ID thumbnail if the recorded thumbnailUrl is empty.
  */
-export function getRecordThumbnail(item: { thumbnailUrl?: string; url?: string; platform?: string }): string {
+export function getRecordThumbnail(item: {
+  thumbnailUrl?: string;
+  url?: string;
+  platform?: string;
+  filePath?: string;
+  formatType?: string;
+}): string {
   if (item.thumbnailUrl && item.thumbnailUrl.trim()) {
-    return item.thumbnailUrl.trim();
+    const raw = item.thumbnailUrl.trim();
+    if (
+      raw.startsWith("http://") ||
+      raw.startsWith("https://") ||
+      raw.startsWith("data:") ||
+      raw.startsWith("asset:")
+    ) {
+      return raw;
+    }
+    return convertFileSrc(raw);
   }
+
+  // Fallback for image downloads where thumbnailUrl wasn't saved, but filePath exists
+  if (item.filePath && (item.formatType === "image" || /\.(jpg|jpeg|png|webp|gif)$/i.test(item.filePath))) {
+    return convertFileSrc(item.filePath);
+  }
+
   const rawUrl = item.url?.trim() || "";
   // YouTube fallback: extract video ID
   const ytMatch = rawUrl.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);

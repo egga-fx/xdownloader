@@ -321,7 +321,35 @@ fn get_download_records(
     format_type: Option<String>,
     search: Option<String>,
 ) -> Result<Vec<DownloadRecord>, String> {
-    state.db.get_records(platform, format_type, search)
+    let mut records = state.db.get_records(platform, format_type, search)?;
+
+    for rec in records.iter_mut() {
+        if rec.status == "completed" && rec.exists && !rec.file_path.is_empty() {
+            let p = std::path::Path::new(&rec.file_path);
+            if p.exists() {
+                // 1. Auto-heal missing thumbnail or dead local thumbnail
+                let needs_thumb = rec.thumbnail_url.trim().is_empty()
+                    || (!rec.thumbnail_url.starts_with("http") && !std::path::Path::new(&rec.thumbnail_url).exists());
+
+                if needs_thumb {
+                    if let Some(thumb) = downloader::generate_local_thumbnail(p, &rec.id) {
+                        let _ = state.db.update_record_thumbnail(&rec.id, &thumb);
+                        rec.thumbnail_url = thumb;
+                    }
+                }
+
+                // 2. Auto-heal title if still a raw fallback URL or generic "Media"
+                if rec.title.starts_with("http") || rec.title == "Media" || rec.title.trim().is_empty() {
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        let _ = state.db.update_record_title(&rec.id, stem);
+                        rec.title = stem.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(records)
 }
 
 #[tauri::command]

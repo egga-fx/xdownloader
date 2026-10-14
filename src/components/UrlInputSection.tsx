@@ -168,11 +168,7 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
       >
         {/* Left Action / Platform Icon */}
         <div className="flex items-center pl-1 pr-1.5 shrink-0">
-          {fetchingInfo ? (
-            <div className="w-8 h-8 flex items-center justify-center">
-              <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
-            </div>
-          ) : hasValidClipboardUrl && (!hasMetadata || clipboardUrl !== url.trim()) ? (
+          {hasValidClipboardUrl && (!hasMetadata || clipboardUrl !== url.trim()) ? (
             // Clipboard contains a valid media link: show "Download from clipboard" button with clean static highlight
             <button
               onClick={handleSmartDownloadClick}
@@ -180,14 +176,13 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/40 hover:border-blue-500/60 shadow-sm shadow-blue-500/10 cursor-pointer transition-all shrink-0"
               title={`Download from clipboard: ${clipboardUrl}`}
             >
-              {renderPlatformIcon(clipboardPlatform, "w-3.5 h-3.5")}
+              {fetchingInfo ? (
+                <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin shrink-0" />
+              ) : (
+                renderPlatformIcon(clipboardPlatform, "w-3.5 h-3.5")
+              )}
               <span>Download from clipboard</span>
             </button>
-          ) : hasMetadata ? (
-            // Metadata loaded: download button disappears cleanly, showing only clean static platform icon
-            <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5">
-              {renderPlatformIcon(detectedPlatform, "w-4 h-4")}
-            </div>
           ) : hasValidInputUrl ? (
             // Input field contains a valid media link: show "Download" button with clean static highlight
             <button
@@ -195,9 +190,22 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-600/30 cursor-pointer transition-all shrink-0"
               title={`Download: ${url.trim()}`}
             >
-              {renderPlatformIcon(detectedPlatform, "w-3.5 h-3.5")}
+              {fetchingInfo ? (
+                <Loader2 className="w-3.5 h-3.5 text-white animate-spin shrink-0" />
+              ) : (
+                renderPlatformIcon(detectedPlatform, "w-3.5 h-3.5")
+              )}
               <span>Download</span>
             </button>
+          ) : hasMetadata ? (
+            // Metadata loaded: download button disappears cleanly, showing only clean static platform icon
+            <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5">
+              {renderPlatformIcon(detectedPlatform, "w-4 h-4")}
+            </div>
+          ) : fetchingInfo ? (
+            <div className="w-8 h-8 flex items-center justify-center">
+              <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
+            </div>
           ) : (
             // No valid link in clipboard and no input: Clean default platform / link icon (NO button)
             <div className="w-8 h-8 flex items-center justify-center text-[#71717a]">

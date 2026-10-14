@@ -12,7 +12,7 @@ import {
   Captions,
 } from "lucide-react";
 import { DownloadRecord } from "../types";
-import { formatDuration, formatFileSize, getSourceAccount } from "../lib/utils";
+import { formatDuration, formatFileSize, getRecordThumbnail, getSourceAccount } from "../lib/utils";
 import {
   resolvePlaybackUrl,
   triggerDirectBrowserDownload,
@@ -60,6 +60,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   const isSubtitle = record.formatType === "subtitle";
   const isAudio = record.formatType === "audio";
   const isImage = record.formatType === "image";
+  const resolvedThumb = getRecordThumbnail(record);
 
   return (
     <div
@@ -148,9 +149,9 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
             <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-gradient-to-b from-[#18181b] to-[#09090b]">
               <div className="relative mb-5">
                 <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden shadow-2xl border-2 border-[#27272a] flex items-center justify-center bg-[#121215]">
-                  {record.thumbnailUrl ? (
+                  {resolvedThumb ? (
                     <img
-                      src={record.thumbnailUrl}
+                      src={resolvedThumb}
                       alt={record.title}
                       className="w-full h-full object-cover"
                     />
@@ -188,7 +189,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           ) : isImage ? (
             /* 2. IMAGE PREVIEW */
             <img
-              src={streamUrl || record.thumbnailUrl}
+              src={streamUrl || resolvedThumb}
               alt={record.title}
               className="w-full h-full object-contain"
             />
@@ -205,9 +206,9 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           ) : (
             /* 4. ERROR / POSTER FALLBACK */
             <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-[#09090b] relative">
-              {record.thumbnailUrl ? (
+              {resolvedThumb ? (
                 <img
-                  src={record.thumbnailUrl}
+                  src={resolvedThumb}
                   alt={record.title}
                   className="w-full h-full object-contain opacity-35 absolute inset-0"
                 />
