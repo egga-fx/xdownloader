@@ -33,6 +33,8 @@ open = "5.1"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 
 [profile.release]
-opt-level = 3
+opt-level = 2
 panic = "abort"
+codegen-units = 16
+lto = false
 
