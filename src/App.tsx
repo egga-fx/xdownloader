@@ -9,6 +9,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { AboutModal } from "./components/AboutModal";
 import { UpdateModal } from "./components/UpdateModal";
 import { TranscriptStudioModal, StudioMediaInput } from "./components/TranscriptStudioModal";
+import { ActiveTranscriptionBanner } from "./components/ActiveTranscriptionBanner";
 import {
   ActiveDownloadTask,
   AppSettings,
@@ -126,11 +127,14 @@ export function App() {
     autoClipboardDetect: true,
     downloadSubtitles: false,
     checkUpdatesOnStartup: true,
+    videoFilenameFormat: "source_channel_title",
+    carouselFilenameFormat: "folder_sequential",
   });
 
   // AI Transcription state
   const [transcriptionConfig, setTranscriptionConfig] = useState<TranscriptionConfig | null>(null);
   const [activeTranscriptions, setActiveTranscriptions] = useState<Map<string, TranscriptionProgress>>(new Map());
+  const [isStartingTranscription, setIsStartingTranscription] = useState<boolean>(false);
 
   // Auto-Updater status
   const [availableUpdate, setAvailableUpdate] = useState<AppUpdateInfo | null>(null);
@@ -595,6 +599,11 @@ export function App() {
   // 5. Cancel active task (supports both download and transcription)
   const handleCancelTask = async (taskId: string) => {
     try {
+      if (taskId === "starting-transcription") {
+        setIsStartingTranscription(false);
+        showToast("Transkripsi dibatalkan");
+        return;
+      }
       if (activeTranscriptions.has(taskId) || taskId.startsWith("tr_")) {
         await cancelTranscription(taskId);
         setActiveTranscriptions((prev) => {
@@ -776,6 +785,7 @@ export function App() {
       return;
     }
 
+    setIsStartingTranscription(true);
     try {
       setError(null);
       const taskId = await startTranscription({
@@ -801,15 +811,28 @@ export function App() {
     } catch (err: unknown) {
       setError(getErrorMessage(err) || "Gagal memulai transkripsi");
       showToast("Gagal memulai transkripsi");
+    } finally {
+      setIsStartingTranscription(false);
     }
   };
+
+  const firstActiveTranscription = Array.from(activeTranscriptions.values())[0] || (
+    isStartingTranscription
+      ? {
+          taskId: "starting-transcription",
+          stage: "downloading_audio" as const,
+          percent: 5,
+          message: "Menginisiasi ElevenLabs Scribe v2...",
+        }
+      : null
+  );
 
   const transcriptionTasks: ActiveDownloadTask[] = Array.from(activeTranscriptions.values()).map((t) => ({
     taskId: t.taskId,
     url: url || "",
     title: `${customName || videoInfo?.title || "Media"} [Transkrip SRT]`,
     platform: detectedPlatform,
-    formatType: "audio" as DownloaderFormatType,
+    formatType: "subtitle" as DownloaderFormatType,
     quality: "mp3" as DownloaderQuality,
     status: t.stage === "completed" ? "completed" : t.stage === "error" ? "error" : "downloading",
     progress: {
@@ -835,6 +858,7 @@ export function App() {
         onToggleVault={() => setVaultOpen(!vaultOpen)}
         vaultCount={records.length}
         activeDownloadingCount={allActiveTasks.length}
+        activeTranscription={firstActiveTranscription}
         onOpenSettings={() => {
           setSettingsInitialSection("general");
           setSettingsModalOpen(true);
@@ -877,6 +901,18 @@ export function App() {
             autoClipboardDetect={appSettings.autoClipboardDetect}
           />
 
+          {/* Active AI Transcription Banner */}
+          {firstActiveTranscription && (
+            <div className="w-full">
+              <ActiveTranscriptionBanner
+                transcription={firstActiveTranscription}
+                title={customName || videoInfo?.title || "Transkrip Subtitel Otomatis"}
+                onOpenVault={() => setVaultOpen(true)}
+                onCancel={(taskId) => handleCancelTask(taskId)}
+              />
+            </div>
+          )}
+
           {/* Metadata Preview & Settings Box */}
           {videoInfo && (
             <div className="w-full animate-in fade-in slide-in-from-top-3 duration-200">
@@ -898,7 +934,8 @@ export function App() {
                     ? "ElevenLabs API Key Belum Dikonfigurasi"
                     : null
                 }
-                isTranscribing={activeTranscriptions.size > 0}
+                isTranscribing={activeTranscriptions.size > 0 || isStartingTranscription}
+                transcriptionProgress={firstActiveTranscription}
                 onTranscribe={handleStartTranscription}
                 onOpenTranscriptionSettings={() => {
                   setSettingsInitialSection("transcription");

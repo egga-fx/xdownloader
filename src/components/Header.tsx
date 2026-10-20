@@ -13,7 +13,7 @@ import {
   FileText,
   Sparkles,
 } from "lucide-react";
-import { BinariesStatus, AppUpdateInfo } from "../types";
+import { BinariesStatus, AppUpdateInfo, TranscriptionProgress } from "../types";
 import { isTauriEnvironment } from "../lib/tauri-api";
 
 interface HeaderProps {
@@ -34,6 +34,7 @@ interface HeaderProps {
   checkingUpdate?: boolean;
   onOpenUpdateModal?: () => void;
   onOpenTranscriptStudio?: () => void;
+  activeTranscription?: TranscriptionProgress | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -54,6 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
   checkingUpdate = false,
   onOpenUpdateModal,
   onOpenTranscriptStudio,
+  activeTranscription = null,
 }) => {
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
@@ -185,6 +187,28 @@ export const Header: React.FC<HeaderProps> = ({
             <HardDrive className="w-3.5 h-3.5 text-[#52525b] shrink-0" />
             <span className="text-[11px] font-medium text-[#a1a1aa]">Browser Downloads</span>
           </div>
+        )}
+
+        {/* Active AI Transcription Chip (Pulsing Purple Feedback) */}
+        {activeTranscription && (
+          <button
+            type="button"
+            onClick={onToggleVault}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/35 hover:border-purple-500/50 text-purple-300 font-semibold text-xs cursor-pointer transition-all animate-pulse shadow-sm shadow-purple-500/20"
+            title={`Transkripsi AI sedang berlangsung: ${Math.round(activeTranscription.percent)}% (${activeTranscription.message}). Klik untuk melihat di Media Vault.`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-400 animate-spin" style={{ animationDuration: "4s" }} />
+            <span className="font-mono font-bold text-white">{Math.round(activeTranscription.percent)}%</span>
+            <span className="hidden lg:inline text-[11px] text-purple-200 truncate max-w-[120px]">
+              {activeTranscription.stage === "downloading_audio"
+                ? "Audio"
+                : activeTranscription.stage === "uploading"
+                ? "Upload"
+                : activeTranscription.stage === "transcribing"
+                ? "Scribe v2"
+                : "Simpan"}
+            </span>
+          </button>
         )}
 
         {/* Media Vault Drawer Toggle Button */}

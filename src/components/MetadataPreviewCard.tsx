@@ -21,6 +21,7 @@ import {
   DownloaderFormatType,
   DownloaderQuality,
   VideoInfo,
+  TranscriptionProgress,
 } from "../types";
 import { formatDuration } from "../lib/utils";
 import { CarouselSelectionModal } from "./CarouselSelectionModal";
@@ -38,6 +39,7 @@ interface MetadataPreviewCardProps {
   transcriptionReady?: boolean;
   transcriptionBlockReason?: string | null;
   isTranscribing?: boolean;
+  transcriptionProgress?: TranscriptionProgress | null;
   onTranscribe?: () => void;
   onOpenTranscriptionSettings?: () => void;
 }
@@ -77,6 +79,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   transcriptionReady = false,
   transcriptionBlockReason = null,
   isTranscribing = false,
+  transcriptionProgress = null,
   onTranscribe,
   onOpenTranscriptionSettings,
 }) => {
@@ -817,7 +820,11 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
             ) : formatType === "subtitle" && isTranscribing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin text-purple-300" />
-                <span>Mentranskrip Audio...</span>
+                <span>
+                  {transcriptionProgress && transcriptionProgress.percent > 0
+                    ? `Mentranskrip (${Math.round(transcriptionProgress.percent)}%)...`
+                    : "Mentranskrip Audio..."}
+                </span>
               </>
             ) : (
               <>

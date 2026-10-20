@@ -106,6 +106,10 @@ pub struct AppSettings {
     pub check_updates_on_startup: bool,
     #[serde(default = "default_true")]
     pub desktop_notifications: bool,
+    #[serde(default = "default_video_filename_format")]
+    pub video_filename_format: String,
+    #[serde(default = "default_carousel_filename_format")]
+    pub carousel_filename_format: String,
 }
 
 fn default_true() -> bool {
@@ -120,6 +124,14 @@ fn default_audio_quality() -> String {
     "mp3".to_string()
 }
 
+fn default_video_filename_format() -> String {
+    "source_channel_title".to_string()
+}
+
+fn default_carousel_filename_format() -> String {
+    "folder_sequential".to_string()
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -130,6 +142,8 @@ impl Default for AppSettings {
             download_subtitles: false,
             check_updates_on_startup: true,
             desktop_notifications: true,
+            video_filename_format: "source_channel_title".to_string(),
+            carousel_filename_format: "folder_sequential".to_string(),
         }
     }
 }

@@ -1475,9 +1475,20 @@ pub async fn download_image_bundle(
     let stripped = carousel_badge_re.replace_all(raw_name, "");
     let clean_base_name = sanitize_name(stripped.trim());
 
-    // Save directly into output_folder with sequential filenames without creating extra subfolders
-    let target_dir = output_folder.to_path_buf();
-    let _ = std::fs::create_dir_all(&target_dir);
+    // Read carousel filename format from settings
+    let settings = db.get_settings().unwrap_or_default();
+    let is_folder_sequential = settings.carousel_filename_format != "title_sequential";
+
+    // If multiple items and folder_sequential: save into a dedicated subfolder with sequential names
+    let (target_dir, use_subfolder) = if is_folder_sequential && bundle.images.len() > 1 {
+        let subfolder = output_folder.join(&clean_base_name);
+        let _ = std::fs::create_dir_all(&subfolder);
+        (subfolder, true)
+    } else {
+        let target = output_folder.to_path_buf();
+        let _ = std::fs::create_dir_all(&target);
+        (target, false)
+    };
 
     // Filter items based on selected_indices while preserving 1-based original sequence number
     let items_to_download: Vec<(usize, ImageMediaItem)> = match selected_indices {
@@ -1507,7 +1518,11 @@ pub async fn download_image_bundle(
     for (step_idx, (slide_idx, item)) in items_to_download.iter().enumerate() {
         let ext = if item.url.contains(".png") { "png" } else { "jpg" };
         let filename = if bundle.images.len() > 1 {
-            format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
+            if use_subfolder {
+                format!("{:02}.{}", slide_idx, ext)
+            } else {
+                format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
+            }
         } else {
             format!("{}.{}", clean_base_name, ext)
         };
@@ -1585,7 +1600,11 @@ pub async fn download_image_bundle(
 
     // Download background audio if available (e.g. TikTok photo mode BGM)
     if let Some(ref bgm_url) = bundle.audio_url {
-        let dest_audio = target_dir.join(format!("{}_bgm.mp3", clean_base_name));
+        let dest_audio = if use_subfolder {
+            target_dir.join("bgm.mp3")
+        } else {
+            target_dir.join(format!("{}_bgm.mp3", clean_base_name))
+        };
         if let Ok(resp) = client.get(bgm_url).send().await {
             if resp.status().is_success() {
                 if let Ok(bytes) = resp.bytes().await {
@@ -1730,8 +1749,20 @@ pub async fn download_media_bundle(
     let stripped = carousel_badge_re.replace_all(raw_name, "");
     let clean_base_name = sanitize_name(stripped.trim());
 
-    let target_dir = output_folder.to_path_buf();
-    let _ = std::fs::create_dir_all(&target_dir);
+    // Read carousel filename format from settings
+    let settings = db.get_settings().unwrap_or_default();
+    let is_folder_sequential = settings.carousel_filename_format != "title_sequential";
+
+    // If multiple items and folder_sequential: save into a dedicated subfolder with sequential names
+    let (target_dir, use_subfolder) = if is_folder_sequential && bundle.items.len() > 1 {
+        let subfolder = output_folder.join(&clean_base_name);
+        let _ = std::fs::create_dir_all(&subfolder);
+        (subfolder, true)
+    } else {
+        let target = output_folder.to_path_buf();
+        let _ = std::fs::create_dir_all(&target);
+        (target, false)
+    };
 
     let items_to_download: Vec<(usize, MediaBundleItem)> = match selected_indices {
         Some(ref indices) if !indices.is_empty() => {
@@ -1800,7 +1831,11 @@ pub async fn download_media_bundle(
         };
 
         let filename = if bundle.items.len() > 1 {
-            format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
+            if use_subfolder {
+                format!("{:02}.{}", slide_idx, ext)
+            } else {
+                format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
+            }
         } else {
             format!("{}.{}", clean_base_name, ext)
         };

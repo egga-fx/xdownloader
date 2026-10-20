@@ -651,55 +651,7 @@ pub async fn run_download(
 
     let ffmpeg_path = find_binary("ffmpeg");
 
-    // Template output filename and stem identification (sanitized for Windows filesystem)
-    let raw_stem = match custom_name.as_deref() {
-        Some(name) if !name.trim().is_empty() => name.trim().to_string(),
-        _ => {
-            if crate::image_extractor::is_threads_url(&url) {
-                resolved_title.as_deref().unwrap_or("threads_video").to_string()
-            } else if let Some(ref t) = resolved_title {
-                t.clone()
-            } else if let Some(yt_id) = extract_youtube_id(&url) {
-                yt_id
-            } else {
-                url.clone()
-            }
-        }
-    };
-    let task_stem = sanitize_filename(&raw_stem);
-
-    let out_template = match custom_name.as_deref() {
-        Some(name) if !name.trim().is_empty() => {
-            let clean = sanitize_filename(name.trim());
-            out_dir.join(format!("{}.%(ext)s", clean))
-        }
-        _ => {
-            if url.contains("instagram.com") {
-                out_dir.join("%(upload_date>%Y%m%d_%H%M%S|upload_date)s_%(id)s.%(ext)s")
-            } else if crate::image_extractor::is_threads_url(&url) {
-                let name = resolved_title.as_deref().unwrap_or("threads_video");
-                let clean = sanitize_filename(name);
-                out_dir.join(format!("{}.%(ext)s", clean))
-            } else {
-                out_dir.join("%(title).80s [%(id)s].%(ext)s")
-            }
-        }
-    };
-
-    // Metadata resolution for the initial DB record
-    let rec_title = custom_name.clone().or(resolved_title).unwrap_or_else(|| url.clone());
-    let mut rec_thumb = resolved_thumbnail.unwrap_or_default();
-    let rec_author = resolved_author.unwrap_or_default();
-    let rec_duration = resolved_duration.unwrap_or(0);
-
-    // Fallback: extract YouTube thumbnail directly from video ID if empty
-    if rec_thumb.is_empty() {
-        if let Some(yt_id) = extract_youtube_id(&url) {
-            rec_thumb = format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", yt_id);
-        }
-    }
-
-    // Detect platform
+    // Detect platform early for filename formatting and initial record
     let platform = if crate::image_extractor::is_threads_url(&url) {
         "threads"
     } else if url.contains("youtube.com") || url.contains("youtu.be") {
@@ -715,6 +667,56 @@ pub async fn run_download(
     } else {
         "web_media"
     };
+
+    // Template output filename and stem identification (sanitized for Windows filesystem)
+    let raw_title_stem = match custom_name.as_deref() {
+        Some(name) if !name.trim().is_empty() => name.trim().to_string(),
+        _ => {
+            if crate::image_extractor::is_threads_url(&url) {
+                resolved_title.as_deref().unwrap_or("threads_video").to_string()
+            } else if let Some(ref t) = resolved_title {
+                t.clone()
+            } else if let Some(yt_id) = extract_youtube_id(&url) {
+                yt_id
+            } else {
+                url.clone()
+            }
+        }
+    };
+    let clean_title = sanitize_filename(&raw_title_stem);
+
+    // Read AppSettings for video filename format preference
+    let settings = db.get_settings().unwrap_or_default();
+    let is_source_channel_title = settings.video_filename_format != "title_only";
+
+    let final_stem = if is_source_channel_title {
+        let clean_author = resolved_author.as_deref()
+            .map(|a| sanitize_filename(a.trim()))
+            .filter(|a| !a.is_empty() && a != "unknown");
+
+        match clean_author {
+            Some(author_name) => format!("{}_{}_{}", platform, author_name, clean_title),
+            None => format!("{}_{}", platform, clean_title),
+        }
+    } else {
+        clean_title
+    };
+
+    let task_stem = sanitize_filename(&final_stem);
+    let out_template = out_dir.join(format!("{}.%(ext)s", task_stem));
+
+    // Metadata resolution for the initial DB record
+    let rec_title = custom_name.clone().or(resolved_title).unwrap_or_else(|| url.clone());
+    let mut rec_thumb = resolved_thumbnail.unwrap_or_default();
+    let rec_author = resolved_author.unwrap_or_default();
+    let rec_duration = resolved_duration.unwrap_or(0);
+
+    // Fallback: extract YouTube thumbnail directly from video ID if empty
+    if rec_thumb.is_empty() {
+        if let Some(yt_id) = extract_youtube_id(&url) {
+            rec_thumb = format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", yt_id);
+        }
+    }
 
     // Initial record in DB
     let initial_record = DownloadRecord {

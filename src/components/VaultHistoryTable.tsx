@@ -50,11 +50,17 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
       {/* 1. ACTIVE RUNNING TASKS */}
       {activeTasks.map((task) => {
         const isPaused = task.status === "paused";
+        const isSubtitle = task.formatType === "subtitle";
+
         return (
           <div
             key={task.taskId}
             className={`flex items-center justify-between p-3.5 sm:p-4 min-h-[78px] bg-[#121215]/80 border-b gap-3 transition-colors ${
-              isPaused ? "border-amber-500/20 bg-amber-500/[0.02]" : "border-blue-500/20"
+              isPaused
+                ? "border-amber-500/20 bg-amber-500/[0.02]"
+                : isSubtitle
+                ? "border-purple-500/30 bg-purple-950/[0.08]"
+                : "border-blue-500/20"
             }`}
           >
             <div className="flex items-center gap-3.5 min-w-0 flex-grow">
@@ -62,11 +68,15 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                 className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
                   isPaused
                     ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                    : isSubtitle
+                    ? "bg-purple-500/15 border-purple-500/35 text-purple-300"
                     : "bg-blue-500/10 border-blue-500/30 text-blue-400"
                 }`}
               >
                 {isPaused ? (
                   <Pause className="w-4 h-4" />
+                ) : isSubtitle ? (
+                  <Captions className="w-5 h-5 text-purple-400 animate-pulse" />
                 ) : (
                   <Loader2 className="w-5 h-5 animate-spin" />
                 )}
@@ -76,6 +86,11 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                   <span className="text-xs sm:text-sm font-bold text-white truncate" title={task.title}>
                     {task.title}
                   </span>
+                  {isSubtitle && (
+                    <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                      AI Scribe v2
+                    </span>
+                  )}
                   {isPaused && (
                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
                       Paused
@@ -83,7 +98,15 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                   )}
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-[#a1a1aa]">
-                  <span className={`font-bold ${isPaused ? "text-amber-400" : "text-blue-400"}`}>
+                  <span
+                    className={`font-bold ${
+                      isPaused
+                        ? "text-amber-400"
+                        : isSubtitle
+                        ? "text-purple-300"
+                        : "text-blue-400"
+                    }`}
+                  >
                     {task.progress.percent > 0
                       ? `${Math.round(task.progress.percent)}%`
                       : isPaused
@@ -91,8 +114,10 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                       : "Connecting..."}
                   </span>
                   <span>•</span>
-                  <span>{task.progress.speedStr || (isPaused ? "Paused" : "Starting...")}</span>
-                  {task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused && (
+                  <span className="truncate">
+                    {task.progress.speedStr || (isPaused ? "Paused" : "Starting...")}
+                  </span>
+                  {task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused && !isSubtitle && (
                     <>
                       <span>•</span>
                       <span>ETA {task.progress.etaStr}</span>
@@ -103,7 +128,11 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                 <div className="w-full h-1 bg-[#27272a] rounded-full overflow-hidden mt-0.5">
                   <div
                     className={`h-full transition-all duration-300 ${
-                      isPaused ? "bg-amber-500" : "bg-blue-500"
+                      isPaused
+                        ? "bg-amber-500"
+                        : isSubtitle
+                        ? "bg-gradient-to-r from-purple-500 to-indigo-500"
+                        : "bg-blue-500"
                     }`}
                     style={{ width: `${Math.max(task.progress.percent, 3)}%` }}
                   />
@@ -112,27 +141,29 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
             </div>
 
             <div className="flex items-center gap-1 shrink-0">
-              {isPaused ? (
-                <button
-                  onClick={() => onResumeTask?.(task.taskId)}
-                  className="w-7 h-7 rounded-md text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                  title="Resume Download"
-                >
-                  <Play className="w-4 h-4 fill-amber-400/20" />
-                </button>
-              ) : (
-                <button
-                  onClick={() => onPauseTask?.(task.taskId)}
-                  className="w-7 h-7 rounded-md text-[#a1a1aa] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                  title="Pause Download"
-                >
-                  <Pause className="w-4 h-4" />
-                </button>
+              {!isSubtitle && (
+                isPaused ? (
+                  <button
+                    onClick={() => onResumeTask?.(task.taskId)}
+                    className="w-7 h-7 rounded-md text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                    title="Resume Download"
+                  >
+                    <Play className="w-4 h-4 fill-amber-400/20" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onPauseTask?.(task.taskId)}
+                    className="w-7 h-7 rounded-md text-[#a1a1aa] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                    title="Pause Download"
+                  >
+                    <Pause className="w-4 h-4" />
+                  </button>
+                )
               )}
               <button
                 onClick={() => onCancelTask(task.taskId)}
                 className="w-7 h-7 rounded-md text-[#71717a] hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                title="Cancel Download"
+                title={isSubtitle ? "Batalkan Transkripsi" : "Cancel Download"}
               >
                 <XCircle className="w-4 h-4" />
               </button>

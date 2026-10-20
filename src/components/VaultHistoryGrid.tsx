@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   Pause,
   Play,
+  Captions,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
 import { VaultItemActions } from "./VaultItemActions";
@@ -51,12 +52,16 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
       {/* 1. PINNED ACTIVE DOWNLOAD TASKS */}
       {activeTasks.map((task) => {
         const isPaused = task.status === "paused";
+        const isSubtitle = task.formatType === "subtitle";
+
         return (
           <div
             key={task.taskId}
             className={`col-span-1 sm:col-span-2 bg-[#121215] border rounded-xl p-3 flex flex-col gap-2 shadow-md transition-colors ${
               isPaused
                 ? "border-amber-500/30 shadow-amber-500/5 bg-amber-500/[0.02]"
+                : isSubtitle
+                ? "border-purple-500/30 shadow-purple-500/5 bg-purple-950/[0.08]"
                 : "border-blue-500/30 shadow-blue-500/5"
             }`}
           >
@@ -64,12 +69,19 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
               <div className="flex items-center gap-2 min-w-0">
                 {isPaused ? (
                   <Pause className="w-4 h-4 text-amber-400 shrink-0" />
+                ) : isSubtitle ? (
+                  <Captions className="w-4 h-4 text-purple-400 animate-pulse shrink-0" />
                 ) : (
                   <Loader2 className="w-4 h-4 text-blue-400 animate-spin shrink-0" />
                 )}
                 <span className="text-xs font-bold text-white truncate" title={task.title}>
                   {task.title}
                 </span>
+                {isSubtitle && (
+                  <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                    AI Scribe v2
+                  </span>
+                )}
                 {isPaused && (
                   <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
                     Paused
@@ -77,27 +89,29 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 )}
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                {isPaused ? (
-                  <button
-                    onClick={() => onResumeTask?.(task.taskId)}
-                    className="w-6 h-6 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                    title="Resume Download"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-amber-400/20" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => onPauseTask?.(task.taskId)}
-                    className="w-6 h-6 rounded text-[#a1a1aa] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                    title="Pause Download"
-                  >
-                    <Pause className="w-3.5 h-3.5" />
-                  </button>
+                {!isSubtitle && (
+                  isPaused ? (
+                    <button
+                      onClick={() => onResumeTask?.(task.taskId)}
+                      className="w-6 h-6 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                      title="Resume Download"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-amber-400/20" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onPauseTask?.(task.taskId)}
+                      className="w-6 h-6 rounded text-[#a1a1aa] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                      title="Pause Download"
+                    >
+                      <Pause className="w-3.5 h-3.5" />
+                    </button>
+                  )
                 )}
                 <button
                   onClick={() => onCancelTask(task.taskId)}
                   className="w-6 h-6 rounded text-[#71717a] hover:text-red-400 flex items-center justify-center cursor-pointer transition-colors"
-                  title="Cancel Download"
+                  title={isSubtitle ? "Batalkan Transkripsi" : "Cancel Download"}
                 >
                   <XCircle className="w-3.5 h-3.5" />
                 </button>
@@ -105,16 +119,24 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-[11px] text-[#a1a1aa]">
-              <span className={`font-bold ${isPaused ? "text-amber-400" : "text-blue-400"}`}>
+              <span
+                className={`font-bold ${
+                  isPaused
+                    ? "text-amber-400"
+                    : isSubtitle
+                    ? "text-purple-300"
+                    : "text-blue-400"
+                }`}
+              >
                 {task.progress.percent > 0
                   ? `${Math.round(task.progress.percent)}%`
                   : isPaused
                   ? "Paused"
                   : "Connecting..."}
               </span>
-              <span>
+              <span className="truncate">
                 {task.progress.speedStr || (isPaused ? "Paused" : "Starting...")}{" "}
-                {task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused
+                {task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused && !isSubtitle
                   ? `· ETA ${task.progress.etaStr}`
                   : ""}
               </span>
@@ -123,7 +145,11 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
             <div className="w-full h-1.5 bg-[#27272a] rounded-full overflow-hidden">
               <div
                 className={`h-full transition-all duration-300 ${
-                  isPaused ? "bg-amber-500" : "bg-blue-500"
+                  isPaused
+                    ? "bg-amber-500"
+                    : isSubtitle
+                    ? "bg-gradient-to-r from-purple-500 to-indigo-500"
+                    : "bg-blue-500"
                 }`}
                 style={{ width: `${Math.max(task.progress.percent, 3)}%` }}
               />

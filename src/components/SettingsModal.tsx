@@ -33,6 +33,8 @@ import {
   AppUpdateInfo,
   DownloaderQuality,
   TranscriptionConfig,
+  VideoFilenameFormat,
+  CarouselFilenameFormat,
 } from "../types";
 import {
   isTauriEnvironment,
@@ -269,6 +271,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [downloadSubtitles, setDownloadSubtitles] = useState<boolean>(false);
   const [desktopNotifications, setDesktopNotifications] = useState<boolean>(true);
   const [checkUpdatesOnStartup, setCheckUpdatesOnStartup] = useState<boolean>(true);
+  const [videoFilenameFormat, setVideoFilenameFormat] = useState<VideoFilenameFormat>("source_channel_title");
+  const [carouselFilenameFormat, setCarouselFilenameFormat] = useState<CarouselFilenameFormat>("folder_sequential");
   const [saving, setSaving] = useState<boolean>(false);
 
   // Auto-Updater state
@@ -324,6 +328,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setDownloadSubtitles(settings.downloadSubtitles ?? false);
       setDesktopNotifications(settings.desktopNotifications ?? true);
       setCheckUpdatesOnStartup(settings.checkUpdatesOnStartup ?? true);
+      setVideoFilenameFormat(settings.videoFilenameFormat || "source_channel_title");
+      setCarouselFilenameFormat(settings.carouselFilenameFormat || "folder_sequential");
       setUpdateError(null);
       setEngineStatusMsg(null);
       setApiKeyInput("");
@@ -479,6 +485,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         downloadSubtitles,
         desktopNotifications,
         checkUpdatesOnStartup,
+        videoFilenameFormat,
+        carouselFilenameFormat,
       });
 
       if (transcriptionConfig) {
@@ -504,6 +512,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setDownloadSubtitles(false);
     setDesktopNotifications(true);
     setCheckUpdatesOnStartup(true);
+    setVideoFilenameFormat("source_channel_title");
+    setCarouselFilenameFormat("folder_sequential");
     if (transcriptionConfig) {
       setTranscriptionConfig({
         ...transcriptionConfig,
@@ -684,6 +694,119 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }`}
                 />
               </button>
+            </div>
+
+            {/* EXPORT & FILE NAMING */}
+            <div className="flex flex-col gap-3 pt-3 border-t border-[#27272a]">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                  <FileText className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <span className="font-bold text-xs text-white">Format Nama Berkas & Folder</span>
+                  <span className="text-[10px] text-[#71717a] ml-2 font-mono">Ekspor Unduhan</span>
+                </div>
+              </div>
+
+              {/* 1. Video Filename Option */}
+              <div className="p-3.5 rounded-xl bg-[#18181b] border border-[#27272a] flex flex-col gap-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Video className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Format Nama Berkas Video</span>
+                    </span>
+                    <span className="text-[11px] text-[#71717a] mt-0.5">
+                      Pola penamaan untuk unduhan format Video & Audio
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setVideoFilenameFormat("source_channel_title")}
+                    className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                      videoFilenameFormat === "source_channel_title"
+                        ? "bg-blue-600/15 border-blue-500 text-white shadow-sm shadow-blue-500/10"
+                        : "bg-[#141418] border-[#27272a] text-zinc-400 hover:text-white hover:border-[#3f3f46]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white">Platform + Channel + Judul</span>
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 font-extrabold">Default</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-zinc-400 truncate">
+                      youtube_MrBeast_JudulVideo.mp4
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setVideoFilenameFormat("title_only")}
+                    className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                      videoFilenameFormat === "title_only"
+                        ? "bg-blue-600/15 border-blue-500 text-white shadow-sm shadow-blue-500/10"
+                        : "bg-[#141418] border-[#27272a] text-zinc-400 hover:text-white hover:border-[#3f3f46]"
+                    }`}
+                  >
+                    <span className="font-bold text-white">Judul Video Saja</span>
+                    <span className="text-[10px] font-mono text-zinc-400 truncate">
+                      JudulVideo.mp4
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 2. Carousel Slide Filename Option */}
+              <div className="p-3.5 rounded-xl bg-[#18181b] border border-[#27272a] flex flex-col gap-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <HardDrive className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Format Unduhan Carousel Slide</span>
+                    </span>
+                    <span className="text-[11px] text-[#71717a] mt-0.5">
+                      Struktur penyimpanan kumpulan foto & slide carousel (TikTok, IG, Threads)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setCarouselFilenameFormat("folder_sequential")}
+                    className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                      carouselFilenameFormat === "folder_sequential"
+                        ? "bg-blue-600/15 border-blue-500 text-white shadow-sm shadow-blue-500/10"
+                        : "bg-[#141418] border-[#27272a] text-zinc-400 hover:text-white hover:border-[#3f3f46]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white">Folder Terpisah</span>
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 font-extrabold">Default</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-zinc-400 truncate">
+                      [Judul]/01.jpg, 02.jpg
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCarouselFilenameFormat("title_sequential")}
+                    className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                      carouselFilenameFormat === "title_sequential"
+                        ? "bg-blue-600/15 border-blue-500 text-white shadow-sm shadow-blue-500/10"
+                        : "bg-[#141418] border-[#27272a] text-zinc-400 hover:text-white hover:border-[#3f3f46]"
+                    }`}
+                  >
+                    <span className="font-bold text-white">Flat di Folder Utama</span>
+                    <span className="text-[10px] font-mono text-zinc-400 truncate">
+                      Judul_01.jpg, Judul_02.jpg
+                    </span>
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* AI SUBTITLES & TRANSCRIPTION (ELEVENLABS) */}

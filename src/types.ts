@@ -101,6 +101,9 @@ export interface BinariesStatus {
   bin_dir: string;
 }
 
+export type VideoFilenameFormat = "source_channel_title" | "title_only";
+export type CarouselFilenameFormat = "folder_sequential" | "title_sequential";
+
 export interface AppSettings {
   outputFolder: string;
   defaultVideoQuality: DownloaderQuality;
@@ -109,6 +112,8 @@ export interface AppSettings {
   downloadSubtitles: boolean;
   checkUpdatesOnStartup?: boolean;
   desktopNotifications?: boolean;
+  videoFilenameFormat?: VideoFilenameFormat;
+  carouselFilenameFormat?: CarouselFilenameFormat;
 }
 
 export interface AppUpdateInfo {
