@@ -412,7 +412,14 @@ export function App() {
       });
     } catch (err: unknown) {
       if (currentUrlRef.current.trim() === cleanTarget) {
-        setError(getErrorMessage(err) || "Failed to retrieve video information");
+        // If an active download task is already running or queued for this target URL,
+        // suppress metadata error to avoid flashing a red timeout banner during download
+        const isTaskActive = Array.from(activeTasksRef.current.values()).some(
+          (t) => t.url === cleanTarget
+        );
+        if (!isTaskActive) {
+          setError(getErrorMessage(err) || "Failed to retrieve video information");
+        }
       }
     } finally {
       if (currentUrlRef.current.trim() === cleanTarget) {

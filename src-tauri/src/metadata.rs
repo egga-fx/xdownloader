@@ -54,19 +54,17 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         .arg("--no-playlist")
         .arg("--ignore-no-formats-error")
         .arg("--no-warnings")
-        .arg("--skip-download");
-
-    if let Some((runtime, path)) = crate::binaries::find_js_runtime() {
-        cmd.arg("--js-runtimes").arg(format!("{}:{}", runtime, path.to_string_lossy()));
-    }
+        .arg("--skip-download")
+        .arg("--socket-timeout")
+        .arg("15");
 
     cmd.arg(url);
     cmd.kill_on_drop(true);
 
-    // Run async command with 20 seconds safety timeout to prevent UI freezes
-    let output = match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {
+    // Run async command with 40 seconds safety timeout to prevent UI freezes
+    let output = match tokio::time::timeout(Duration::from_secs(40), cmd.output()).await {
         Ok(res) => res.map_err(|e| format!("Failed to execute yt-dlp: {}", e))?,
-        Err(_) => return Err("Metadata request timed out (exceeded 20 seconds). Please check your connection.".to_string()),
+        Err(_) => return Err("Metadata request timed out (exceeded 40 seconds). Please check your connection.".to_string()),
     };
 
     if !output.status.success() {

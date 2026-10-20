@@ -857,6 +857,7 @@ pub async fn run_download(
         cmd.arg("--concurrent-fragments").arg("4")
             .arg("--retries").arg("10")
             .arg("--fragment-retries").arg("10")
+            .arg("--socket-timeout").arg("30")
             .arg("--buffer-size").arg("16K");
 
         // Pass --ffmpeg-location so yt-dlp can reliably merge separate audio and video streams into a single mp4
@@ -884,9 +885,40 @@ pub async fn run_download(
             };
             cmd.arg("--audio-format").arg(audio_fmt);
             cmd.arg("--audio-quality").arg("0");
-            // Prefer stable HTTPS direct streams with format fallback chain to prevent HTTP 403 SABR lockouts
-            cmd.arg("-f").arg("bestaudio[protocol^=http][ext=m4a]/bestaudio[protocol^=http]/bestaudio/best");
-            cmd.arg("-S").arg("proto:https,ext:m4a:webm");
+            if platform == "tiktok" {
+                // TikTok Audio: Prioritize extracting audio directly from the pre-muxed video stream so that creator voice/speech is preserved rather than downloading isolated catalog music
+                cmd.arg("-f").arg("best[acodec!=none]/bestaudio/best");
+            } else {
+                // Prefer stable HTTPS direct streams with format fallback chain to prevent HTTP 403 SABR lockouts
+                cmd.arg("-f").arg("bestaudio[protocol^=http][ext=m4a]/bestaudio[protocol^=http]/bestaudio/best");
+                cmd.arg("-S").arg("proto:https,ext:m4a:webm");
+            }
+        } else if platform == "tiktok" {
+            // TikTok Video: Prioritize pre-muxed containers with audio (h264/avc) to prevent yt-dlp from selecting audio-less bytevc1 (HEVC) streams and merging with raw catalog music (which wipes creator voiceover and makes music loud)
+            match quality.as_str() {
+                "1080p" => {
+                    cmd.arg("-f").arg("bv*[height<=1080][acodec!=none][vcodec^=avc]/bv*[height<=1080][acodec!=none]/b[height<=1080]/best[height<=1080]/bv*[acodec!=none]/best/bestvideo+bestaudio");
+                    cmd.arg("-S").arg("res:1080,fps,proto:https,ext:mp4:m4a");
+                }
+                "720p" => {
+                    cmd.arg("-f").arg("bv*[height<=720][acodec!=none][vcodec^=avc]/bv*[height<=720][acodec!=none]/b[height<=720]/best[height<=720]/bv*[acodec!=none]/best/bestvideo+bestaudio");
+                    cmd.arg("-S").arg("res:720,fps,proto:https,ext:mp4:m4a");
+                }
+                "480p" => {
+                    cmd.arg("-f").arg("bv*[height<=480][acodec!=none][vcodec^=avc]/bv*[height<=480][acodec!=none]/b[height<=480]/best[height<=480]/bv*[acodec!=none]/best/bestvideo+bestaudio");
+                    cmd.arg("-S").arg("res:480,fps,proto:https,ext:mp4:m4a");
+                }
+                "360p" => {
+                    cmd.arg("-f").arg("bv*[height<=360][acodec!=none][vcodec^=avc]/bv*[height<=360][acodec!=none]/b[height<=360]/best[height<=360]/bv*[acodec!=none]/best/bestvideo+bestaudio");
+                    cmd.arg("-S").arg("res:360,fps,proto:https,ext:mp4:m4a");
+                }
+                _ => {
+                    // "best" / Original HD: prioritize pre-muxed container with audio
+                    cmd.arg("-f").arg("bv*[acodec!=none][vcodec^=avc]/bv*[acodec!=none]/b/best/bestvideo+bestaudio");
+                    cmd.arg("-S").arg("res,fps,proto:https,ext:mp4:m4a");
+                }
+            }
+            cmd.arg("--merge-output-format").arg("mp4");
         } else {
             match quality.as_str() {
                 "4k" | "2160p" => {
