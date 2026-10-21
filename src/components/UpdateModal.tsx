@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { AppUpdateInfo } from "../types";
 import { downloadAndInstallAppUpdate, openExternalUrl } from "../lib/tauri-api";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface UpdateModalProps {
   open: boolean;
@@ -42,7 +43,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
       setError(
         err instanceof Error
           ? err.message
-          : "Gagal mengunduh atau memasang pembaruan otomatis."
+          : "Failed to download or install automatic update."
       );
       setInstalling(false);
     }
@@ -70,13 +71,13 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
             </div>
             <div>
               <h2 id="update-modal-title" className="text-sm font-bold text-white flex items-center gap-2">
-                <span>Pembaruan Aplikasi Tersedia</span>
+                <span>Application Update Available</span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
                   v{updateInfo.version}
                 </span>
               </h2>
               <p className="text-xs text-[#a1a1aa]">
-                Versi baru xDownloader siap diunduh dan dipasang
+                A new version of xDownloader is ready to download and install.
               </p>
             </div>
           </div>
@@ -85,7 +86,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
             <button
               onClick={onClose}
               className="w-8 h-8 rounded-lg hover:bg-[#27272a] text-[#71717a] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-              aria-label="Tutup"
+              aria-label="Close"
             >
               <X className="w-4 h-4" />
             </button>
@@ -97,7 +98,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           {/* Version badge cards */}
           <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-[#18181b] border border-[#27272a]">
             <div>
-              <p className="text-[11px] font-medium text-[#71717a]">Versi Terpasang</p>
+              <p className="text-[11px] font-medium text-[#71717a]">Installed Version</p>
               <p className="text-sm font-bold font-mono text-[#a1a1aa]">
                 v{updateInfo.currentVersion}
               </p>
@@ -105,7 +106,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
             <div>
               <p className="text-[11px] font-medium text-blue-400 flex items-center gap-1">
                 <Sparkles className="w-3 h-3" />
-                <span>Versi Terbaru</span>
+                <span>Latest Version</span>
               </p>
               <p className="text-sm font-bold font-mono text-emerald-400">
                 v{updateInfo.version}
@@ -113,23 +114,23 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
             </div>
           </div>
 
-          {/* Release Notes */}
+          {/* Release Notes with Markdown Renderer */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-white">Catatan Rilis (Release Notes)</span>
+              <span className="text-xs font-semibold text-white">Release Notes</span>
               {updateInfo.releaseUrl && (
                 <button
                   type="button"
                   onClick={handleOpenReleasePage}
                   className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 cursor-pointer"
                 >
-                  <span>Lihat di GitHub</span>
+                  <span>View on GitHub</span>
                   <ExternalLink className="w-3 h-3" />
                 </button>
               )}
             </div>
-            <div className="p-3.5 rounded-xl bg-[#09090b] border border-[#27272a] max-h-48 overflow-y-auto text-xs text-[#d4d4d8] whitespace-pre-wrap font-sans leading-relaxed selection:bg-blue-500/30">
-              {updateInfo.body?.trim() || "Tidak ada rincian catatan rilis khusus."}
+            <div className="p-3.5 rounded-xl bg-[#09090b] border border-[#27272a] max-h-56 overflow-y-auto selection:bg-blue-500/30">
+              <MarkdownRenderer content={updateInfo.body} />
             </div>
           </div>
 
@@ -139,7 +140,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               <div className="flex items-center justify-between text-xs">
                 <span className="text-blue-400 font-medium flex items-center gap-2">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Mengunduh dan menyiapkan pembaruan...</span>
+                  <span>Downloading and preparing update...</span>
                 </span>
                 <span className="font-mono font-bold text-white">{progress}%</span>
               </div>
@@ -150,7 +151,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
                 />
               </div>
               <p className="text-[11px] text-[#71717a]">
-                Aplikasi akan otomatis menutup dan meluncurkan installer setelah unduhan selesai.
+                The application will close and launch the installer once the download completes.
               </p>
             </div>
           )}
@@ -166,7 +167,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
                     onClick={handleOpenReleasePage}
                     className="self-start text-[11px] font-bold text-red-300 hover:text-white underline cursor-pointer"
                   >
-                    Unduh manual dari GitHub Releases →
+                    Download manually from GitHub Releases →
                   </button>
                 )}
               </div>
@@ -182,7 +183,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
             onClick={onClose}
             className="px-4 py-2 rounded-xl text-xs font-medium text-[#a1a1aa] hover:text-white hover:bg-[#27272a] transition-colors cursor-pointer disabled:opacity-50"
           >
-            Nanti Saja
+            Later
           </button>
 
           <button
@@ -194,12 +195,12 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
             {installing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Memasang Pembaruan ({progress}%)...</span>
+                <span>Installing Update ({progress}%)...</span>
               </>
             ) : (
               <>
                 <Download className="w-4 h-4" />
-                <span>Pasang Pembaruan Sekarang</span>
+                <span>Install Update Now</span>
               </>
             )}
           </button>

@@ -110,9 +110,9 @@ export const BinarySetupModal: React.FC<BinarySetupModalProps> = ({
           <div className="p-8 rounded-xl bg-[#0e0e11] border border-[#27272a] flex flex-col items-center justify-center gap-3 text-center animate-in fade-in">
             <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
             <div className="flex flex-col gap-1">
-              <p className="font-bold text-sm text-white">Memeriksa Download Engines...</p>
+              <p className="font-bold text-sm text-white">Checking Download Engines...</p>
               <p className="text-xs text-[#71717a]">
-                Memverifikasi ketersediaan dan versi binary yt-dlp dan ffmpeg
+                Verifying availability and version of yt-dlp and ffmpeg binaries
               </p>
             </div>
           </div>

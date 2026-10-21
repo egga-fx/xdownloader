@@ -16,10 +16,10 @@ interface ActiveTranscriptionBannerProps {
 }
 
 const STAGES: { id: TranscriptionStage; label: string; step: number }[] = [
-  { id: "downloading_audio", label: "Ekstrak Audio", step: 1 },
-  { id: "uploading", label: "Upload Cloud", step: 2 },
+  { id: "downloading_audio", label: "Extract Audio", step: 1 },
+  { id: "uploading", label: "Cloud Upload", step: 2 },
   { id: "transcribing", label: "AI Scribe v2", step: 3 },
-  { id: "writing_files", label: "Simpan SRT", step: 4 },
+  { id: "writing_files", label: "Save SRT", step: 4 },
 ];
 
 function getStageIndex(stage: TranscriptionStage): number {
@@ -66,7 +66,7 @@ export const ActiveTranscriptionBanner: React.FC<ActiveTranscriptionBannerProps>
               </span>
             </div>
             <p className="text-xs sm:text-sm font-bold text-white truncate mt-0.5" title={title || "Media"}>
-              {title || "Transkrip Subtitel Otomatis"}
+              {title || "Auto Subtitle Transcript"}
             </p>
           </div>
         </div>
@@ -77,7 +77,7 @@ export const ActiveTranscriptionBanner: React.FC<ActiveTranscriptionBannerProps>
             type="button"
             onClick={onOpenVault}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 text-xs font-semibold text-zinc-300 hover:text-white transition-colors cursor-pointer"
-            title="Buka status di Media Vault"
+            title="View status in Media Vault"
           >
             <ExternalLink className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Media Vault</span>
@@ -86,7 +86,7 @@ export const ActiveTranscriptionBanner: React.FC<ActiveTranscriptionBannerProps>
             type="button"
             onClick={() => onCancel(transcription.taskId)}
             className="w-8 h-8 rounded-lg text-zinc-400 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-colors cursor-pointer"
-            title="Batalkan proses transkripsi"
+            title="Cancel transcription process"
           >
             <XCircle className="w-4 h-4" />
           </button>
@@ -136,7 +136,7 @@ export const ActiveTranscriptionBanner: React.FC<ActiveTranscriptionBannerProps>
         <div className="flex items-center justify-between text-[11px] text-zinc-400">
           <span className="flex items-center gap-1.5 truncate">
             <Loader2 className="w-3 h-3 text-purple-400 animate-spin shrink-0" />
-            <span className="truncate">{transcription.message || "Memproses transkrip audio..."}</span>
+            <span className="truncate">{transcription.message || "Processing audio transcript..."}</span>
           </span>
           <span className="font-mono text-purple-300 shrink-0 ml-2">
             ElevenLabs Scribe v2

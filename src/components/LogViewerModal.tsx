@@ -159,7 +159,7 @@ export const LogViewerModal: React.FC<LogViewerModalProps> = ({ open, onClose })
                 </span>
               </h3>
               <p className="text-[11px] text-[#71717a] truncate">
-                Catatan aktivitas unduhan, error processing, dan event runtime
+                Activity log of downloads, processing errors, and runtime events
               </p>
             </div>
           </div>
@@ -169,10 +169,10 @@ export const LogViewerModal: React.FC<LogViewerModalProps> = ({ open, onClose })
               type="button"
               onClick={handleOpenFolder}
               className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#27272a] bg-[#18181b] hover:bg-[#27272a] text-xs font-semibold text-[#a1a1aa] hover:text-white transition-colors cursor-pointer"
-              title="Buka direktori penyimpanan file log di OS"
+              title="Open log storage folder in file explorer"
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              <span>Buka Folder</span>
+              <span>Open Folder</span>
             </button>
 
             <button
@@ -230,7 +230,7 @@ export const LogViewerModal: React.FC<LogViewerModalProps> = ({ open, onClose })
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Cari log..."
+                placeholder="Search logs..."
                 className="w-full pl-8 pr-3 py-1 bg-[#1e1e24] border border-[#27272a] rounded-lg text-xs text-white placeholder-[#71717a] focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 font-sans"
               />
             </div>
@@ -250,17 +250,17 @@ export const LogViewerModal: React.FC<LogViewerModalProps> = ({ open, onClose })
               onClick={handleCopyLogs}
               disabled={filteredLogs.length === 0}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[#27272a] bg-[#1e1e24] hover:bg-[#27272a] text-xs font-medium text-[#a1a1aa] hover:text-white transition-colors cursor-pointer disabled:opacity-40"
-              title="Salin log yang difilter ke clipboard"
+              title="Copy filtered logs to clipboard"
             >
               {copied ? (
                 <>
                   <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-400">Tersalin</span>
+                  <span className="text-emerald-400">Copied</span>
                 </>
               ) : (
                 <>
                   <Copy className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Salin</span>
+                  <span className="hidden sm:inline">Copy</span>
                 </>
               )}
             </button>
@@ -270,7 +270,7 @@ export const LogViewerModal: React.FC<LogViewerModalProps> = ({ open, onClose })
               onClick={handleClearLogs}
               disabled={clearing || logs.length === 0}
               className="p-1.5 rounded-lg border border-red-500/20 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors cursor-pointer disabled:opacity-40"
-              title="Hapus semua log riwayat"
+              title="Clear all log entries"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -282,14 +282,14 @@ export const LogViewerModal: React.FC<LogViewerModalProps> = ({ open, onClose })
           {loading && logs.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center gap-2 text-[#71717a]">
               <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
-              <span>Memuat data log aktivitas...</span>
+              <span>Loading activity logs...</span>
             </div>
           ) : filteredLogs.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center gap-2 text-[#71717a]">
               <Info className="w-8 h-8 opacity-40" />
-              <span className="text-sm">Tidak ada log yang sesuai kriteria</span>
+              <span className="text-sm">No logs match the criteria</span>
               <p className="text-[11px] text-[#52525b]">
-                {searchQuery ? "Coba ubah kata kunci pencarian." : "Belum ada event tercatat."}
+                {searchQuery ? "Try adjusting your search query." : "No events recorded yet."}
               </p>
             </div>
           ) : (
@@ -366,8 +366,8 @@ export const LogViewerModal: React.FC<LogViewerModalProps> = ({ open, onClose })
         <div className="p-3 border-t border-[#27272a] bg-[#18181b] flex items-center justify-between text-xs text-[#71717a] shrink-0">
           <div className="flex items-center gap-3">
             <span>
-              Menampilkan <strong className="text-white">{filteredLogs.length}</strong> dari{" "}
-              {logs.length} catatan
+              Showing <strong className="text-white">{filteredLogs.length}</strong> of{" "}
+              {logs.length} entries
             </span>
           </div>
           <button
@@ -375,7 +375,7 @@ export const LogViewerModal: React.FC<LogViewerModalProps> = ({ open, onClose })
             onClick={onClose}
             className="px-3 py-1 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white text-xs font-semibold cursor-pointer transition-colors"
           >
-            Tutup
+            Close
           </button>
         </div>
       </div>

@@ -108,10 +108,10 @@ export async function sendDesktopNotification(payload: NotificationPayload): Pro
  */
 export async function notifyDownloadCompleted(taskTitle: string, destinationFolder?: string): Promise<void> {
   const cleanTitle = (taskTitle || "Media").trim();
-  const folderText = destinationFolder ? `\nDisimpan di: ${destinationFolder}` : "";
+  const folderText = destinationFolder ? `\nSaved to: ${destinationFolder}` : "";
   await sendDesktopNotification({
-    title: "Unduhan Selesai — xDownloader",
-    body: `"${cleanTitle}" telah berhasil diunduh dan siap digunakan.${folderText}`,
+    title: "Download Complete — xDownloader",
+    body: `"${cleanTitle}" downloaded successfully and is ready to use.${folderText}`,
   });
 }
 
@@ -122,8 +122,8 @@ export async function notifyDownloadFailed(taskTitle: string, error?: string): P
   const cleanTitle = (taskTitle || "Media").trim();
   const errorText = error ? `: ${error}` : "";
   await sendDesktopNotification({
-    title: "Unduhan Gagal — xDownloader",
-    body: `Gagal menyelesaikan unduhan "${cleanTitle}"${errorText}.`,
+    title: "Download Failed — xDownloader",
+    body: `Failed to complete download "${cleanTitle}"${errorText}.`,
   });
 }
 
@@ -134,7 +134,7 @@ export async function notifyOutputFolderChanged(newFolder: string): Promise<void
   const cleanFolder = (newFolder || "").trim();
   if (!cleanFolder) return;
   await sendDesktopNotification({
-    title: "Folder Output Disetel — xDownloader",
-    body: `Lokasi penyimpanan media berhasil dialihkan ke:\n${cleanFolder}`,
+    title: "Output Folder Updated — xDownloader",
+    body: `Media storage location set to:\n${cleanFolder}`,
   });
 }

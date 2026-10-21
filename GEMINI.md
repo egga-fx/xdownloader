@@ -83,8 +83,7 @@ Debat aktif jika deteksi:
 - **Web Preview Resilience**: Fungsi di `src/lib/tauri-api.ts` WAJIB mempertahankan pengecekan `isTauriEnvironment()`. Jika berada di browser, gunakan mock simulation yang realistis agar frontend dev tetap berjalan tanpa Tauri runtime.
 - **Imports**: Gunakan alias `@/*` untuk import modul internal, hindari deep relative paths (`../../..`).
 
-## UI COMPONENT STANDARDS
-
+- **UI Language Standard (STRICT)**: SEMUA teks antarmuka (UI elements, labels, buttons, dialogs, toasts, OS notifications, placeholder, tooltips, dan modal) WAJIB menggunakan bahasa Inggris (English). Bahasa Indonesia HANYA diizinkan untuk komentar kode (code comments) dan dokumentasi internal file markdown (`.md`). DILARANG menggunakan bahasa Indonesia pada string yang tampil di layar pengguna.
 - **Theme & Design System**: *Masagi Zinc Dark Theme*
   - Background Canvas: `#09090b` (`bg-[#09090b]` / CSS var `--background`)
   - Surface Cards & Modals: `#121215` (`bg-[#121215]` / CSS var `--card`)
@@ -94,6 +93,7 @@ Debat aktif jika deteksi:
 - **Styling Method**: Gunakan TailwindCSS v4 utility classes dengan helper `cn(...)` (`src/lib/utils.ts`). DILARANG mengimpor atau menggunakan Material UI (MUI).
 - **Form & Input**: Komponen input menggunakan dark theme native tailwind styling dengan state focus ring `focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500`.
 - **Modals & Drawers**: Gunakan backdrop blur (`backdrop-blur-sm`), animasi fade-in/slide, handler ESC key, dan click-outside dismissal yang konsisten.
+- **Markdown & Rich Content**: Catatan rilis dan teks berformat wajib diparse menggunakan renderer markdown yang bersih dan independen (zero-dependency preferred).
 - **High-Frequency State**: Progress download (`onDownloadProgress`) harus ditangani secara efisien tanpa memicu layout re-render global yang tidak perlu.
 
 ## BACKEND STANDARDS (Rust & Tauri)

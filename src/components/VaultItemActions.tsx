@@ -264,8 +264,8 @@ export const VaultItemActions: React.FC<VaultItemActionsProps> = ({
                   <Sparkles className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                   <span>
                     {record.formatType === "subtitle"
-                      ? "Buka di Transcript Studio"
-                      : "Transkrip di Studio"}
+                      ? "Open in Transcript Studio"
+                      : "Transcribe in Studio"}
                   </span>
                 </button>
               )}

@@ -52,18 +52,18 @@ interface QualityOptionDef {
 }
 
 const VIDEO_QUALITY_OPTIONS: QualityOptionDef[] = [
-  { id: "best", label: "Original HD", badge: "MAX", desc: "Kualitas tertinggi yang tersedia (4K/2K/1080p)" },
+  { id: "best", label: "Original HD", badge: "MAX", desc: "Highest quality available (4K/2K/1080p)" },
   { id: "1080p", label: "1080p", badge: "FHD", desc: "Full High Definition (1920x1080)" },
-  { id: "720p", label: "720p", badge: "HD", desc: "High Definition standar (1280x720)" },
-  { id: "480p", label: "480p", badge: "SD", desc: "Resolusi standar, hemat kuota (854x480)" },
-  { id: "360p", label: "360p", badge: "LOW", desc: "Resolusi rendah, ukuran file paling kecil" },
+  { id: "720p", label: "720p", badge: "HD", desc: "Standard High Definition (1280x720)" },
+  { id: "480p", label: "480p", badge: "SD", desc: "Standard Definition, bandwidth saving (854x480)" },
+  { id: "360p", label: "360p", badge: "LOW", desc: "Low resolution, smallest file size" },
 ];
 
 const AUDIO_QUALITY_OPTIONS: QualityOptionDef[] = [
-  { id: "mp3", label: "MP3", badge: "320K", desc: "Format universal, kompatibel di semua pemutar" },
-  { id: "m4a", label: "M4A", badge: "AAC", desc: "Format native Apple/AAC, efisien dan jernih" },
-  { id: "wav", label: "WAV", badge: "LOSSLESS", desc: "Audio uncompressed tanpa kompresi" },
-  { id: "flac", label: "FLAC", badge: "HI-RES", desc: "Kompresi lossless audiophile" },
+  { id: "mp3", label: "MP3", badge: "320K", desc: "Universal format, compatible with all players" },
+  { id: "m4a", label: "M4A", badge: "AAC", desc: "Apple/AAC native format, crisp & efficient" },
+  { id: "wav", label: "WAV", badge: "LOSSLESS", desc: "Uncompressed raw studio master audio" },
+  { id: "flac", label: "FLAC", badge: "HI-RES", desc: "Audiophile lossless compression" },
 ];
 
 export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
@@ -372,7 +372,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                     <Images className="w-2.5 h-2.5 text-zinc-400" />
                     <span>
                       {carouselVideosCount > 0 && carouselImagesCount > 0
-                        ? `${carouselImages.length} Media (${carouselVideosCount} Video, ${carouselImagesCount} Foto)`
+                        ? `${carouselImages.length} Media (${carouselVideosCount} Videos, ${carouselImagesCount} Photos)`
                         : carouselVideosCount > 0
                         ? `${carouselVideosCount} Videos`
                         : `${carouselImages.length} Photos`}
@@ -613,7 +613,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                                 setIsFormatDropdownOpen(false);
                               }}
                               className="px-2 py-1 rounded-md text-[10px] font-bold bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
-                              title="Buka Pengaturan untuk mengisi ElevenLabs API Key"
+                              title="Open Settings to configure ElevenLabs API Key"
                             >
                               <span>Set Key</span>
                               <ExternalLink className="w-2.5 h-2.5" />
@@ -667,7 +667,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
               </div>
               <div
                 className="h-10 px-3.5 rounded-xl font-medium text-xs border border-[#27272a] bg-[#18181c] text-[#a1a1aa] flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
-                title="Format berkas transkrip yang dihasilkan secara otomatis"
+                title="Automatically generated transcript format"
               >
                 <span>Format:</span>
                 <span className="font-bold text-white">SRT</span>
@@ -687,7 +687,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                     ? "bg-[#1f1f26] border-blue-500 ring-2 ring-blue-500/20 text-white"
                     : "bg-[#18181c] hover:bg-[#1f1f24] border-[#27272a] hover:border-[#3f3f46] text-white"
                 }`}
-                title="Pilih kualitas atau resolusi media"
+                title="Select media quality or resolution"
               >
                 {formatType === "video" ? (
                   <Film className="w-3.5 h-3.5 text-blue-400 shrink-0" />
@@ -696,7 +696,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 )}
 
                 <div className="flex items-center gap-1.5 text-xs">
-                  <span className="text-[#71717a] font-normal">Kualitas:</span>
+                  <span className="text-[#71717a] font-normal">Quality:</span>
                   <span className="text-white font-bold uppercase">
                     {quality === "best" ? "Original HD" : quality}
                   </span>
@@ -712,7 +712,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
               {isQualityDropdownOpen && (
                 <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-64 sm:w-72 origin-bottom-left bg-[#16161a]/98 backdrop-blur-xl border border-[#27272a] rounded-xl shadow-2xl shadow-black/95 p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 zoom-in-95 duration-150">
                   <div className="px-2.5 py-1 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider border-b border-[#27272a]/60">
-                    {formatType === "video" ? "Pilihan Resolusi Video" : "Pilihan Format Audio"}
+                    {formatType === "video" ? "Video Resolution Options" : "Audio Format Options"}
                   </div>
                   {(formatType === "video" ? VIDEO_QUALITY_OPTIONS : AUDIO_QUALITY_OPTIONS).map((opt) => {
                     const isSelected = quality === opt.id;
@@ -759,16 +759,16 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-end">
           {isCarousel && (
             <>
-              {/* Button Pilih Media / Foto */}
+              {/* Button Select Media / Photos */}
               <button
                 type="button"
                 onClick={() => setIsSelectionModalOpen(true)}
                 disabled={isDownloadingCurrentUrl}
                 className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
-                title={carouselVideosCount > 0 ? "Pilih media tertentu untuk diunduh" : "Pilih foto tertentu untuk diunduh"}
+                title={carouselVideosCount > 0 ? "Select specific media items to download" : "Select specific photos to download"}
               >
                 <Layers className="w-3.5 h-3.5 text-zinc-400" />
-                <span>{carouselVideosCount > 0 ? "Pilih Media" : "Pilih Foto"}</span>
+                <span>{carouselVideosCount > 0 ? "Select Media" : "Select Photos"}</span>
               </button>
 
               {/* Quick Download Active Slide */}
@@ -777,14 +777,14 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 onClick={() => onDownload([activeImageIndex])}
                 disabled={isDownloadingCurrentUrl}
                 className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
-                title={`Download hanya slide #${activeImageIndex + 1}`}
+                title={`Download slide #${activeImageIndex + 1} only`}
               >
                 {isCurrentSlideVideo ? (
                   <Film className="w-3.5 h-3.5 text-zinc-400" />
                 ) : (
                   <ImageIcon className="w-3.5 h-3.5 text-zinc-400" />
                 )}
-                <span>{isCurrentSlideVideo ? "Video" : "Foto"} #{activeImageIndex + 1}</span>
+                <span>{isCurrentSlideVideo ? "Video" : "Photo"} #{activeImageIndex + 1}</span>
               </button>
             </>
           )}
@@ -822,8 +822,8 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 <Loader2 className="w-4 h-4 animate-spin text-purple-300" />
                 <span>
                   {transcriptionProgress && transcriptionProgress.percent > 0
-                    ? `Mentranskrip (${Math.round(transcriptionProgress.percent)}%)...`
-                    : "Mentranskrip Audio..."}
+                    ? `Transcribing (${Math.round(transcriptionProgress.percent)}%)...`
+                    : "Transcribing Audio..."}
                 </span>
               </>
             ) : (
@@ -835,17 +835,17 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 )}
                 <span>
                   {isCarousel
-                    ? `Download Semua (${carouselImages.length} ${
+                    ? `Download All (${carouselImages.length} ${
                         carouselVideosCount > 0 && carouselImagesCount > 0
                           ? "Media"
                           : carouselVideosCount > 0
-                          ? "Video"
-                          : "Foto"
+                          ? "Videos"
+                          : "Photos"
                       })`
                     : isImage
                     ? "Download Photo (HD)"
                     : formatType === "subtitle"
-                    ? "Unduh Transkrip (SRT)"
+                    ? "Download Transcript (SRT)"
                     : formatType === "audio"
                     ? "Audio"
                     : "Video"}

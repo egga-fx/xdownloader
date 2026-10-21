@@ -95,16 +95,16 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
               <Layers className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-semibold text-zinc-100 text-sm">Pilih {mediaLabel} Carousel</h3>
+              <h3 className="font-semibold text-zinc-100 text-sm">Select {mediaLabel} Carousel</h3>
               <p className="text-xs text-zinc-400 line-clamp-1">
-                {postTitle || `Tersedia ${images.length} ${mediaLabel.toLowerCase()} dalam album ini`}
+                {postTitle || `${images.length} ${mediaLabel.toLowerCase()} available in this album`}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-[#1e1e24] transition-colors"
-            title="Tutup (ESC)"
+            title="Close (ESC)"
           >
             <X className="w-4 h-4" />
           </button>
@@ -119,18 +119,18 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
             {isAllSelected ? (
               <>
                 <Square className="w-3.5 h-3.5 text-zinc-400" />
-                <span>Batalkan Semua</span>
+                <span>Deselect All</span>
               </>
             ) : (
               <>
                 <CheckSquare className="w-3.5 h-3.5 text-blue-400" />
-                <span>Pilih Semua</span>
+                <span>Select All</span>
               </>
             )}
           </button>
 
           <span className="text-zinc-400 font-medium">
-            <strong className="text-zinc-100">{selected.size}</strong> dari {images.length} {mediaLabel.toLowerCase()} dipilih
+            <strong className="text-zinc-100">{selected.size}</strong> of {images.length} {mediaLabel.toLowerCase()} selected
           </span>
         </div>
 
@@ -196,7 +196,7 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
             onClick={onClose}
             className="px-4 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-[#18181b] transition-colors"
           >
-            Batal
+            Cancel
           </button>
 
           <button
@@ -211,10 +211,10 @@ export const CarouselSelectionModal: React.FC<CarouselSelectionModalProps> = ({
             <Download className="w-3.5 h-3.5" />
             <span>
               {selected.size === 0
-                ? `Pilih Setidaknya 1 ${mediaLabel}`
+                ? `Select at least 1 ${mediaLabel}`
                 : selected.size === images.length
-                ? `Download Semua (${images.length} ${mediaLabel})`
-                : `Download ${selected.size} ${mediaLabel} Pilihan`}
+                ? `Download All (${images.length} ${mediaLabel})`
+                : `Download Selected (${selected.size} ${mediaLabel})`}
             </span>
           </button>
         </div>

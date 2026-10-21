@@ -22,10 +22,10 @@ import {
 } from "lucide-react";
 
 const STUDIO_STAGES: { id: string; label: string; step: number }[] = [
-  { id: "downloading_audio", label: "Ekstrak Audio", step: 1 },
-  { id: "uploading", label: "Upload Cloud", step: 2 },
+  { id: "downloading_audio", label: "Extract Audio", step: 1 },
+  { id: "uploading", label: "Cloud Upload", step: 2 },
   { id: "transcribing", label: "AI Scribe v2", step: 3 },
-  { id: "writing_files", label: "Simpan SRT", step: 4 },
+  { id: "writing_files", label: "Save SRT", step: 4 },
 ];
 
 function getStudioStageIndex(stage?: string): number {
@@ -355,7 +355,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
     try {
       if (inputMode === "file") {
         if (!selectedFile) {
-          throw new Error("Pilih berkas video atau audio terlebih dahulu.");
+          throw new Error("Please select a video or audio file first.");
         }
         const taskId = await startTranscriptionForFile({
           filePath: selectedFile,
@@ -365,7 +365,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
         setActiveTaskId(taskId);
       } else {
         if (!inputUrl.trim()) {
-          throw new Error("Masukkan tautan URL video terlebih dahulu.");
+          throw new Error("Please enter a video URL first.");
         }
         const taskId = await startTranscription({
           url: inputUrl.trim(),
@@ -470,7 +470,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-[#71717a]">
-              Transkripsi video & audio otomatis, speaker diarization, dan editor subtitel
+              Automated video & audio transcription, speaker diarization, and subtitle editor
             </p>
           </div>
         </div>
@@ -483,7 +483,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
               className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:bg-amber-500/25 transition-colors cursor-pointer"
             >
               <AlertCircle className="w-3.5 h-3.5" />
-              <span>API Key Belum Disetel</span>
+              <span>API Key Not Configured</span>
             </button>
           ) : (
             <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg font-medium">
@@ -495,7 +495,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
           <button
             onClick={onOpenSettings}
             className="w-8 h-8 rounded-lg bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] text-[#a1a1aa] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-            title="Pengaturan Transkripsi"
+            title="Transcription Settings"
           >
             <SettingsIcon className="w-4 h-4" />
           </button>
@@ -503,7 +503,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
           <button
             onClick={onClose}
             className="w-8 h-8 rounded-lg bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] text-[#a1a1aa] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-            title="Tutup Studio (ESC)"
+            title="Close Studio (ESC)"
           >
             <X className="w-4 h-4" />
           </button>
@@ -525,7 +525,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
               }`}
             >
               <UploadCloud className="w-3.5 h-3.5" />
-              <span>Berkas Lokal</span>
+              <span>Local File</span>
             </button>
             <button
               onClick={() => setInputMode("url")}
@@ -536,7 +536,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
               }`}
             >
               <FileVideo className="w-3.5 h-3.5" />
-              <span>Tautan Video</span>
+              <span>Video URL</span>
             </button>
           </div>
 
@@ -564,18 +564,18 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
               <div>
                 <p className="text-xs font-bold text-white group-hover:text-blue-300 transition-colors">
                   {selectedFile
-                    ? "Ganti Berkas Media"
-                    : "Tarik & Lepas Berkas Media ke Sini"}
+                    ? "Change Media File"
+                    : "Drag & Drop Media File Here"}
                 </p>
                 <p className="text-[11px] text-[#71717a] mt-0.5">
-                  Dukung MP4, MKV, WebM, MOV, MP3, WAV, M4A, AAC
+                  Supports MP4, MKV, WebM, MOV, MP3, WAV, M4A, AAC
                 </p>
               </div>
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
               <label className="text-[11px] font-semibold text-[#a1a1aa]">
-                Tautan Video / Media (YouTube, TikTok, Instagram, Threads, dll)
+                Video / Media URL (YouTube, TikTok, Instagram, Threads, etc.)
               </label>
               <input
                 type="text"
@@ -663,7 +663,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
           <div className="p-3.5 rounded-xl bg-[#121215] border border-[#27272a] flex flex-col gap-3">
             <span className="text-xs font-bold text-white flex items-center gap-2">
               <Sliders className="w-3.5 h-3.5 text-blue-400" />
-              <span>Pengaturan Model & Format</span>
+              <span>Model & Format Settings</span>
             </span>
 
             {/* Diarization Toggle */}
@@ -684,7 +684,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
             <label className="flex items-center justify-between text-xs cursor-pointer group">
               <div className="flex items-center gap-2">
                 <Mic className="w-3.5 h-3.5 text-[#71717a] group-hover:text-blue-400 transition-colors" />
-                <span className="text-[#d4d4d8]">Tandai Reaksi Audio ([applause])</span>
+                <span className="text-[#d4d4d8]">Tag Audio Events ([applause])</span>
               </div>
               <input
                 type="checkbox"
@@ -697,7 +697,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
             {/* Max Characters Per Line */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#27272a]">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-[#71717a]">Karakter per Baris</span>
+                <span className="text-[#71717a]">Characters per Line</span>
                 <span className="font-mono text-white font-bold">{maxChars}</span>
               </div>
               <input
@@ -712,12 +712,12 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
 
             {/* Language Code */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#27272a]">
-              <span className="text-[11px] text-[#71717a]">Kode Bahasa (Opsional)</span>
+              <span className="text-[11px] text-[#71717a]">Language Code (Optional)</span>
               <input
                 type="text"
                 value={langCode}
                 onChange={(e) => setLangCode(e.target.value)}
-                placeholder="Kosongkan untuk otomatis (atau misal: en, id, ja)"
+                placeholder="Leave empty for auto-detect (e.g. en, es, ja)"
                 className="w-full px-3 py-1.5 rounded-lg bg-[#18181b] border border-[#27272a] text-xs text-white focus:border-blue-500 focus:outline-none"
               />
             </div>
@@ -729,7 +729,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
               <div className="flex items-center justify-between text-xs">
                 <span className="font-bold text-purple-300 flex items-center gap-2">
                   <Sparkles className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
-                  <span className="truncate">{progress?.message || "Sedang memproses audio..."}</span>
+                  <span className="truncate">{progress?.message || "Processing audio..."}</span>
                 </span>
                 <span className="font-mono font-bold text-white shrink-0">
                   {Math.round(progress?.percent ?? 10)}%
@@ -794,7 +794,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                 onClick={handleCancel}
                 className="w-full py-2.5 rounded-xl text-xs font-bold bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 transition-colors cursor-pointer"
               >
-                Batalkan Proses Transkripsi
+                Cancel Transcription Process
               </button>
             ) : (
               <button
@@ -804,7 +804,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                 className="w-full py-3 rounded-xl text-xs font-bold bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <Sparkles className="w-4 h-4" />
-                <span>Mulai Transkripsi Sekarang</span>
+                <span>Start Transcription Now</span>
               </button>
             )}
           </div>
@@ -853,7 +853,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                     : "text-[#a1a1aa] hover:text-white"
                 }`}
               >
-                Teks Bacaan (TXT)
+                Plain Text (TXT)
               </button>
             </div>
 
@@ -865,7 +865,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Cari kata kunci cue..."
+                  placeholder="Search cue keywords..."
                   className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#18181b] border border-[#27272a] focus:border-blue-500 focus:outline-none text-xs text-white placeholder-[#71717a]"
                 />
               </div>
@@ -885,13 +885,13 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                       </div>
                       <div>
                         <h4 className="text-xs font-bold text-white flex items-center gap-2">
-                          <span>AI Scribe v2 Sedang Menyimak & Mentranskrip</span>
+                          <span>AI Scribe v2 Listening & Transcribing</span>
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30">
                             {Math.round(progress?.percent ?? 10)}%
                           </span>
                         </h4>
                         <p className="text-[11px] text-zinc-400 mt-0.5">
-                          {progress?.message || "Mengekstrak percakapan audio dan menyelaraskan timecode..."}
+                          {progress?.message || "Extracting speech audio and aligning timecodes..."}
                         </p>
                       </div>
                     </div>
@@ -933,11 +933,11 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                   </div>
                   <div className="max-w-md">
                     <h3 className="text-sm font-bold text-white mb-1">
-                      Belum Ada Transkrip
+                      No Transcript Available
                     </h3>
                     <p className="text-xs leading-relaxed">
-                      Pilih berkas media lokal di panel kiri atau masukkan URL video, lalu klik{" "}
-                      <span className="text-blue-400 font-semibold">Mulai Transkripsi</span> untuk menghasilkan teks subtitel otomatis.
+                      Select a local media file on the left panel or enter a video URL, then click{" "}
+                      <span className="text-blue-400 font-semibold">Start Transcription</span> to generate automatic subtitle captions.
                     </p>
                   </div>
                 </div>
@@ -1007,12 +1007,12 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
             <footer className="h-14 border-t border-[#27272a] bg-[#121215] px-4 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[#71717a]">
-                  Total {cues.length} Cues ({rawTxt.split(/\s+/).length} Kata)
+                  Total {cues.length} Cues ({rawTxt.split(/\s+/).length} Words)
                 </span>
                 {savedSuccess && (
                   <span className="text-xs text-emerald-400 flex items-center gap-1">
                     <Check className="w-3.5 h-3.5" />
-                    <span>Disimpan ke Vault!</span>
+                    <span>Saved to Vault!</span>
                   </span>
                 )}
               </div>
@@ -1028,7 +1028,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                   ) : (
                     <Copy className="w-3.5 h-3.5" />
                   )}
-                  <span>Salin Teks</span>
+                  <span>Copy Text</span>
                 </button>
 
                 <button
@@ -1039,7 +1039,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] text-[#d4d4d8] hover:text-white transition-colors cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Unduh .SRT</span>
+                  <span>Download .SRT</span>
                 </button>
 
                 <button
@@ -1050,7 +1050,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] text-[#d4d4d8] hover:text-white transition-colors cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Unduh .VTT</span>
+                  <span>Download .VTT</span>
                 </button>
 
                 <button
@@ -1059,7 +1059,7 @@ export const TranscriptStudioModal: React.FC<TranscriptStudioModalProps> = ({
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-blue-500 hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20 transition-all cursor-pointer"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>Simpan ke Media Vault</span>
+                  <span>Save to Media Vault</span>
                 </button>
               </div>
             </footer>

@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::time::Duration;
 use regex::Regex;
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
+use futures_util::future::try_join_all;
 
 use tokio::io::{AsyncWriteExt, BufWriter};
 
@@ -1511,92 +1513,112 @@ pub async fn download_image_bundle(
 
     let total_items = items_to_download.len() + if bundle.audio_url.is_some() { 1 } else { 0 };
 
-    let mut primary_saved_path = String::new();
-    let mut total_bytes: i64 = 0;
-    let mut created_files: Vec<PathBuf> = Vec::new();
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(3));
+    let total_bytes_atomic = Arc::new(AtomicI64::new(0));
+    let completed_items_atomic = Arc::new(AtomicUsize::new(0));
+    let created_files_lock = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+    let primary_saved_path_lock = Arc::new(Mutex::new(String::new()));
 
-    for (step_idx, (slide_idx, item)) in items_to_download.iter().enumerate() {
-        let ext = if item.url.contains(".png") { "png" } else { "jpg" };
-        let filename = if bundle.images.len() > 1 {
-            if use_subfolder {
-                format!("{:02}.{}", slide_idx, ext)
+    let count = items_to_download.len();
+    let mut download_futures = Vec::new();
+    for (slide_idx, item) in items_to_download {
+        let sem = semaphore.clone();
+        let client = client.clone();
+        let target_dir = target_dir.clone();
+        let clean_base_name = clean_base_name.clone();
+        let total_bytes_atomic = total_bytes_atomic.clone();
+        let completed_items_atomic = completed_items_atomic.clone();
+        let created_files_lock = created_files_lock.clone();
+        let primary_saved_path_lock = primary_saved_path_lock.clone();
+        let app = app.clone();
+        let task_id = task_id.to_string();
+        let bundle_title = bundle.title.clone();
+        let bundle_platform = bundle.platform.clone();
+        let is_multi = bundle.images.len() > 1;
+
+        download_futures.push(async move {
+            let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
+            let ext = if item.url.contains(".png") { "png" } else { "jpg" };
+            let filename = if is_multi {
+                if use_subfolder {
+                    format!("{:02}.{}", slide_idx, ext)
+                } else {
+                    format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
+                }
             } else {
-                format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
-            }
-        } else {
-            format!("{}.{}", clean_base_name, ext)
-        };
-        let dest_file = target_dir.join(&filename);
+                format!("{}.{}", clean_base_name, ext)
+            };
+            let dest_file = target_dir.join(&filename);
 
-        let resp = match client.get(&item.url).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                for f in &created_files {
-                    let _ = std::fs::remove_file(f);
+            let resp = client.get(&item.url).send().await
+                .map_err(|e| format!("Failed to download image {}: {}", filename, e))?;
+
+            if !resp.status().is_success() {
+                return Err(format!("Image download failed with HTTP {}", resp.status()));
+            }
+
+            let bytes = resp.bytes().await
+                .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+
+            if bytes.is_empty() {
+                return Err(format!("Downloaded image {} is 0 bytes", filename));
+            }
+
+            let byte_len = bytes.len() as i64;
+            std::fs::write(&dest_file, &bytes)
+                .map_err(|e| format!("Failed to write file {:?}: {}", dest_file, e))?;
+
+            if let Ok(mut lock) = created_files_lock.lock() {
+                lock.push(dest_file.clone());
+            }
+
+            if let Ok(mut lock) = primary_saved_path_lock.lock() {
+                if lock.is_empty() {
+                    *lock = dest_file.to_string_lossy().to_string();
                 }
-                return Err(format!("Failed to download image {}: {}", filename, e));
             }
-        };
 
-        if !resp.status().is_success() {
-            for f in &created_files {
-                let _ = std::fs::remove_file(f);
-            }
-            return Err(format!("Image download failed with HTTP {}", resp.status()));
-        }
+            let curr_bytes = total_bytes_atomic.fetch_add(byte_len, Ordering::SeqCst) + byte_len;
+            let done_count = completed_items_atomic.fetch_add(1, Ordering::SeqCst) + 1;
 
-        let bytes = match resp.bytes().await {
-            Ok(b) => b,
-            Err(e) => {
-                for f in &created_files {
-                    let _ = std::fs::remove_file(f);
-                }
-                return Err(format!("Failed to read image bytes: {}", e));
-            }
-        };
-
-        if bytes.is_empty() {
-            for f in &created_files {
-                let _ = std::fs::remove_file(f);
-            }
-            return Err(format!("Downloaded image {} is 0 bytes", filename));
-        }
-
-        total_bytes += bytes.len() as i64;
-        if let Err(e) = std::fs::write(&dest_file, &bytes) {
-            for f in &created_files {
-                let _ = std::fs::remove_file(f);
-            }
-            return Err(format!("Failed to write file {:?}: {}", dest_file, e));
-        }
-        created_files.push(dest_file.clone());
-
-        if primary_saved_path.is_empty() {
-            primary_saved_path = dest_file.to_string_lossy().to_string();
-        }
-
-        let percent = ((step_idx + 1) as f64 / total_items as f64) * 100.0;
-        let _ = app.emit(
-            "download-progress",
-            ActiveDownloadTask {
-                task_id: task_id.to_string(),
-                url: item.url.clone(),
-                title: bundle.title.clone(),
-                platform: bundle.platform.clone(),
-                format_type: "image".to_string(),
-                quality: "original".to_string(),
-                status: "downloading".to_string(),
-                progress: TaskProgress {
-                    percent,
-                    speed_str: format!("{}/{}", step_idx + 1, total_items),
-                    eta_str: "00:00".to_string(),
-                    downloaded_bytes: Some(total_bytes),
-                    total_bytes: Some(total_bytes),
+            let percent = (done_count as f64 / total_items as f64) * 100.0;
+            let _ = app.emit(
+                "download-progress",
+                ActiveDownloadTask {
+                    task_id,
+                    url: item.url,
+                    title: bundle_title,
+                    platform: bundle_platform,
+                    format_type: "image".to_string(),
+                    quality: "original".to_string(),
+                    status: "downloading".to_string(),
+                    progress: TaskProgress {
+                        percent,
+                        speed_str: format!("{}/{}", done_count, total_items),
+                        eta_str: "00:00".to_string(),
+                        downloaded_bytes: Some(curr_bytes),
+                        total_bytes: Some(curr_bytes),
+                    },
+                    error: None,
                 },
-                error: None,
-            },
-        );
+            );
+
+            Ok::<(), String>(())
+        });
     }
+
+    try_join_all(download_futures).await.map_err(|e| {
+        if let Ok(lock) = created_files_lock.lock() {
+            for f in lock.iter() {
+                let _ = std::fs::remove_file(f);
+            }
+        }
+        e
+    })?;
+
+    let mut created_files = created_files_lock.lock().map(|l| l.clone()).unwrap_or_default();
+    let primary_saved_path = primary_saved_path_lock.lock().map(|l| l.clone()).unwrap_or_default();
+    let mut total_bytes = total_bytes_atomic.load(Ordering::SeqCst);
 
     // Download background audio if available (e.g. TikTok photo mode BGM)
     if let Some(ref bgm_url) = bundle.audio_url {
@@ -1632,7 +1654,6 @@ pub async fn download_image_bundle(
         target_dir.to_string_lossy().to_string()
     };
 
-    let count = items_to_download.len();
     let display_title = if count > 1 && !raw_name.contains("[Carousel:") {
         format!("{} [Carousel: {} Images]", clean_base_name, count)
     } else {
@@ -1787,9 +1808,6 @@ pub async fn download_media_bundle(
     }
 
     let total_items = items_to_download.len();
-    let mut primary_saved_path = String::new();
-    let mut overall_downloaded_bytes: i64 = 0;
-    let mut created_files: Vec<PathBuf> = Vec::new();
 
     let is_all_video = items_to_download.iter().all(|(_, it)| it.kind == "video");
     let is_all_image = items_to_download.iter().all(|(_, it)| it.kind == "image");
@@ -1823,213 +1841,267 @@ pub async fn download_media_bundle(
     };
     let _ = db.add_record(&initial_record);
 
-    for (step_idx, (slide_idx, item)) in items_to_download.iter().enumerate() {
-        let ext = if item.kind == "video" {
-            if item.url.contains(".webm") { "webm" } else { "mp4" }
-        } else {
-            if item.url.contains(".png") { "png" } else { "jpg" }
-        };
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(2));
+    let overall_bytes_atomic = Arc::new(AtomicI64::new(0));
+    let completed_items_atomic = Arc::new(AtomicUsize::new(0));
+    let created_files_lock = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+    let primary_saved_path_lock = Arc::new(Mutex::new(String::new()));
 
-        let filename = if bundle.items.len() > 1 {
-            if use_subfolder {
-                format!("{:02}.{}", slide_idx, ext)
+    let mut download_futures = Vec::new();
+
+    for (slide_idx, item) in items_to_download {
+        let sem = semaphore.clone();
+        let client = client.clone();
+        let target_dir = target_dir.clone();
+        let clean_base_name = clean_base_name.clone();
+        let overall_bytes_atomic = overall_bytes_atomic.clone();
+        let completed_items_atomic = completed_items_atomic.clone();
+        let created_files_lock = created_files_lock.clone();
+        let primary_saved_path_lock = primary_saved_path_lock.clone();
+        let app = app.clone();
+        let db = db.clone();
+        let task_id = task_id.to_string();
+        let display_title = display_title.clone();
+        let bundle_platform = bundle.platform.clone();
+        let is_multi = bundle.items.len() > 1;
+
+        download_futures.push(async move {
+            let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
+
+            let ext = if item.kind == "video" {
+                if item.url.contains(".webm") { "webm" } else { "mp4" }
             } else {
-                format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
-            }
-        } else {
-            format!("{}.{}", clean_base_name, ext)
-        };
-        let dest_file = target_dir.join(&filename);
-        let part_file = target_dir.join(format!("{}.part", filename));
+                if item.url.contains(".png") { "png" } else { "jpg" }
+            };
 
-        // 1. Skip items that were already completed in a previous session
-        if dest_file.exists() && dest_file.is_file() {
-            if let Ok(meta) = std::fs::metadata(&dest_file) {
-                if meta.len() > 0 {
-                    overall_downloaded_bytes += meta.len() as i64;
-                    created_files.push(dest_file.clone());
-                    if primary_saved_path.is_empty() {
-                        primary_saved_path = dest_file.to_string_lossy().to_string();
+            let filename = if is_multi {
+                if use_subfolder {
+                    format!("{:02}.{}", slide_idx, ext)
+                } else {
+                    format!("{}_{:02}.{}", clean_base_name, slide_idx, ext)
+                }
+            } else {
+                format!("{}.{}", clean_base_name, ext)
+            };
+            let dest_file = target_dir.join(&filename);
+            let part_file = target_dir.join(format!("{}.part", filename));
+
+            // 1. Skip items that were already completed in a previous session
+            if dest_file.exists() && dest_file.is_file() {
+                if let Ok(meta) = std::fs::metadata(&dest_file) {
+                    if meta.len() > 0 {
+                        overall_bytes_atomic.fetch_add(meta.len() as i64, Ordering::SeqCst);
+                        if let Ok(mut lock) = created_files_lock.lock() {
+                            lock.push(dest_file.clone());
+                        }
+                        if let Ok(mut lock) = primary_saved_path_lock.lock() {
+                            if lock.is_empty() {
+                                *lock = dest_file.to_string_lossy().to_string();
+                            }
+                        }
+                        completed_items_atomic.fetch_add(1, Ordering::SeqCst);
+                        return Ok::<(), String>(());
                     }
-                    continue;
                 }
             }
-        }
 
-        // 2. Check for existing partial .part file bytes
-        let mut existing_bytes: u64 = 0;
-        if part_file.exists() && part_file.is_file() {
-            if let Ok(meta) = std::fs::metadata(&part_file) {
-                existing_bytes = meta.len();
-            }
-        }
-
-        // 3. Formulate request with conditional HTTP Range header
-        let mut req = client.get(&item.url).header("Accept", "*/*");
-        if existing_bytes > 0 {
-            req = req.header("Range", format!("bytes={}-", existing_bytes));
-        }
-
-        let mut resp = match req.send().await {
-            Ok(r) => r,
-            Err(e) => {
-                let err_msg = format!("Failed to connect to stream {}: {}", filename, e);
-                let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
-                return Err(err_msg);
-            }
-        };
-
-        let status = resp.status();
-        let (raw_file, mut item_downloaded, item_total_bytes) = if status == reqwest::StatusCode::PARTIAL_CONTENT {
-            // Server supports Range! Append to existing partial file
-            let file = match tokio::fs::OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open(&part_file)
-                .await
-            {
-                Ok(f) => f,
-                Err(e) => {
-                    let err_msg = format!("Failed to open existing part file {:?} in append mode: {}", part_file, e);
-                    let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
-                    return Err(err_msg);
+            // 2. Check for existing partial .part file bytes
+            let mut existing_bytes: u64 = 0;
+            if part_file.exists() && part_file.is_file() {
+                if let Ok(meta) = std::fs::metadata(&part_file) {
+                    existing_bytes = meta.len();
                 }
-            };
-            let content_len = resp.content_length().unwrap_or(0);
-            let total = content_len + existing_bytes;
-            overall_downloaded_bytes += existing_bytes as i64;
-            (file, existing_bytes as i64, total)
-        } else if status == reqwest::StatusCode::OK {
-            // Server returned 200 OK: non-range fallback or brand new stream
-            let file = match tokio::fs::File::create(&part_file).await {
-                Ok(f) => f,
-                Err(e) => {
-                    let err_msg = format!("Failed to create part file {:?}: {}", part_file, e);
-                    let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
-                    return Err(err_msg);
-                }
-            };
-            let total = resp.content_length().unwrap_or(0);
-            (file, 0i64, total)
-        } else if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
-            // Range 416: Local file might already be complete
+            }
+
+            // 3. Formulate request with conditional HTTP Range header
+            let mut req = client.get(&item.url).header("Accept", "*/*");
             if existing_bytes > 0 {
-                if tokio::fs::rename(&part_file, &dest_file).await.is_ok() {
-                    created_files.push(dest_file.clone());
-                    if primary_saved_path.is_empty() {
-                        primary_saved_path = dest_file.to_string_lossy().to_string();
-                    }
-                    overall_downloaded_bytes += existing_bytes as i64;
-                    continue;
-                }
+                req = req.header("Range", format!("bytes={}-", existing_bytes));
             }
-            let _ = std::fs::remove_file(&part_file);
-            let err_msg = format!("HTTP 416 Range Not Satisfiable for {}", filename);
-            let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
-            return Err(err_msg);
-        } else {
-            let err_msg = format!("HTTP error {} downloading {}", status, filename);
-            let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
-            return Err(err_msg);
-        };
 
-        let mut file = BufWriter::with_capacity(256 * 1024, raw_file);
-        let mut last_emit = std::time::Instant::now();
-        let session_start_time = std::time::Instant::now();
-        let mut session_bytes_downloaded: i64 = 0;
-
-        loop {
-            let chunk_opt = match resp.chunk().await {
-                Ok(c) => c,
+            let mut resp = match req.send().await {
+                Ok(r) => r,
                 Err(e) => {
-                    drop(file);
-                    // Do NOT delete partial file on pause or interruption! Keep it for resumption.
-                    let err_msg = format!("Stream interrupted for {}: {}", filename, e);
-                    let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+                    let err_msg = format!("Failed to connect to stream {}: {}", filename, e);
+                    let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
                     return Err(err_msg);
                 }
             };
 
-            let chunk = match chunk_opt {
-                Some(c) => c,
-                None => break,
+            let status = resp.status();
+            let (raw_file, mut item_downloaded, item_total_bytes) = if status == reqwest::StatusCode::PARTIAL_CONTENT {
+                let file = match tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .open(&part_file)
+                    .await
+                {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let err_msg = format!("Failed to open existing part file {:?} in append mode: {}", part_file, e);
+                        let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
+                        return Err(err_msg);
+                    }
+                };
+                let content_len = resp.content_length().unwrap_or(0);
+                let total = content_len + existing_bytes;
+                overall_bytes_atomic.fetch_add(existing_bytes as i64, Ordering::SeqCst);
+                (file, existing_bytes as i64, total)
+            } else if status == reqwest::StatusCode::OK {
+                let file = match tokio::fs::File::create(&part_file).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let err_msg = format!("Failed to create part file {:?}: {}", part_file, e);
+                        let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
+                        return Err(err_msg);
+                    }
+                };
+                let total = resp.content_length().unwrap_or(0);
+                (file, 0i64, total)
+            } else if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+                if existing_bytes > 0 {
+                    if tokio::fs::rename(&part_file, &dest_file).await.is_ok() {
+                        if let Ok(mut lock) = created_files_lock.lock() {
+                            lock.push(dest_file.clone());
+                        }
+                        if let Ok(mut lock) = primary_saved_path_lock.lock() {
+                            if lock.is_empty() {
+                                *lock = dest_file.to_string_lossy().to_string();
+                            }
+                        }
+                        overall_bytes_atomic.fetch_add(existing_bytes as i64, Ordering::SeqCst);
+                        completed_items_atomic.fetch_add(1, Ordering::SeqCst);
+                        return Ok(());
+                    }
+                }
+                let _ = std::fs::remove_file(&part_file);
+                let err_msg = format!("HTTP 416 Range Not Satisfiable for {}", filename);
+                let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
+                return Err(err_msg);
+            } else {
+                let err_msg = format!("HTTP error {} downloading {}", status, filename);
+                let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
+                return Err(err_msg);
             };
 
-            if let Err(e) = file.write_all(&chunk).await {
+            let mut file = BufWriter::with_capacity(256 * 1024, raw_file);
+            let mut last_emit = std::time::Instant::now();
+            let session_start_time = std::time::Instant::now();
+            let mut session_bytes_downloaded: i64 = 0;
+
+            loop {
+                let chunk_opt = match resp.chunk().await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        drop(file);
+                        let err_msg = format!("Stream interrupted for {}: {}", filename, e);
+                        let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
+                        return Err(err_msg);
+                    }
+                };
+
+                let chunk = match chunk_opt {
+                    Some(c) => c,
+                    None => break,
+                };
+
+                if let Err(e) = file.write_all(&chunk).await {
+                    drop(file);
+                    let err_msg = format!("Write error for {}: {}", filename, e);
+                    let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
+                    return Err(err_msg);
+                }
+
+                let chunk_len = chunk.len() as i64;
+                item_downloaded += chunk_len;
+                session_bytes_downloaded += chunk_len;
+                let current_overall = overall_bytes_atomic.fetch_add(chunk_len, Ordering::SeqCst) + chunk_len;
+
+                if last_emit.elapsed() >= Duration::from_millis(200) {
+                    let elapsed_sec = session_start_time.elapsed().as_secs_f64();
+                    let speed_mbps = if elapsed_sec > 0.05 {
+                        (session_bytes_downloaded as f64 / 1_048_576.0) / elapsed_sec
+                    } else {
+                        0.0
+                    };
+
+                    let item_percent = if item_total_bytes > 0 {
+                        (item_downloaded as f64 / item_total_bytes as f64).clamp(0.0, 1.0)
+                    } else {
+                        0.5
+                    };
+
+                    let done_items = completed_items_atomic.load(Ordering::SeqCst);
+                    let overall_percent = (((done_items as f64) + item_percent) / total_items as f64) * 100.0;
+
+                    let _ = app.emit(
+                        "download-progress",
+                        ActiveDownloadTask {
+                            task_id: task_id.clone(),
+                            url: item.url.clone(),
+                            title: display_title.clone(),
+                            platform: bundle_platform.clone(),
+                            format_type: format_type.to_string(),
+                            quality: "best".to_string(),
+                            status: "downloading".to_string(),
+                            progress: TaskProgress {
+                                percent: overall_percent.clamp(0.5, 99.5),
+                                speed_str: format!("{}/{} · {:.1} MB/s", done_items + 1, total_items, speed_mbps),
+                                eta_str: if total_items > 1 { format!("Item {} of {}", done_items + 1, total_items) } else { "Downloading...".to_string() },
+                                downloaded_bytes: Some(current_overall),
+                                total_bytes: None,
+                            },
+                            error: None,
+                        },
+                    );
+
+                    last_emit = std::time::Instant::now();
+                }
+            }
+
+            if let Err(e) = file.flush().await {
                 drop(file);
-                let err_msg = format!("Write error for {}: {}", filename, e);
-                let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
+                let err_msg = format!("Flush failed for {}: {}", filename, e);
+                let _ = db.update_record(&task_id, "error", None, None, Some(&err_msg));
                 return Err(err_msg);
             }
+            drop(file);
 
-            let chunk_len = chunk.len() as i64;
-            item_downloaded += chunk_len;
-            session_bytes_downloaded += chunk_len;
-            overall_downloaded_bytes += chunk_len;
+            if item_downloaded == 0 {
+                let _ = std::fs::remove_file(&part_file);
+                return Err(format!("Downloaded file {} is 0 bytes", filename));
+            }
 
-            if last_emit.elapsed() >= Duration::from_millis(120) {
-                let elapsed_sec = session_start_time.elapsed().as_secs_f64();
-                let speed_mbps = if elapsed_sec > 0.05 {
-                    (session_bytes_downloaded as f64 / 1_048_576.0) / elapsed_sec
-                } else {
-                    0.0
-                };
+            if let Err(e) = tokio::fs::rename(&part_file, &dest_file).await {
+                return Err(format!("Rename failed for {:?}: {}", dest_file, e));
+            }
 
-                let item_percent = if item_total_bytes > 0 {
-                    (item_downloaded as f64 / item_total_bytes as f64).clamp(0.0, 1.0)
-                } else {
-                    0.5
-                };
+            if let Ok(mut lock) = created_files_lock.lock() {
+                lock.push(dest_file.clone());
+            }
+            if let Ok(mut lock) = primary_saved_path_lock.lock() {
+                if lock.is_empty() {
+                    *lock = dest_file.to_string_lossy().to_string();
+                }
+            }
+            completed_items_atomic.fetch_add(1, Ordering::SeqCst);
 
-                let overall_percent = (((step_idx as f64) + item_percent) / total_items as f64) * 100.0;
+            Ok::<(), String>(())
+        });
+    }
 
-                let _ = app.emit(
-                    "download-progress",
-                    ActiveDownloadTask {
-                        task_id: task_id.to_string(),
-                        url: item.url.clone(),
-                        title: display_title.clone(),
-                        platform: bundle.platform.clone(),
-                        format_type: format_type.to_string(),
-                        quality: "best".to_string(),
-                        status: "downloading".to_string(),
-                        progress: TaskProgress {
-                            percent: overall_percent.clamp(0.5, 99.5),
-                            speed_str: format!("{}/{} · {:.1} MB/s", step_idx + 1, total_items, speed_mbps),
-                            eta_str: if total_items > 1 { format!("Item {} of {}", step_idx + 1, total_items) } else { "Downloading...".to_string() },
-                            downloaded_bytes: Some(overall_downloaded_bytes),
-                            total_bytes: None,
-                        },
-                        error: None,
-                    },
-                );
-
-                last_emit = std::time::Instant::now();
+    try_join_all(download_futures).await.map_err(|e| {
+        if let Ok(lock) = created_files_lock.lock() {
+            for f in lock.iter() {
+                let _ = std::fs::remove_file(f);
             }
         }
+        e
+    })?;
 
-        if let Err(e) = file.flush().await {
-            drop(file);
-            let err_msg = format!("Flush failed for {}: {}", filename, e);
-            let _ = db.update_record(task_id, "error", None, None, Some(&err_msg));
-            return Err(err_msg);
-        }
-        drop(file);
-
-        if item_downloaded == 0 {
-            let _ = std::fs::remove_file(&part_file);
-            return Err(format!("Downloaded file {} is 0 bytes", filename));
-        }
-
-        if let Err(e) = tokio::fs::rename(&part_file, &dest_file).await {
-            return Err(format!("Rename failed for {:?}: {}", dest_file, e));
-        }
-
-        created_files.push(dest_file.clone());
-        if primary_saved_path.is_empty() {
-            primary_saved_path = dest_file.to_string_lossy().to_string();
-        }
-    }
+    let created_files = created_files_lock.lock().map(|l| l.clone()).unwrap_or_default();
+    let primary_saved_path = primary_saved_path_lock.lock().map(|l| l.clone()).unwrap_or_default();
+    let overall_downloaded_bytes = overall_bytes_atomic.load(Ordering::SeqCst);
 
     if created_files.is_empty() || primary_saved_path.is_empty() {
         return Err("No files were saved".to_string());

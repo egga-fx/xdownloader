@@ -110,10 +110,16 @@ pub struct AppSettings {
     pub video_filename_format: String,
     #[serde(default = "default_carousel_filename_format")]
     pub carousel_filename_format: String,
+    #[serde(default = "default_max_concurrent_downloads")]
+    pub max_concurrent_downloads: usize,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_max_concurrent_downloads() -> usize {
+    2
 }
 
 fn default_video_quality() -> String {
@@ -144,6 +150,7 @@ impl Default for AppSettings {
             desktop_notifications: true,
             video_filename_format: default_video_filename_format(),
             carousel_filename_format: "folder_sequential".to_string(),
+            max_concurrent_downloads: 2,
         }
     }
 }

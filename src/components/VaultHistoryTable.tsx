@@ -163,7 +163,7 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
               <button
                 onClick={() => onCancelTask(task.taskId)}
                 className="w-7 h-7 rounded-md text-[#71717a] hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                title={isSubtitle ? "Batalkan Transkripsi" : "Cancel Download"}
+                title={isSubtitle ? "Cancel Transcription" : "Cancel Download"}
               >
                 <XCircle className="w-4 h-4" />
               </button>

@@ -887,7 +887,7 @@ export async function pickMediaFile(): Promise<string | null> {
       const selected = await openDialog({
         directory: false,
         multiple: false,
-        title: "Pilih File Media (Video / Audio)",
+        title: "Select Media File (Video / Audio)",
         filters: [
           {
             name: "Media Files",

@@ -111,7 +111,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                 {record.title}
               </h4>
               <p className="text-xs text-[#71717a] mt-1 text-center">
-                File Subtitle & Transkrip (.srt) · {formatFileSize(record.fileSizeBytes)}
+                Subtitle & Transcript File (.srt) · {formatFileSize(record.fileSizeBytes)}
               </p>
               <div className="flex items-center gap-2 mt-4">
                 {isTauriEnvironment() ? (
@@ -120,18 +120,18 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                       <button
                         onClick={() => openMediaFile(record.filePath)}
                         className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
-                        title="Buka file dengan aplikasi editor teks default OS"
+                        title="Open file with OS default text editor"
                       >
-                        <span>Buka File</span>
+                        <span>Open File</span>
                       </button>
                     )}
                     <button
                       onClick={() => onOpenFolder(record)}
                       className="px-3.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                      title="Buka folder lokasi file"
+                      title="Open file location folder"
                     >
                       <FolderOpen className="w-3.5 h-3.5" />
-                      <span>Buka Folder</span>
+                      <span>Open Folder</span>
                     </button>
                   </>
                 ) : (
@@ -215,9 +215,9 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
               ) : null}
               <div className="relative z-10 bg-black/85 p-5 rounded-xl border border-[#27272a] max-w-sm flex flex-col items-center gap-2 backdrop-blur-xs">
                 <Film className="w-8 h-8 text-blue-400 mb-1" />
-                <p className="text-xs text-white font-bold">Tidak Dapat Memutar Video</p>
+                <p className="text-xs text-white font-bold">Unable to Play Video Preview</p>
                 <p className="text-[11px] text-[#71717a]">
-                  Format video tidak didukung oleh browser bawaan atau file telah dipindahkan dari lokasi aslinya.
+                  Video format is not supported by built-in preview or file has been moved from its original location.
                 </p>
                 <div className="flex items-center gap-2 mt-2">
                   <button
@@ -230,7 +230,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                     className="px-3 py-1.5 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Coba Lagi</span>
+                    <span>Try Again</span>
                   </button>
                   {isTauriEnvironment() ? (
                     <>
@@ -238,16 +238,16 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                         <button
                           onClick={() => openMediaFile(record.filePath)}
                           className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                          title="Buka langsung di aplikasi pemutar media Windows/OS"
+                          title="Open directly in Windows/OS media player"
                         >
                           <Play className="w-3.5 h-3.5 fill-current" />
-                          <span>Player OS</span>
+                          <span>OS Player</span>
                         </button>
                       )}
                       <button
                         onClick={() => onOpenFolder(record)}
                         className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                        title="Buka folder lokasi file"
+                        title="Open folder location"
                       >
                         <FolderOpen className="w-3.5 h-3.5" />
                         <span>Folder</span>
@@ -301,10 +301,10 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                   <button
                     onClick={() => openMediaFile(record.filePath)}
                     className="px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 hover:text-white font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                    title="Buka file dengan aplikasi pemutar media bawaan sistem (VLC, Media Player, dll.)"
+                    title="Open file with default system media player (VLC, Media Player, etc.)"
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>Play di OS Player</span>
+                    <span>Play in OS Player</span>
                   </button>
                 )}
                 <button

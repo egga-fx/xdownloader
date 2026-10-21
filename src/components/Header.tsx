@@ -136,7 +136,7 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             onClick={onOpenUpdateModal}
             className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-md bg-blue-500/15 border border-blue-500/30 text-blue-400 hover:bg-blue-500/25 cursor-pointer transition-all animate-pulse"
-            title={`Pembaruan v${updateInfo.version} tersedia! Klik untuk memasang.`}
+            title={`Update v${updateInfo.version} available! Click to install.`}
           >
             <ArrowUpCircle className="w-3.5 h-3.5 text-blue-400" />
             <span>Update v{updateInfo.version}</span>
@@ -144,7 +144,7 @@ export const Header: React.FC<HeaderProps> = ({
         ) : updateInfo && !updateInfo.available ? (
           <div
             className="hidden sm:flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md bg-[#141418] border border-[#27272a] text-[#71717a] select-none"
-            title={`xDownloader v${updateInfo.currentVersion} sudah versi terbaru.`}
+            title={`xDownloader v${updateInfo.currentVersion} is up to date.`}
           >
             <CheckCircle2 className="w-3 h-3 text-emerald-500/80" />
             <span className="font-mono text-[10px]">v{updateInfo.currentVersion}</span>
@@ -195,7 +195,7 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             onClick={onToggleVault}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/35 hover:border-purple-500/50 text-purple-300 font-semibold text-xs cursor-pointer transition-all animate-pulse shadow-sm shadow-purple-500/20"
-            title={`Transkripsi AI sedang berlangsung: ${Math.round(activeTranscription.percent)}% (${activeTranscription.message}). Klik untuk melihat di Media Vault.`}
+            title={`AI Transcription in progress: ${Math.round(activeTranscription.percent)}% (${activeTranscription.message}). Click to view in Media Vault.`}
           >
             <Sparkles className="w-3.5 h-3.5 text-purple-400 animate-spin" style={{ animationDuration: "4s" }} />
             <span className="font-mono font-bold text-white">{Math.round(activeTranscription.percent)}%</span>
@@ -206,7 +206,7 @@ export const Header: React.FC<HeaderProps> = ({
                 ? "Upload"
                 : activeTranscription.stage === "transcribing"
                 ? "Scribe v2"
-                : "Simpan"}
+                : "Save"}
             </span>
           </button>
         )}

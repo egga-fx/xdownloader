@@ -115,6 +115,7 @@ export interface AppSettings {
   desktopNotifications?: boolean;
   videoFilenameFormat?: VideoFilenameFormat;
   carouselFilenameFormat?: CarouselFilenameFormat;
+  maxConcurrentDownloads?: number;
 }
 
 export interface AppUpdateInfo {

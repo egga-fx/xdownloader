@@ -273,6 +273,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [checkUpdatesOnStartup, setCheckUpdatesOnStartup] = useState<boolean>(true);
   const [videoFilenameFormat, setVideoFilenameFormat] = useState<VideoFilenameFormat>("author_title");
   const [carouselFilenameFormat, setCarouselFilenameFormat] = useState<CarouselFilenameFormat>("folder_sequential");
+  const [maxConcurrentDownloads, setMaxConcurrentDownloads] = useState<number>(settings.maxConcurrentDownloads || 2);
   const [saving, setSaving] = useState<boolean>(false);
 
   // Auto-Updater state
@@ -328,6 +329,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setDownloadSubtitles(settings.downloadSubtitles ?? false);
       setDesktopNotifications(settings.desktopNotifications ?? true);
       setCheckUpdatesOnStartup(settings.checkUpdatesOnStartup ?? true);
+      setMaxConcurrentDownloads(settings.maxConcurrentDownloads || 2);
       // Normalize legacy persisted values (e.g. "source_channel_title") to the current union
       setVideoFilenameFormat(settings.videoFilenameFormat === "title_only" ? "title_only" : "author_title");
       setCarouselFilenameFormat(settings.carouselFilenameFormat || "folder_sequential");
@@ -442,18 +444,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
       const valid = await testTranscriptionKey();
       if (valid) {
-        setTestKeyStatus({ ok: true, message: "API Key valid dan aktif!" });
+        setTestKeyStatus({ ok: true, message: "API Key is valid and active!" });
         const refreshed = await getTranscriptionConfig();
         setTranscriptionConfig(refreshed);
         onTranscriptionConfigChange?.(refreshed);
       } else {
-        setTestKeyStatus({ ok: false, message: "API Key ditolak oleh ElevenLabs." });
+        setTestKeyStatus({ ok: false, message: "API Key rejected by ElevenLabs." });
         const refreshed = await getTranscriptionConfig();
         setTranscriptionConfig(refreshed);
         onTranscriptionConfigChange?.(refreshed);
       }
     } catch (err: unknown) {
-      setTestKeyStatus({ ok: false, message: getErrorMessage(err) || "Gagal memverifikasi API Key" });
+      setTestKeyStatus({ ok: false, message: getErrorMessage(err) || "Failed to verify API Key" });
     } finally {
       setTestingKey(false);
     }
@@ -488,6 +490,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         checkUpdatesOnStartup,
         videoFilenameFormat,
         carouselFilenameFormat,
+        maxConcurrentDownloads,
       });
 
       if (transcriptionConfig) {
@@ -515,6 +518,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setCheckUpdatesOnStartup(true);
     setVideoFilenameFormat("author_title");
     setCarouselFilenameFormat("folder_sequential");
+    setMaxConcurrentDownloads(2);
     if (transcriptionConfig) {
       setTranscriptionConfig({
         ...transcriptionConfig,
@@ -671,15 +675,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
 
+            {/* Max Concurrent Downloads */}
+            <div className="flex items-center justify-between p-3 rounded-xl bg-[#18181b] border border-[#27272a]">
+              <div className="flex flex-col gap-0.5">
+                <span className="font-bold text-xs text-white flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Maximum Concurrent Downloads</span>
+                </span>
+                <span className="text-[11px] text-[#71717a]">
+                  Number of simultaneous downloads allowed before queueing (1–5 tasks)
+                </span>
+              </div>
+              <div className="flex items-center gap-1 bg-[#121215] border border-[#27272a] rounded-xl p-1">
+                {[1, 2, 3, 4, 5].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => setMaxConcurrentDownloads(num)}
+                    className={`w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center ${
+                      maxConcurrentDownloads === num
+                        ? "bg-blue-600 text-white shadow-sm shadow-blue-500/20"
+                        : "text-[#a1a1aa] hover:text-white hover:bg-[#27272a]"
+                    }`}
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Desktop Notifications */}
             <div className="flex items-center justify-between p-3 rounded-xl bg-[#18181b] border border-[#27272a]">
               <div className="flex flex-col gap-0.5">
                 <span className="font-bold text-xs text-white flex items-center gap-1.5">
                   <Bell className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Notifikasi Desktop Windows</span>
+                  <span>Windows Desktop Notifications</span>
                 </span>
                 <span className="text-[11px] text-[#71717a]">
-                  Tampilkan notifikasi OS saat unduhan selesai dan folder penyimpanan disetel.
+                  Display native desktop notifications when downloads finish or the storage folder changes.
                 </span>
               </div>
               <button
@@ -704,8 +737,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <FileText className="w-3.5 h-3.5" />
                 </div>
                 <div>
-                  <span className="font-bold text-xs text-white">Format Nama Berkas & Folder</span>
-                  <span className="text-[10px] text-[#71717a] ml-2 font-mono">Ekspor Unduhan</span>
+                  <span className="font-bold text-xs text-white">File & Folder Naming Format</span>
+                  <span className="text-[10px] text-[#71717a] ml-2 font-mono">Download Export</span>
                 </div>
               </div>
 
@@ -715,10 +748,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="flex flex-col">
                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
                       <Video className="w-3.5 h-3.5 text-blue-400" />
-                      <span>Format Nama Berkas Video</span>
+                      <span>Video Filename Format</span>
                     </span>
                     <span className="text-[11px] text-[#71717a] mt-0.5">
-                      Pola penamaan untuk unduhan format Video & Audio
+                      Naming pattern for Video & Audio media downloads
                     </span>
                   </div>
                 </div>
@@ -734,11 +767,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-white">Author + Judul</span>
+                      <span className="font-bold text-white">Author + Title</span>
                       <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 font-extrabold">Default</span>
                     </div>
                     <span className="text-[10px] font-mono text-zinc-400 truncate">
-                      MrBeast-JudulVideo.mp4
+                      MrBeast-VideoTitle.mp4
                     </span>
                   </button>
 
@@ -751,9 +784,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         : "bg-[#141418] border-[#27272a] text-zinc-400 hover:text-white hover:border-[#3f3f46]"
                     }`}
                   >
-                    <span className="font-bold text-white">Judul Video Saja</span>
+                    <span className="font-bold text-white">Title Only</span>
                     <span className="text-[10px] font-mono text-zinc-400 truncate">
-                      JudulVideo.mp4
+                      VideoTitle.mp4
                     </span>
                   </button>
                 </div>
@@ -765,10 +798,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="flex flex-col">
                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
                       <HardDrive className="w-3.5 h-3.5 text-purple-400" />
-                      <span>Format Unduhan Carousel Slide</span>
+                      <span>Carousel Slide Download Format</span>
                     </span>
                     <span className="text-[11px] text-[#71717a] mt-0.5">
-                      Struktur penyimpanan kumpulan foto & slide carousel (TikTok, IG, Threads)
+                      Storage structure for photo collections and carousel slides (TikTok, IG, Threads)
                     </span>
                   </div>
                 </div>
@@ -784,11 +817,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-white">Folder Terpisah</span>
+                      <span className="font-bold text-white">Dedicated Subfolder</span>
                       <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 font-extrabold">Default</span>
                     </div>
                     <span className="text-[10px] font-mono text-zinc-400 truncate">
-                      [Judul]/01.jpg, 02.jpg
+                      [Title]/01.jpg, 02.jpg
                     </span>
                   </button>
 
@@ -801,9 +834,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         : "bg-[#141418] border-[#27272a] text-zinc-400 hover:text-white hover:border-[#3f3f46]"
                     }`}
                   >
-                    <span className="font-bold text-white">Flat di Folder Utama</span>
+                    <span className="font-bold text-white">Flat in Output Folder</span>
                     <span className="text-[10px] font-mono text-zinc-400 truncate">
-                      Judul_01.jpg, Judul_02.jpg
+                      Title_01.jpg, Title_02.jpg
                     </span>
                   </button>
                 </div>
@@ -835,10 +868,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     }`}
                   >
                     {transcriptionConfig.keyStatus === "saved"
-                      ? `Aktif ${transcriptionConfig.apiKeyHint ? `(${transcriptionConfig.apiKeyHint})` : ""}`
+                      ? `Active ${transcriptionConfig.apiKeyHint ? `(${transcriptionConfig.apiKeyHint})` : ""}`
                       : transcriptionConfig.keyStatus === "invalid"
-                      ? "Key Tidak Valid"
-                      : "Belum Dikonfigurasi"}
+                      ? "Invalid Key"
+                      : "Not Configured"}
                   </span>
                 )}
               </div>
@@ -857,7 +890,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       rel="noopener noreferrer"
                       className="text-blue-400 hover:text-blue-300 hover:underline text-[10px] flex items-center gap-1 cursor-pointer"
                     >
-                      <span>Ambil API Key</span>
+                      <span>Get API Key</span>
                       <ExternalLink className="w-2.5 h-2.5" />
                     </a>
                   </div>
@@ -873,7 +906,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         }}
                         placeholder={
                           transcriptionConfig?.apiKeyHint
-                            ? `Key tersimpan (${transcriptionConfig.apiKeyHint}) — masukkan key baru untuk mengganti`
+                            ? `Saved key (${transcriptionConfig.apiKeyHint}) — enter new key to replace`
                             : "xi-api-key..."
                         }
                         className="w-full bg-[#121215] border border-[#27272a] rounded-xl px-3 py-2 pr-9 text-xs text-white placeholder-[#71717a] focus:outline-none focus:border-purple-500 font-mono"
@@ -882,7 +915,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         type="button"
                         onClick={() => setShowApiKey(!showApiKey)}
                         className="absolute right-2.5 text-[#71717a] hover:text-white cursor-pointer"
-                        title={showApiKey ? "Sembunyikan API key" : "Tampilkan API key"}
+                        title={showApiKey ? "Hide API key" : "Show API key"}
                       >
                         {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                       </button>
@@ -894,17 +927,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       disabled={testingKey || (!apiKeyInput.trim() && transcriptionConfig?.keyStatus !== "saved")}
                       onClick={handleTestKey}
                       className="px-3 py-2 rounded-xl bg-[#27272a] hover:bg-[#3f3f46] disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
-                      title="Tes koneksi API key dengan ElevenLabs"
+                      title="Test API key connection with ElevenLabs"
                     >
                       {testingKey ? (
                         <>
                           <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
-                          <span>Memeriksa...</span>
+                          <span>Checking...</span>
                         </>
                       ) : (
                         <>
                           <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />
-                          <span>Tes Key</span>
+                          <span>Test Key</span>
                         </>
                       )}
                     </button>
@@ -915,7 +948,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         type="button"
                         onClick={handleRemoveKey}
                         className="px-2.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors shrink-0 border border-red-500/20"
-                        title="Hapus API key tersimpan"
+                        title="Remove saved API key"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -944,8 +977,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {/* Speaker Diarization */}
                   <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#141418] border border-[#27272a]">
                     <div className="flex flex-col pr-2">
-                      <span className="font-semibold text-xs text-white">Label Pembicara (Diarization)</span>
-                      <span className="text-[10px] text-[#71717a]">Deteksi Speaker 1, Speaker 2...</span>
+                      <span className="font-semibold text-xs text-white">Speaker Diarization</span>
+                      <span className="text-[10px] text-[#71717a]">Detect Speaker 1, Speaker 2...</span>
                     </div>
                     <button
                       type="button"
@@ -969,8 +1002,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {/* Tag Audio Events */}
                   <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#141418] border border-[#27272a]">
                     <div className="flex flex-col pr-2">
-                      <span className="font-semibold text-xs text-white">Tag Efek Suara (Audio Events)</span>
-                      <span className="text-[10px] text-[#71717a]">Deteksi [laughter], [applause]</span>
+                      <span className="font-semibold text-xs text-white">Tag Audio Events</span>
+                      <span className="text-[10px] text-[#71717a]">Detect [laughter], [applause]</span>
                     </div>
                     <button
                       type="button"
@@ -996,7 +1029,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-semibold text-[#71717a]">
-                      Bahasa Spesifik (Opsional)
+                      Specific Language Code (Optional)
                     </label>
                     <input
                       type="text"
@@ -1006,14 +1039,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           prev ? { ...prev, languageCode: e.target.value.trim() || null } : null
                         )
                       }
-                      placeholder="Auto-detect (atau id, en, ja, ...)"
+                      placeholder="Auto-detect (or en, id, ja, ...)"
                       className="bg-[#121215] border border-[#27272a] rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-[#71717a] focus:outline-none focus:border-purple-500"
                     />
                   </div>
 
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-semibold text-[#71717a]">
-                      Maksimal Karakter Per Baris (Default: 42)
+                      Max Characters Per Line (Default: 42)
                     </label>
                     <input
                       type="number"
@@ -1214,10 +1247,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     type="button"
                     onClick={handleOpenLogsFolder}
                     className="px-3 py-1.5 rounded-lg bg-[#27272a] hover:bg-[#3f3f46] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                    title="Buka folder log aplikasi di file explorer"
+                    title="Open application log directory in file explorer"
                   >
                     <FolderOpen className="w-3.5 h-3.5 text-zinc-400" />
-                    <span>Buka Folder</span>
+                    <span>Open Folder</span>
                   </button>
 
                   <button
@@ -1226,7 +1259,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm shadow-blue-600/30"
                   >
                     <FileText className="w-3.5 h-3.5" />
-                    <span>Lihat Log Aktivitas</span>
+                    <span>View Activity Logs</span>
                   </button>
                 </div>
               </div>

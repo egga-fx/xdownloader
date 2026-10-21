@@ -61,6 +61,12 @@ impl Database {
         // Create tables
         Self::init_schema(&conn)?;
 
+        // Reconcile orphaned downloading tasks from unexpected shutdowns or crashes
+        let _ = conn.execute(
+            "UPDATE downloads SET status = 'paused', error = 'Interrupted on previous session' WHERE status = 'downloading';",
+            [],
+        );
+
         Ok(Self {
             conn: Mutex::new(conn),
             db_path,

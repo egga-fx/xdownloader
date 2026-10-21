@@ -35,7 +35,7 @@ interface AboutModalProps {
 }
 
 export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
-  const [appVersion, setAppVersion] = useState<string>("1.1.1");
+  const [appVersion, setAppVersion] = useState<string>("1.2.2");
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [toolsAgentsExpanded, setToolsAgentsExpanded] = useState<boolean>(false);
 
@@ -110,7 +110,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
                 </span>
               </div>
               <p className="text-xs text-[#a1a1aa] font-medium mt-0.5">
-                Download video, musik, dan foto favoritmu dengan mudah
+                Effortlessly download videos, music, and photos
               </p>
             </div>
           </div>
@@ -130,10 +130,10 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
           <div className="space-y-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-[#71717a] flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Tentang Aplikasi</span>
+              <span>About Application</span>
             </h3>
             <p className="text-xs leading-relaxed text-[#a1a1aa]">
-              <strong className="text-white font-semibold">xDownloader</strong> adalah aplikasi santai dan praktis buat unduh video, musik, dan foto berkualitas tinggi dari berbagai platform favorit seperti YouTube, TikTok, Instagram, X (Twitter), hingga Pinterest. Ringan, cepat, dan langsung tersimpan rapi di komputermu tanpa ribet.
+              <strong className="text-white font-semibold">xDownloader</strong> is a modern, high-performance desktop media downloader designed to grab videos, audio, and photo carousels from platforms like YouTube, TikTok, Instagram, X (Twitter), and Pinterest. Lightweight, ultra-fast, and neatly organized on your local storage.
             </p>
           </div>
 
@@ -160,7 +160,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
                     </span>
                   </div>
                   <p className="text-[11px] text-[#a1a1aa] mt-1 leading-normal">
-                    Kreator dan pengembang utama di balik pembuatan xDownloader.
+                    Lead creator and developer of xDownloader.
                   </p>
                 </div>
               </div>
@@ -198,14 +198,14 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
                       </span>
                     </div>
                     <p className="text-[11px] text-[#71717a] mt-0.5">
-                      Partner AI yang ikut bantu ngoding dan kembangin aplikasi ini
+                      AI partner assisting in architecture, coding, and optimization
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-1 text-zinc-400 group-hover:text-white transition-colors">
                   <span className="text-[11px] font-medium hidden sm:inline">
-                    {toolsAgentsExpanded ? "Tutup" : "Lihat"}
+                    {toolsAgentsExpanded ? "Close" : "View"}
                   </span>
                   {toolsAgentsExpanded ? (
                     <ChevronUp className="w-4 h-4 text-zinc-400" />
@@ -236,7 +236,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
                           <span className="text-[10px] text-zinc-400 font-mono">AI Partner</span>
                         </div>
                         <p className="text-[11px] text-[#a1a1aa] mt-1 leading-relaxed">
-                          AI coding partner dari Google DeepMind yang diajak duet buat bantu ngoding, beresin fitur, dan jaga performa aplikasi.
+                          AI coding partner from Google DeepMind assisting in architecture, feature development, and performance optimization.
                         </p>
                       </div>
                     </div>
@@ -271,7 +271,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ open, onClose }) => {
                     </span>
                   </div>
                   <div className="text-[11px] text-[#71717a] truncate">
-                    Repository resmi di GitHub. Terbuka buat dieksplorasi atau dikembangkan bareng!
+                    Official GitHub repository. Open source and ready for contributions!
                   </div>
                 </div>
               </div>

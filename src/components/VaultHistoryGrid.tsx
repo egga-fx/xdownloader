@@ -111,7 +111,7 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 <button
                   onClick={() => onCancelTask(task.taskId)}
                   className="w-6 h-6 rounded text-[#71717a] hover:text-red-400 flex items-center justify-center cursor-pointer transition-colors"
-                  title={isSubtitle ? "Batalkan Transkripsi" : "Cancel Download"}
+                  title={isSubtitle ? "Cancel Transcription" : "Cancel Download"}
                 >
                   <XCircle className="w-3.5 h-3.5" />
                 </button>

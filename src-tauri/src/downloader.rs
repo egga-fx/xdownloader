@@ -878,7 +878,9 @@ pub async fn run_download(
             .arg("--retries").arg("10")
             .arg("--fragment-retries").arg("10")
             .arg("--socket-timeout").arg("30")
-            .arg("--buffer-size").arg("16K");
+            .arg("--buffer-size").arg("256K")
+            .arg("--no-mtime")
+            .arg("--http-chunk-size").arg("10M");
 
         // Pass --ffmpeg-location so yt-dlp can reliably merge separate audio and video streams into a single mp4
         if let Some(ref ff_path) = ffmpeg_path {
@@ -1045,7 +1047,7 @@ pub async fn run_download(
                     let speed_str = caps[3].to_string();
                     let eta_str = caps[4].to_string();
 
-                    let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(100);
+                    let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(200);
                     if should_emit {
                         last_progress_emit = std::time::Instant::now();
                         let task_update = ActiveDownloadTask {
@@ -1071,7 +1073,7 @@ pub async fn run_download(
                     }
                 } else if let Some(caps) = progress_simple_regex.captures(&line) {
                     let percent: f64 = caps[1].parse().unwrap_or(0.0);
-                    let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(100);
+                    let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(200);
                     if should_emit {
                         last_progress_emit = std::time::Instant::now();
                         let task_update = ActiveDownloadTask {

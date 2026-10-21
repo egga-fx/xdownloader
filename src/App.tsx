@@ -84,8 +84,6 @@ interface QueuedDownloadItem {
   mediaItems?: MediaItem[];
 }
 
-const MAX_CONCURRENT_DOWNLOADS = 2;
-
 export function App() {
   // Input & Metadata State
   const [url, setUrl] = useState<string>("");
@@ -129,7 +127,10 @@ export function App() {
     checkUpdatesOnStartup: true,
     videoFilenameFormat: "author_title",
     carouselFilenameFormat: "folder_sequential",
+    maxConcurrentDownloads: 2,
   });
+  const appSettingsRef = useRef<AppSettings>(appSettings);
+  appSettingsRef.current = appSettings;
 
   // AI Transcription state
   const [transcriptionConfig, setTranscriptionConfig] = useState<TranscriptionConfig | null>(null);
@@ -183,7 +184,7 @@ export function App() {
           .then((info) => {
             setAvailableUpdate(info);
             if (info.available) {
-              showToast(`Update v${info.version} tersedia!`);
+              showToast(`Update v${info.version} available!`);
             }
           })
           .catch((err) => {
@@ -290,7 +291,7 @@ export function App() {
     onTranscriptionProgress((p) => {
       if (p.stage === "completed") {
         loadRecords();
-        showToast(p.message || "Transkrip berhasil dibuat!");
+        showToast(p.message || "Transcript generated successfully!");
         setActiveTranscriptions((prev) => {
           const next = new Map(prev);
           next.delete(p.taskId);
@@ -298,7 +299,7 @@ export function App() {
         });
       } else if (p.stage === "error") {
         loadRecords();
-        showToast(`Transkripsi gagal: ${p.error || p.message}`);
+        showToast(`Transcription failed: ${p.error || p.message}`);
         setActiveTranscriptions((prev) => {
           const next = new Map(prev);
           next.delete(p.taskId);
@@ -306,7 +307,7 @@ export function App() {
         });
       } else if (p.stage === "cancelled") {
         loadRecords();
-        showToast("Transkripsi dibatalkan");
+        showToast("Transcription cancelled");
         setActiveTranscriptions((prev) => {
           const next = new Map(prev);
           next.delete(p.taskId);
@@ -527,7 +528,8 @@ export function App() {
       mediaItems: matchedInfo?.mediaItems,
     };
 
-    if (activeTasksRef.current.size >= MAX_CONCURRENT_DOWNLOADS) {
+    const maxConcurrent = appSettingsRef.current.maxConcurrentDownloads ?? 2;
+    if (activeTasksRef.current.size >= maxConcurrent) {
       setDownloadQueue((prev) => [...prev, queuedItem]);
       setVaultOpen(true);
       showToast(`Added to queue (#${downloadQueueRef.current.length + 1} in line)`);
@@ -537,7 +539,8 @@ export function App() {
   };
 
   const dequeueAndStartNext = () => {
-    if (downloadQueueRef.current.length > 0 && activeTasksRef.current.size < MAX_CONCURRENT_DOWNLOADS) {
+    const maxConcurrent = appSettingsRef.current.maxConcurrentDownloads ?? 2;
+    if (downloadQueueRef.current.length > 0 && activeTasksRef.current.size < maxConcurrent) {
       const nextItem = downloadQueueRef.current[0];
       setDownloadQueue((prev) => prev.slice(1));
       executeDownloadTask(nextItem);
@@ -601,7 +604,7 @@ export function App() {
     try {
       if (taskId === "starting-transcription") {
         setIsStartingTranscription(false);
-        showToast("Transkripsi dibatalkan");
+        showToast("Transcription cancelled");
         return;
       }
       if (activeTranscriptions.has(taskId) || taskId.startsWith("tr_")) {
@@ -611,7 +614,7 @@ export function App() {
           next.delete(taskId);
           return next;
         });
-        showToast("Transkripsi dibatalkan");
+        showToast("Transcription cancelled");
       } else {
         await cancelDownload(taskId);
         setActiveTasks((prev) => {
@@ -647,10 +650,10 @@ export function App() {
         }
         return next;
       });
-      showToast("Download dijeda (Paused)");
+      showToast("Download paused");
     } catch (err: unknown) {
       console.error("Failed to pause task:", err);
-      showToast("Gagal menjeda download");
+      showToast("Failed to pause download");
     }
   };
 
@@ -673,10 +676,10 @@ export function App() {
         }
         return next;
       });
-      showToast("Melanjutkan download...");
+      showToast("Resuming download...");
     } catch (err: unknown) {
       console.error("Failed to resume task:", err);
-      showToast("Gagal melanjutkan download");
+      showToast("Failed to resume download");
     }
   };
 
@@ -704,7 +707,7 @@ export function App() {
       setVaultOpen(true);
     } catch (err) {
       console.error("Failed to retry download:", err);
-      showToast("Gagal memulai unduh ulang");
+      showToast("Failed to retry download");
     }
   };
 
@@ -769,7 +772,7 @@ export function App() {
     if (!transcriptionConfig || transcriptionConfig.keyStatus !== "saved") {
       setSettingsInitialSection("transcription");
       setSettingsModalOpen(true);
-      showToast("Silakan atur ElevenLabs API Key di Pengaturan");
+      showToast("Please configure your ElevenLabs API Key in Settings");
       return;
     }
 
@@ -781,7 +784,7 @@ export function App() {
     ).trim();
 
     if (!targetUrl || !isSupportedMediaUrl(targetUrl)) {
-      setError("Masukkan tautan media yang valid untuk membuat transkrip");
+      setError("Enter a valid media URL to generate transcript");
       return;
     }
 
@@ -801,16 +804,16 @@ export function App() {
           taskId,
           stage: "downloading_audio",
           percent: 10,
-          message: "Mengunduh audio untuk transkrip...",
+          message: "Downloading audio for transcript...",
         });
         return next;
       });
 
       setVaultOpen(true);
-      showToast("Transkripsi dimulai di Media Vault");
+      showToast("Transcription started in Media Vault");
     } catch (err: unknown) {
-      setError(getErrorMessage(err) || "Gagal memulai transkripsi");
-      showToast("Gagal memulai transkripsi");
+      setError(getErrorMessage(err) || "Failed to start transcription");
+      showToast("Failed to start transcription");
     } finally {
       setIsStartingTranscription(false);
     }
@@ -822,7 +825,7 @@ export function App() {
           taskId: "starting-transcription",
           stage: "downloading_audio" as const,
           percent: 5,
-          message: "Menginisiasi ElevenLabs Scribe v2...",
+          message: "Initializing ElevenLabs Scribe v2...",
         }
       : null
   );
@@ -830,14 +833,14 @@ export function App() {
   const transcriptionTasks: ActiveDownloadTask[] = Array.from(activeTranscriptions.values()).map((t) => ({
     taskId: t.taskId,
     url: url || "",
-    title: `${customName || videoInfo?.title || "Media"} [Transkrip SRT]`,
+    title: `${customName || videoInfo?.title || "Media"} [SRT Transcript]`,
     platform: detectedPlatform,
     formatType: "subtitle" as DownloaderFormatType,
     quality: "mp3" as DownloaderQuality,
     status: t.stage === "completed" ? "completed" : t.stage === "error" ? "error" : "downloading",
     progress: {
       percent: t.percent,
-      speedStr: t.message || "Memproses transkrip...",
+      speedStr: t.message || "Processing transcript...",
       etaStr: "--:--",
     },
   }));
@@ -906,7 +909,7 @@ export function App() {
             <div className="w-full">
               <ActiveTranscriptionBanner
                 transcription={firstActiveTranscription}
-                title={customName || videoInfo?.title || "Transkrip Subtitel Otomatis"}
+                title={customName || videoInfo?.title || "Auto Subtitle Transcript"}
                 onOpenVault={() => setVaultOpen(true)}
                 onCancel={(taskId) => handleCancelTask(taskId)}
               />
@@ -929,9 +932,9 @@ export function App() {
                 transcriptionReady={transcriptionConfig?.keyStatus === "saved"}
                 transcriptionBlockReason={
                   transcriptionConfig?.keyStatus === "invalid"
-                    ? "ElevenLabs API Key Tidak Valid"
+                    ? "ElevenLabs API Key is Invalid"
                     : transcriptionConfig?.keyStatus === "missing"
-                    ? "ElevenLabs API Key Belum Dikonfigurasi"
+                    ? "ElevenLabs API Key Not Configured"
                     : null
                 }
                 isTranscribing={activeTranscriptions.size > 0 || isStartingTranscription}
