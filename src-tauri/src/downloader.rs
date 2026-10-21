@@ -358,6 +358,33 @@ pub fn sanitize_filename(name: &str) -> String {
     }
 }
 
+/// Builds the output stem for single video/audio downloads.
+/// Default format: `$author_name-$media_title`. Falls back to `$media_title`
+/// when the author is unknown/empty or when `title_only` is selected.
+pub fn build_video_stem(author: Option<&str>, title: &str, filename_format: &str) -> String {
+    let clean_title = sanitize_filename(title);
+    if filename_format == "title_only" {
+        return clean_title;
+    }
+
+    let clean_author = author
+        .map(|a| a.trim().trim_start_matches('@').trim())
+        .filter(|a| !a.is_empty())
+        .map(sanitize_filename)
+        .filter(|a| a != "media_download" && !a.eq_ignore_ascii_case("unknown"))
+        .map(|a| a.chars().take(40).collect::<String>().trim().to_string());
+
+    match clean_author {
+        Some(author_name) if !author_name.is_empty() => format!("{}-{}", author_name, clean_title),
+        _ => clean_title,
+    }
+}
+
+/// Escapes literal `%` so yt-dlp does not interpret it as an output-template field.
+fn escape_ytdlp_template(raw: &str) -> String {
+    raw.replace('%', "%%")
+}
+
 pub fn generate_local_thumbnail(media_path: &Path, task_id: &str) -> Option<String> {
     if !media_path.exists() || !media_path.is_file() {
         return None;
@@ -683,27 +710,18 @@ pub async fn run_download(
             }
         }
     };
-    let clean_title = sanitize_filename(&raw_title_stem);
-
-    // Read AppSettings for video filename format preference
+    // Read AppSettings for video filename format preference ($author_name-$media_title by default)
     let settings = db.get_settings().unwrap_or_default();
-    let is_source_channel_title = settings.video_filename_format != "title_only";
-
-    let final_stem = if is_source_channel_title {
-        let clean_author = resolved_author.as_deref()
-            .map(|a| sanitize_filename(a.trim()))
-            .filter(|a| !a.is_empty() && a != "unknown");
-
-        match clean_author {
-            Some(author_name) => format!("{}_{}_{}", platform, author_name, clean_title),
-            None => format!("{}_{}", platform, clean_title),
-        }
-    } else {
-        clean_title
-    };
-
-    let task_stem = sanitize_filename(&final_stem);
-    let out_template = out_dir.join(format!("{}.%(ext)s", task_stem));
+    let task_stem = build_video_stem(
+        resolved_author.as_deref(),
+        &raw_title_stem,
+        &settings.video_filename_format,
+    );
+    // Escape '%' in both directory and stem: yt-dlp treats the whole -o value as a template
+    let out_template = format!(
+        "{}.%(ext)s",
+        escape_ytdlp_template(&out_dir.join(&task_stem).to_string_lossy())
+    );
 
     // Metadata resolution for the initial DB record
     let rec_title = custom_name.clone().or(resolved_title).unwrap_or_else(|| url.clone());
@@ -836,7 +854,7 @@ pub async fn run_download(
             .arg("--no-playlist")
             .arg("--no-warnings")
             .arg("-o")
-            .arg(out_template.to_string_lossy().to_string())
+            .arg(&out_template)
             .arg("--print-to-file")
             .arg("after_move:filepath")
             .arg(&meta_file_path);
@@ -1375,6 +1393,55 @@ pub async fn run_download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_stem_uses_author_dash_title() {
+        assert_eq!(
+            build_video_stem(Some("MrBeast"), "I Built 100 Houses", "author_title"),
+            "MrBeast-I Built 100 Houses"
+        );
+    }
+
+    #[test]
+    fn video_stem_legacy_format_value_maps_to_author_title() {
+        assert_eq!(
+            build_video_stem(Some("MrBeast"), "Video", "source_channel_title"),
+            "MrBeast-Video"
+        );
+    }
+
+    #[test]
+    fn video_stem_strips_at_prefix_and_illegal_chars() {
+        assert_eq!(
+            build_video_stem(Some("@creator"), "What? A/B: test", "author_title"),
+            "creator-What A B test"
+        );
+    }
+
+    #[test]
+    fn video_stem_falls_back_to_title_when_author_missing() {
+        assert_eq!(build_video_stem(None, "Clip", "author_title"), "Clip");
+        assert_eq!(build_video_stem(Some("  "), "Clip", "author_title"), "Clip");
+        assert_eq!(build_video_stem(Some("Unknown"), "Clip", "author_title"), "Clip");
+        assert_eq!(build_video_stem(Some("@"), "Clip", "author_title"), "Clip");
+    }
+
+    #[test]
+    fn video_stem_title_only_ignores_author() {
+        assert_eq!(build_video_stem(Some("MrBeast"), "Clip", "title_only"), "Clip");
+    }
+
+    #[test]
+    fn video_stem_caps_author_length() {
+        let long_author = "a".repeat(100);
+        let stem = build_video_stem(Some(&long_author), "T", "author_title");
+        assert_eq!(stem, format!("{}-T", "a".repeat(40)));
+    }
+
+    #[test]
+    fn ytdlp_template_escapes_percent() {
+        assert_eq!(escape_ytdlp_template("100% Real"), "100%% Real");
+    }
 
     #[test]
     fn test_cleanup_task_artifacts_protects_valid_files() {

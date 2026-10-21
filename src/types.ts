@@ -101,7 +101,8 @@ export interface BinariesStatus {
   bin_dir: string;
 }
 
-export type VideoFilenameFormat = "source_channel_title" | "title_only";
+/** `author_title` → `$author_name-$media_title.$ext` | `title_only` → `$media_title.$ext` */
+export type VideoFilenameFormat = "author_title" | "title_only";
 export type CarouselFilenameFormat = "folder_sequential" | "title_sequential";
 
 export interface AppSettings {

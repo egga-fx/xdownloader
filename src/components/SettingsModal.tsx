@@ -271,7 +271,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [downloadSubtitles, setDownloadSubtitles] = useState<boolean>(false);
   const [desktopNotifications, setDesktopNotifications] = useState<boolean>(true);
   const [checkUpdatesOnStartup, setCheckUpdatesOnStartup] = useState<boolean>(true);
-  const [videoFilenameFormat, setVideoFilenameFormat] = useState<VideoFilenameFormat>("source_channel_title");
+  const [videoFilenameFormat, setVideoFilenameFormat] = useState<VideoFilenameFormat>("author_title");
   const [carouselFilenameFormat, setCarouselFilenameFormat] = useState<CarouselFilenameFormat>("folder_sequential");
   const [saving, setSaving] = useState<boolean>(false);
 
@@ -328,7 +328,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setDownloadSubtitles(settings.downloadSubtitles ?? false);
       setDesktopNotifications(settings.desktopNotifications ?? true);
       setCheckUpdatesOnStartup(settings.checkUpdatesOnStartup ?? true);
-      setVideoFilenameFormat(settings.videoFilenameFormat || "source_channel_title");
+      // Normalize legacy persisted values (e.g. "source_channel_title") to the current union
+      setVideoFilenameFormat(settings.videoFilenameFormat === "title_only" ? "title_only" : "author_title");
       setCarouselFilenameFormat(settings.carouselFilenameFormat || "folder_sequential");
       setUpdateError(null);
       setEngineStatusMsg(null);
@@ -512,7 +513,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setDownloadSubtitles(false);
     setDesktopNotifications(true);
     setCheckUpdatesOnStartup(true);
-    setVideoFilenameFormat("source_channel_title");
+    setVideoFilenameFormat("author_title");
     setCarouselFilenameFormat("folder_sequential");
     if (transcriptionConfig) {
       setTranscriptionConfig({
@@ -725,19 +726,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                   <button
                     type="button"
-                    onClick={() => setVideoFilenameFormat("source_channel_title")}
+                    onClick={() => setVideoFilenameFormat("author_title")}
                     className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-all cursor-pointer ${
-                      videoFilenameFormat === "source_channel_title"
+                      videoFilenameFormat === "author_title"
                         ? "bg-blue-600/15 border-blue-500 text-white shadow-sm shadow-blue-500/10"
                         : "bg-[#141418] border-[#27272a] text-zinc-400 hover:text-white hover:border-[#3f3f46]"
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-white">Platform + Channel + Judul</span>
+                      <span className="font-bold text-white">Author + Judul</span>
                       <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 font-extrabold">Default</span>
                     </div>
                     <span className="text-[10px] font-mono text-zinc-400 truncate">
-                      youtube_MrBeast_JudulVideo.mp4
+                      MrBeast-JudulVideo.mp4
                     </span>
                   </button>
 

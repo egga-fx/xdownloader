@@ -125,7 +125,7 @@ fn default_audio_quality() -> String {
 }
 
 fn default_video_filename_format() -> String {
-    "source_channel_title".to_string()
+    "author_title".to_string()
 }
 
 fn default_carousel_filename_format() -> String {
@@ -142,7 +142,7 @@ impl Default for AppSettings {
             download_subtitles: false,
             check_updates_on_startup: true,
             desktop_notifications: true,
-            video_filename_format: "source_channel_title".to_string(),
+            video_filename_format: default_video_filename_format(),
             carousel_filename_format: "folder_sequential".to_string(),
         }
     }

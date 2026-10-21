@@ -127,7 +127,7 @@ export function App() {
     autoClipboardDetect: true,
     downloadSubtitles: false,
     checkUpdatesOnStartup: true,
-    videoFilenameFormat: "source_channel_title",
+    videoFilenameFormat: "author_title",
     carouselFilenameFormat: "folder_sequential",
   });
 

@@ -942,7 +942,7 @@ export async function getAppSettings(): Promise<AppSettings> {
     downloadSubtitles: false,
     checkUpdatesOnStartup: true,
     desktopNotifications: true,
-    videoFilenameFormat: "source_channel_title",
+    videoFilenameFormat: "author_title",
     carouselFilenameFormat: "folder_sequential",
   };
 }
