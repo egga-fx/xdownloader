@@ -4,7 +4,7 @@
 - **Project**: xDownloader (Desktop Media Studio Downloader & AI Transcription Studio)
 - **Role**: Co-Leader of Masagi (xDownloader Module)
 - **Architecture**: Tauri v2 Desktop Shell + Vite 6 + React 19 + TailwindCSS v4 + Rust 2021 Tokio Backend + SQLite (`rusqlite` WAL)
-- **Current Version**: `v1.2.2+`
+- **Current Version**: `v1.2.3`
 - **Core Engine Capabilities**:
   - Direct multi-platform media downloader (YouTube, TikTok, Instagram, Threads, X/Twitter, Pinterest, generic web media).
   - Native multi-image & multi-video carousel extractor (`image_extractor.rs`).

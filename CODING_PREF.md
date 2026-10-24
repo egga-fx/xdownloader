@@ -212,4 +212,4 @@ xdownloader/
 
 ---
 
-*xDownloader Coding Preferences Reference v1.2.2 — Updated 2026-10-23*
+*xDownloader Coding Preferences Reference v1.2.3 — Updated 2026-10-24*

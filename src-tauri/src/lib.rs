@@ -12,7 +12,7 @@ use tauri::{AppHandle, State};
 use db::Database;
 use downloader::ProcessManager;
 use models::{
-    ActiveDownloadTask, AppSettings, BinariesStatus, DownloadRecord, LogEntry, MediaItem, TaskProgress, TimeRange,
+    ActiveDownloadTask, AppSettings, BinariesStatus, DownloadRecord, LogEntry, TaskProgress, TimeRange,
     TranscriptionConfig, VideoInfo,
 };
 
@@ -48,47 +48,39 @@ async fn get_video_metadata(url: String) -> Result<VideoInfo, String> {
 async fn start_download(
     app: AppHandle,
     state: State<'_, AppState>,
-    url: String,
-    format_type: String,
-    quality: String,
-    title: Option<String>,
-    thumbnail_url: Option<String>,
-    author: Option<String>,
-    duration_sec: Option<i64>,
-    custom_name: Option<String>,
-    output_folder: Option<String>,
-    download_subtitles: bool,
-    time_range: Option<TimeRange>,
-    selected_indices: Option<Vec<usize>>,
-    image_urls: Option<Vec<String>>,
-    media_items: Option<Vec<MediaItem>>,
+    payload: models::StartDownloadPayload,
 ) -> Result<String, String> {
     let task_id = format!("dl_{}_{}", chrono::Utc::now().timestamp_millis(), &uuid_short());
     let db = state.db.clone();
     let process_mgr = state.process_mgr.clone();
 
-    let raw_stem = custom_name.as_deref().or(title.as_deref()).unwrap_or("media_download").to_string();
-    let out_dir = match output_folder {
+    let raw_stem = payload
+        .custom_name
+        .as_deref()
+        .or(payload.title.as_deref())
+        .unwrap_or("media_download")
+        .to_string();
+    let out_dir = match payload.output_folder {
         Some(ref f) if !f.trim().is_empty() => std::path::PathBuf::from(f),
         _ => downloader::get_default_download_dir(),
     };
 
     let context = downloader::DownloadTaskContext {
         task_id: task_id.clone(),
-        url: url.clone(),
-        format_type: format_type.clone(),
-        quality: quality.clone(),
-        title: title.clone(),
-        thumbnail_url: thumbnail_url.clone(),
-        author: author.clone(),
-        duration_sec,
-        custom_name: custom_name.clone(),
-        output_folder: output_folder.clone(),
-        download_subtitles,
-        time_range: time_range.clone(),
-        selected_indices: selected_indices.clone(),
-        image_urls: image_urls.clone(),
-        media_items: media_items.clone(),
+        url: payload.url.clone(),
+        format_type: payload.format_type.clone(),
+        quality: payload.quality.clone(),
+        title: payload.title.clone(),
+        thumbnail_url: payload.thumbnail_url.clone(),
+        author: payload.author.clone(),
+        duration_sec: payload.duration_sec,
+        custom_name: payload.custom_name.clone(),
+        output_folder: payload.output_folder.clone(),
+        download_subtitles: payload.download_subtitles,
+        time_range: payload.time_range.clone(),
+        selected_indices: payload.selected_indices.clone(),
+        image_urls: payload.image_urls.clone(),
+        media_items: payload.media_items.clone(),
         out_dir: out_dir.clone(),
         raw_stem: raw_stem.clone(),
     };
@@ -98,10 +90,10 @@ async fn start_download(
     let process_mgr_clone = process_mgr.clone();
     let app_spawn = app.clone();
     let db_spawn = db.clone();
-    let url_fallback = url.clone();
-    let title_fallback = title.clone();
-    let format_type_fallback = format_type.clone();
-    let quality_fallback = quality.clone();
+    let url_fallback = payload.url.clone();
+    let title_fallback = payload.title.clone();
+    let format_type_fallback = payload.format_type.clone();
+    let quality_fallback = payload.quality.clone();
 
     let task_handle = tokio::spawn(async move {
         let res = downloader::run_download(
@@ -109,20 +101,20 @@ async fn start_download(
             db_spawn.clone(),
             process_mgr_clone.clone(),
             task_id_clone.clone(),
-            url,
-            format_type,
-            quality,
-            title,
-            thumbnail_url,
-            author,
-            duration_sec,
-            custom_name,
-            output_folder,
-            download_subtitles,
-            time_range,
-            selected_indices,
-            image_urls,
-            media_items,
+            payload.url,
+            payload.format_type,
+            payload.quality,
+            payload.title,
+            payload.thumbnail_url,
+            payload.author,
+            payload.duration_sec,
+            payload.custom_name,
+            payload.output_folder,
+            payload.download_subtitles,
+            payload.time_range,
+            payload.selected_indices,
+            payload.image_urls,
+            payload.media_items,
         )
         .await;
 
@@ -532,8 +524,8 @@ pub fn uuid_short() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos();
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
     format!("{:x}", nanos)
 }
 

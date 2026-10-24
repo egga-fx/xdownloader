@@ -129,4 +129,4 @@ Jika binary belum terpasang, sistem menyediakan **One-Click Auto Setup** yang me
 
 ---
 
-*xDownloader Stacks Reference v1.2.2 — Updated 2026-10-23*
+*xDownloader Stacks Reference v1.2.3 — Updated 2026-10-24*

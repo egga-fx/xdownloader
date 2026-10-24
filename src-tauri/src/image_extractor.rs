@@ -63,6 +63,21 @@ static SHARED_HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::Laz
         .unwrap_or_else(|_| reqwest::Client::new())
 });
 
+static RE_PIN_ORIG: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r#""images_orig"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)""#).unwrap());
+static RE_PIN_LARGE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r#""imageLargeUrl"\s*:\s*"([^"]+)""#).unwrap());
+static RE_PIN_PRELOAD: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r#"<link\s+[^>]*href="([^"]+)"[^>]*rel="preload"|<link\s+[^>]*rel="preload"[^>]*href="([^"]+)""#).unwrap());
+static RE_PIN_META: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r#"(?:property|name)="(?:og:image|twitter:image)"\s+content="([^"]+)"|content="([^"]+)"\s+(?:property|name)="(?:og:image|twitter:image)""#).unwrap());
+static RE_PIN_GENERAL: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r#"(https://i\.pinimg\.com/(?:originals|1200x|736x|564x|474x)/[a-zA-Z0-9/_.-]+\.(?:jpg|png|webp))"#).unwrap());
+static RE_PIN_SEO_TITLE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r#""seoTitle"\s*:\s*"([^"]+)""#).unwrap());
+static RE_PIN_OG_TITLE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r#"(?:property="og:title"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:title")"#).unwrap());
+static RE_PIN_ID: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"/pin/(\d+)").unwrap());
+static RE_X_STATUS: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"(?:twitter\.com|x\.com)/(?:#!/)?(\w+)/status/(\d+)").unwrap());
+static RE_INSTA_POST_ID: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)").unwrap());
+static RE_INSTA_TITLE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r#"(?:property|name)="og:title"\s+content="([^"]+)"|content="([^"]+)"\s+(?:property|name)="og:title""#).unwrap());
+static RE_INSTA_DESC: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r#"(?:property|name)="(?:og:description|description)"\s+content="([^"]+)"|content="([^"]+)"\s+(?:property|name)="(?:og:description|description)""#).unwrap());
+static RE_CAROUSEL_IMAGE_BADGE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"(?i)\s*\[carousel:?\s*\d+\s*images?\]").unwrap());
+static RE_CAROUSEL_MEDIA_BADGE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"(?i)\s*\[carousel:?\s*\d+\s*(?:images?|videos?|media)\]").unwrap());
+
 fn create_http_client() -> reqwest::Client {
     SHARED_HTTP_CLIENT.clone()
 }
@@ -77,8 +92,7 @@ pub fn parse_pinterest_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
     let mut found_img: Option<String> = None;
 
     // 1. Check embedded JSON for images_orig
-    let orig_re = Regex::new(r#""images_orig"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)""#).unwrap();
-    if let Some(caps) = orig_re.captures(html) {
+    if let Some(caps) = RE_PIN_ORIG.captures(html) {
         if let Some(m) = caps.get(1) {
             found_img = Some(m.as_str().to_string());
         }
@@ -86,8 +100,7 @@ pub fn parse_pinterest_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
 
     // 2. Check imageLargeUrl
     if found_img.is_none() {
-        let large_re = Regex::new(r#""imageLargeUrl"\s*:\s*"([^"]+)""#).unwrap();
-        if let Some(caps) = large_re.captures(html) {
+        if let Some(caps) = RE_PIN_LARGE.captures(html) {
             if let Some(m) = caps.get(1) {
                 found_img = Some(m.as_str().to_string());
             }
@@ -96,8 +109,7 @@ pub fn parse_pinterest_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
 
     // 3. Check link rel="preload" as="image"
     if found_img.is_none() {
-        let link_re = Regex::new(r#"<link\s+[^>]*href="([^"]+)"[^>]*rel="preload"|<link\s+[^>]*rel="preload"[^>]*href="([^"]+)""#).unwrap();
-        if let Some(caps) = link_re.captures(html) {
+        if let Some(caps) = RE_PIN_PRELOAD.captures(html) {
             if let Some(m) = caps.get(1).or_else(|| caps.get(2)) {
                 let s = m.as_str();
                 if s.contains("pinimg.com") {
@@ -109,8 +121,7 @@ pub fn parse_pinterest_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
 
     // 4. Check og:image or twitter:image
     if found_img.is_none() {
-        let meta_re = Regex::new(r#"(?:property|name)="(?:og:image|twitter:image)"\s+content="([^"]+)"|content="([^"]+)"\s+(?:property|name)="(?:og:image|twitter:image)""#).unwrap();
-        if let Some(caps) = meta_re.captures(html) {
+        if let Some(caps) = RE_PIN_META.captures(html) {
             if let Some(m) = caps.get(1).or_else(|| caps.get(2)) {
                 found_img = Some(m.as_str().to_string());
             }
@@ -119,8 +130,7 @@ pub fn parse_pinterest_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
 
     // 5. Fallback: Any i.pinimg.com image URL in the page
     if found_img.is_none() {
-        let general_re = Regex::new(r#"(https://i\.pinimg\.com/(?:originals|1200x|736x|564x|474x)/[a-zA-Z0-9/_.-]+\.(?:jpg|png|webp))"#).unwrap();
-        if let Some(caps) = general_re.captures(html) {
+        if let Some(caps) = RE_PIN_GENERAL.captures(html) {
             if let Some(m) = caps.get(1) {
                 found_img = Some(m.as_str().to_string());
             }
@@ -138,14 +148,12 @@ pub fn parse_pinterest_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
         .replace("/236x/", "/originals/");
 
     // Extract Title from seoTitle or og:title
-    let title = Regex::new(r#""seoTitle"\s*:\s*"([^"]+)""#)
-        .unwrap()
+    let title = RE_PIN_SEO_TITLE
         .captures(html)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
         .or_else(|| {
-            Regex::new(r#"(?:property="og:title"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:title")"#)
-                .unwrap()
+            RE_PIN_OG_TITLE
                 .captures(html)
                 .and_then(|c| c.get(1).or_else(|| c.get(2)))
                 .map(|m| m.as_str().to_string())
@@ -154,8 +162,7 @@ pub fn parse_pinterest_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
         .unwrap_or_else(|| "Pinterest Pin".to_string());
 
     // Extract Pin ID from URL
-    let pin_id_re = Regex::new(r"/pin/(\d+)").unwrap();
-    let pin_id = pin_id_re
+    let pin_id = RE_PIN_ID
         .captures(url)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
@@ -363,8 +370,7 @@ pub async fn extract_x_photos(url: &str) -> Result<ImageMediaBundle, String> {
     let client = create_http_client();
 
     // Extract status ID from X URL
-    let status_re = Regex::new(r"(?:twitter\.com|x\.com)/(?:#!/)?(\w+)/status/(\d+)").unwrap();
-    let caps = status_re
+    let caps = RE_X_STATUS
         .captures(url)
         .ok_or_else(|| "Invalid X/Twitter status URL".to_string())?;
 
@@ -436,11 +442,12 @@ pub struct TikWmResponse {
 }
 
 pub fn parse_tiktok_response(res_obj: &TikWmResponse, url: &str) -> Result<ImageMediaBundle, String> {
-    if res_obj.code != 0 || res_obj.data.is_none() {
+    let Some(ref data) = res_obj.data else {
+        return Err("TikTok did not return any media. The post might be private or removed.".to_string());
+    };
+    if res_obj.code != 0 {
         return Err("TikTok did not return any media. The post might be private or removed.".to_string());
     }
-
-    let data = res_obj.data.as_ref().unwrap();
     let image_urls = data.images.as_ref().cloned().unwrap_or_default();
 
     if image_urls.is_empty() {
@@ -510,11 +517,12 @@ pub async fn extract_tiktok_video_metadata(url: &str) -> Result<crate::models::V
         .await
         .map_err(|e| format!("Failed to parse TikTok response: {}", e))?;
 
-    if res_obj.code != 0 || res_obj.data.is_none() {
+    let Some(data) = res_obj.data else {
+        return Err("TikTok did not return valid video data.".to_string());
+    };
+    if res_obj.code != 0 {
         return Err("TikTok did not return valid video data.".to_string());
     }
-
-    let data = res_obj.data.unwrap();
     let id = data.id.unwrap_or_default();
     let raw_title = data.title.unwrap_or_default();
     let title = if !raw_title.trim().is_empty() {
@@ -767,8 +775,7 @@ pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
     }
 
     // Extract Post ID
-    let post_id_re = Regex::new(r"/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)").unwrap();
-    let post_id = post_id_re
+    let post_id = RE_INSTA_POST_ID
         .captures(url)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
@@ -777,14 +784,12 @@ pub fn parse_instagram_html(html: &str, url: &str) -> Result<ImageMediaBundle, S
     let timestamp_str = extract_instagram_html_timestamp(html);
 
     // Extract title / caption candidates
-    let title_re = Regex::new(r#"(?:property|name)="og:title"\s+content="([^"]+)"|content="([^"]+)"\s+(?:property|name)="og:title""#).unwrap();
-    let candidate_title = title_re
+    let candidate_title = RE_INSTA_TITLE
         .captures(html)
         .and_then(|c| c.get(1).or_else(|| c.get(2)))
         .map(|m| m.as_str());
 
-    let desc_re = Regex::new(r#"(?:property|name)="(?:og:description|description)"\s+content="([^"]+)"|content="([^"]+)"\s+(?:property|name)="(?:og:description|description)""#).unwrap();
-    let candidate_desc = desc_re
+    let candidate_desc = RE_INSTA_DESC
         .captures(html)
         .and_then(|c| c.get(1).or_else(|| c.get(2)))
         .map(|m| m.as_str());
@@ -1547,8 +1552,7 @@ pub async fn download_image_bundle(
         &bundle.source_url,
     );
     let raw_name = custom_name.as_deref().unwrap_or(&bundle.title);
-    let carousel_badge_re = Regex::new(r"(?i)\s*\[carousel:?\s*\d+\s*images?\]").unwrap();
-    let stripped = carousel_badge_re.replace_all(raw_name, "");
+    let stripped = RE_CAROUSEL_IMAGE_BADGE.replace_all(raw_name, "");
     let clean_raw = sanitize_name(crate::downloader::strip_media_extension(stripped.trim()));
     let clean_base_name = crate::downloader::build_video_stem(
         Some(&author_or_source),
@@ -1853,8 +1857,7 @@ pub async fn download_media_bundle(
         &bundle.source_url,
     );
     let raw_name = custom_name.as_deref().unwrap_or(&bundle.title);
-    let carousel_badge_re = Regex::new(r"(?i)\s*\[carousel:?\s*\d+\s*(?:images?|videos?|media)\]").unwrap();
-    let stripped = carousel_badge_re.replace_all(raw_name, "");
+    let stripped = RE_CAROUSEL_MEDIA_BADGE.replace_all(raw_name, "");
     let clean_raw = sanitize_name(crate::downloader::strip_media_extension(stripped.trim()));
     let clean_base_name = crate::downloader::build_video_stem(
         Some(&author_or_source),

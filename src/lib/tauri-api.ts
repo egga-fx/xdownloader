@@ -17,7 +17,7 @@ import {
   TranscriptionConfig,
   TranscriptionProgress,
   VideoInfo,
-  MediaItem,
+  StartDownloadPayload,
 } from "../types";
 import { detectPlatform, buildOutputFileName } from "./utils";
 
@@ -398,38 +398,25 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
 
 // --- 3. DOWNLOAD EXECUTION & PROGRESS ---
 
-export async function startDownload(params: {
-  url: string;
-  formatType: string;
-  quality: string;
-  title?: string;
-  thumbnailUrl?: string;
-  author?: string;
-  durationSec?: number;
-  customName?: string;
-  outputFolder?: string;
-  downloadSubtitles?: boolean;
-  timeRange?: TimeRange;
-  selectedIndices?: number[];
-  imageUrls?: string[];
-  mediaItems?: MediaItem[];
-}): Promise<string> {
+export async function startDownload(params: StartDownloadPayload): Promise<string> {
   if (isTauriEnvironment()) {
     return await invoke<string>("start_download", {
-      url: params.url,
-      formatType: params.formatType,
-      quality: params.quality,
-      title: params.title || null,
-      thumbnailUrl: params.thumbnailUrl || null,
-      author: params.author || null,
-      durationSec: params.durationSec || 0,
-      customName: params.customName || null,
-      outputFolder: params.outputFolder || null,
-      downloadSubtitles: Boolean(params.downloadSubtitles),
-      timeRange: params.timeRange || null,
-      selectedIndices: params.selectedIndices || null,
-      imageUrls: params.imageUrls || null,
-      mediaItems: params.mediaItems || null,
+      payload: {
+        url: params.url,
+        formatType: params.formatType,
+        quality: params.quality,
+        title: params.title || null,
+        thumbnailUrl: params.thumbnailUrl || null,
+        author: params.author || null,
+        durationSec: params.durationSec || 0,
+        customName: params.customName || null,
+        outputFolder: params.outputFolder || null,
+        downloadSubtitles: Boolean(params.downloadSubtitles),
+        timeRange: params.timeRange || null,
+        selectedIndices: params.selectedIndices || null,
+        imageUrls: params.imageUrls || null,
+        mediaItems: params.mediaItems || null,
+      },
     });
   }
 

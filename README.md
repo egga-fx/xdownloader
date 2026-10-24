@@ -1,6 +1,6 @@
 # 📥 xDownloader — Fast, Multi-Platform Desktop Media Studio & AI Transcription
 
-[![Status: Production Ready](https://img.shields.io/badge/Status-Production_v1.2.2-emerald?style=flat-square)](https://github.com/egga-fx/xdownloader)
+[![Status: Production Ready](https://img.shields.io/badge/Status-Production_v1.2.3-emerald?style=flat-square)](https://github.com/egga-fx/xdownloader)
 [![Platform](https://img.shields.io/badge/Platform-Windows_x64-blue?style=flat-square)](https://github.com/egga-fx/xdownloader)
 [![Desktop Shell](https://img.shields.io/badge/Shell-Tauri_v2-black?style=flat-square&logo=tauri)](https://tauri.app/)
 [![Frontend](https://img.shields.io/badge/Frontend-Vite_6_%7C_React_19_%7C_Tailwind_v4-blueviolet?style=flat-square)](https://vitejs.dev/)
@@ -226,4 +226,4 @@ Proyek ini didistribusikan di bawah lisensi terbuka **MIT License**. Silakan bac
 
 ---
 
-*xDownloader Studio v1.2.2 — High-Performance Desktop Media Studio & AI Transcription.*
+*xDownloader Studio v1.2.3 — High-Performance Desktop Media Studio & AI Transcription.*

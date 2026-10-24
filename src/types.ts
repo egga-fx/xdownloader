@@ -78,6 +78,23 @@ export interface MediaItem {
   height?: number | null;
 }
 
+export interface StartDownloadPayload {
+  url: string;
+  formatType: string;
+  quality: string;
+  title?: string;
+  thumbnailUrl?: string;
+  author?: string;
+  durationSec?: number;
+  customName?: string;
+  outputFolder?: string;
+  downloadSubtitles?: boolean;
+  timeRange?: TimeRange;
+  selectedIndices?: number[];
+  imageUrls?: string[];
+  mediaItems?: MediaItem[];
+}
+
 export interface VideoInfo {
   id: string;
   title: string;

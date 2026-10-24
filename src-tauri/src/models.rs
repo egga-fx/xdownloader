@@ -81,6 +81,7 @@ pub struct VideoInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct BinariesStatus {
     pub ytdlp_installed: bool,
     pub ytdlp_version: String,
@@ -209,6 +210,37 @@ pub struct TranscriptionProgress {
     pub message: String,
     pub error: Option<String>,
     pub srt_path: Option<String>,
+}
+
+/// Strongly-typed payload DTO for `start_download` IPC command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartDownloadPayload {
+    pub url: String,
+    pub format_type: String,
+    pub quality: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub duration_sec: Option<i64>,
+    #[serde(default)]
+    pub custom_name: Option<String>,
+    #[serde(default)]
+    pub output_folder: Option<String>,
+    #[serde(default)]
+    pub download_subtitles: bool,
+    #[serde(default)]
+    pub time_range: Option<TimeRange>,
+    #[serde(default)]
+    pub selected_indices: Option<Vec<usize>>,
+    #[serde(default)]
+    pub image_urls: Option<Vec<String>>,
+    #[serde(default)]
+    pub media_items: Option<Vec<MediaItem>>,
 }
 
 

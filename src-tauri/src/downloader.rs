@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use regex::Regex;
 use tauri::{AppHandle, Emitter};
 
@@ -16,6 +15,34 @@ use crate::models::{
 use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+static RE_YOUTUBE_ID: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:youtube\.com/(?:watch\?v=|shorts/|live/)|youtu\.be/)([a-zA-Z0-9_-]{11})").unwrap()
+});
+static RE_TIKTOK_VIDEO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/video/(\d+)").unwrap());
+static RE_TIKTOK_PHOTO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/photo/(\d+)").unwrap());
+static RE_USER_HANDLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@([^/?#]+)").unwrap());
+static RE_INSTAGRAM_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)").unwrap());
+static RE_INSTAGRAM_USER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"instagram\.com/([A-Za-z0-9_.]+)(?:/reel|/p|/tv)?").unwrap());
+static RE_TWITTER_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/status/(\d+)").unwrap());
+static RE_THREADS_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/post/([A-Za-z0-9_-]+)").unwrap());
+
+static RE_PROGRESS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[download\]\s+([0-9.]+)%\s+of\s+~?\s*([0-9.]+[A-Za-z]+)\s+at\s+([0-9.]+[A-Za-z/]+|\S+)\s+ETA\s+([0-9:]+)").unwrap()
+});
+static RE_PROGRESS_SIMPLE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[download\]\s+([0-9.]+)%").unwrap()
+});
+static RE_MERGER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\[Merger\] Merging formats into "(?P<path>[^"]+)""#).unwrap()
+});
+static RE_DESTINATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[(?:download|ExtractAudio)\] Destination:\s+(.+)").unwrap()
+});
+static RE_ALREADY_DOWNLOADED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[download\]\s+(.+)\s+has already been downloaded").unwrap()
+});
 
 #[derive(Clone)]
 pub struct ProcessTaskInfo {
@@ -339,10 +366,7 @@ pub fn sanitize_filename(name: &str) -> String {
         .collect();
 
     // 2. Collapse consecutive spaces
-    let collapsed = match Regex::new(r"\s+") {
-        Ok(re) => re.replace_all(&sanitized, " ").to_string(),
-        Err(_) => sanitized,
-    };
+    let collapsed = RE_WHITESPACE.replace_all(&sanitized, " ").to_string();
 
     // 3. Trim leading/trailing whitespace, periods, and commas
     let trimmed = collapsed.trim().trim_matches(|c| c == '.' || c == ' ' || c == ',');
@@ -611,26 +635,14 @@ pub fn build_video_stem(author: Option<&str>, title: &str, filename_format: &str
 pub fn get_fallback_media_title(url: &str, author: Option<&str>) -> String {
     let clean_url = url.trim();
     if clean_url.contains("tiktok.com") {
-        let vid = regex::Regex::new(r#"/video/(\d+)"#)
-            .ok()
-            .and_then(|re| re.captures(clean_url))
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str());
-        let photo_id = regex::Regex::new(r#"/photo/(\d+)"#)
-            .ok()
-            .and_then(|re| re.captures(clean_url))
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str());
+        let vid = RE_TIKTOK_VIDEO.captures(clean_url).and_then(|c| c.get(1)).map(|m| m.as_str());
+        let photo_id = RE_TIKTOK_PHOTO.captures(clean_url).and_then(|c| c.get(1)).map(|m| m.as_str());
         let id = vid.or(photo_id);
         let user = author
             .map(|a| a.trim().trim_start_matches('@'))
             .filter(|a| !a.is_empty())
             .or_else(|| {
-                regex::Regex::new(r#"@([^/?#]+)"#)
-                    .ok()
-                    .and_then(|re| re.captures(clean_url))
-                    .and_then(|c| c.get(1))
-                    .map(|m| m.as_str())
+                RE_USER_HANDLE.captures(clean_url).and_then(|c| c.get(1)).map(|m| m.as_str())
             });
         match (id, user) {
             (Some(i), Some(u)) => format!("TikTok Video {}-{}", i, u),
@@ -655,20 +667,12 @@ pub fn get_fallback_media_title(url: &str, author: Option<&str>) -> String {
             "YouTube Video".to_string()
         }
     } else if clean_url.contains("instagram.com") {
-        let code = regex::Regex::new(r#"/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)"#)
-            .ok()
-            .and_then(|re| re.captures(clean_url))
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str());
+        let code = RE_INSTAGRAM_CODE.captures(clean_url).and_then(|c| c.get(1)).map(|m| m.as_str());
         let user = author
             .map(|a| a.trim().trim_start_matches('@'))
             .filter(|a| !a.is_empty())
             .or_else(|| {
-                regex::Regex::new(r#"instagram\.com/([A-Za-z0-9_.]+)(?:/reel|/p|/tv)?"#)
-                    .ok()
-                    .and_then(|re| re.captures(clean_url))
-                    .and_then(|c| c.get(1))
-                    .map(|m| m.as_str())
+                RE_INSTAGRAM_USER.captures(clean_url).and_then(|c| c.get(1)).map(|m| m.as_str())
                     .filter(|u| !["p", "reel", "reels", "tv", "stories", "explore"].contains(u))
             });
         match (code, user) {
@@ -677,11 +681,7 @@ pub fn get_fallback_media_title(url: &str, author: Option<&str>) -> String {
             _ => "Instagram Media".to_string(),
         }
     } else if clean_url.contains("twitter.com") || clean_url.contains("x.com") {
-        let id = regex::Regex::new(r#"/status/(\d+)"#)
-            .ok()
-            .and_then(|re| re.captures(clean_url))
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str());
+        let id = RE_TWITTER_ID.captures(clean_url).and_then(|c| c.get(1)).map(|m| m.as_str());
         let user = author.map(|a| a.trim().trim_start_matches('@')).filter(|a| !a.is_empty());
         match (id, user) {
             (Some(pid), Some(u)) => format!("X Post {}-{}", pid, u),
@@ -689,11 +689,7 @@ pub fn get_fallback_media_title(url: &str, author: Option<&str>) -> String {
             _ => "X Media".to_string(),
         }
     } else if clean_url.contains("threads.net") || clean_url.contains("threads.com") {
-        let id = regex::Regex::new(r#"/post/([A-Za-z0-9_-]+)"#)
-            .ok()
-            .and_then(|re| re.captures(clean_url))
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str());
+        let id = RE_THREADS_ID.captures(clean_url).and_then(|c| c.get(1)).map(|m| m.as_str());
         match id {
             Some(pid) => format!("Threads Post {}", pid),
             None => "Threads Media".to_string(),
@@ -798,8 +794,7 @@ pub fn generate_local_thumbnail(media_path: &Path, task_id: &str) -> Option<Stri
 }
 
 fn extract_youtube_id(url: &str) -> Option<String> {
-    let re = Regex::new(r"(?:youtube\.com/(?:watch\?v=|shorts/|live/)|youtu\.be/)([a-zA-Z0-9_-]{11})").ok()?;
-    let caps = re.captures(url)?;
+    let caps = RE_YOUTUBE_ID.captures(url)?;
     Some(caps[1].to_string())
 }
 
@@ -1153,16 +1148,7 @@ pub async fn run_download(
     process_mgr.update_active_task_snapshot(&startup_task);
     let _ = app.emit("download-progress", &startup_task);
 
-    // Robust regex supporting space after '~' e.g. '[download] 5.2% of ~ 780.14MiB at 2.45MiB/s ETA 05:12'
-    let progress_regex = Regex::new(
-        r"\[download\]\s+([0-9.]+)%\s+of\s+~?\s*([0-9.]+[A-Za-z]+)\s+at\s+([0-9.]+[A-Za-z/]+|\S+)\s+ETA\s+([0-9:]+)"
-    ).unwrap();
-    let progress_simple_regex = Regex::new(
-        r"\[download\]\s+([0-9.]+)%"
-    ).unwrap();
-    let merger_regex = Regex::new(r#"\[Merger\] Merging formats into "(?P<path>[^"]+)""#).unwrap();
-    let destination_regex = Regex::new(r"\[(?:download|ExtractAudio)\] Destination:\s+(.+)").unwrap();
-    let already_downloaded_regex = Regex::new(r"\[download\]\s+(.+)\s+has already been downloaded").unwrap();
+
 
     let meta_file_path = std::env::temp_dir().join(format!("xdownloader_{}.meta", task_id));
 
@@ -1218,9 +1204,7 @@ pub async fn run_download(
             let _ = app.emit("download-progress", &retry_task);
         }
 
-        let _ = std::fs::remove_file(&meta_file_path);
-
-        let mut cmd = Command::new(&ytdlp_path);
+        let mut cmd = tokio::process::Command::new(&ytdlp_path);
         #[cfg(target_os = "windows")]
         cmd.creation_flags(CREATE_NO_WINDOW);
 
@@ -1384,20 +1368,21 @@ pub async fn run_download(
             }
         };
 
-        let pid = child.id();
+        let pid = child.id().unwrap_or(0);
         process_mgr.register(task_id.clone(), pid, out_dir.clone(), task_stem.clone());
 
-        let stdout = child.stdout.take().unwrap();
+        let stdout = child.stdout.take().ok_or("Failed to capture child stdout")?;
         let stderr = child.stderr.take();
 
         let stderr_lines = Arc::new(Mutex::new(Vec::<String>::new()));
         let stderr_lines_clone = stderr_lines.clone();
 
-        // Drain stderr in background thread to prevent pipe deadlock on Windows (4KB OS pipe buffer)
-        let stderr_handle = std::thread::spawn(move || {
+        // Drain stderr in background tokio task to prevent pipe deadlock on Windows (4KB OS pipe buffer)
+        let stderr_task = tokio::spawn(async move {
             if let Some(err_stream) = stderr {
-                let r = BufReader::new(err_stream);
-                for l in r.lines().flatten() {
+                use tokio::io::AsyncBufReadExt;
+                let mut r = tokio::io::BufReader::new(err_stream).lines();
+                while let Ok(Some(l)) = r.next_line().await {
                     let trimmed = l.trim().to_string();
                     if !trimmed.is_empty() {
                         if let Ok(mut lock) = stderr_lines_clone.lock() {
@@ -1411,104 +1396,55 @@ pub async fn run_download(
             }
         });
 
-        let reader = BufReader::new(stdout);
+        use tokio::io::AsyncBufReadExt;
+        let mut reader = tokio::io::BufReader::new(stdout).lines();
         let mut downloaded_path = String::new();
         let mut current_title = initial_record.title.clone();
         let mut last_progress_emit = std::time::Instant::now() - std::time::Duration::from_millis(200);
 
-        for line_res in reader.lines() {
-            if let Ok(line) = line_res {
-                let mut path_detected = false;
-                if let Some(caps) = merger_regex.captures(&line) {
-                    downloaded_path = caps["path"].trim().to_string();
-                    path_detected = true;
-                } else if let Some(caps) = destination_regex.captures(&line) {
-                    downloaded_path = caps[1].trim().to_string();
-                    path_detected = true;
-                } else if let Some(caps) = already_downloaded_regex.captures(&line) {
-                    downloaded_path = caps[1].trim().to_string();
-                    path_detected = true;
-                }
+        while let Ok(Some(line)) = reader.next_line().await {
+            let mut path_detected = false;
+            if let Some(caps) = RE_MERGER.captures(&line) {
+                downloaded_path = caps["path"].trim().to_string();
+                path_detected = true;
+            } else if let Some(caps) = RE_DESTINATION.captures(&line) {
+                downloaded_path = caps[1].trim().to_string();
+                path_detected = true;
+            } else if let Some(caps) = RE_ALREADY_DOWNLOADED.captures(&line) {
+                downloaded_path = caps[1].trim().to_string();
+                path_detected = true;
+            }
 
-                if path_detected && !downloaded_path.is_empty() {
-                    let candidate_name = Path::new(&downloaded_path)
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("");
-                    let clean_name = clean_download_filename(candidate_name, &default_ext);
-                    if !clean_name.is_empty() && clean_name != current_title && !is_fallback_title(&clean_name) {
-                        current_title = clean_name.clone();
-                        let _ = db.update_record_title(&task_id, &current_title);
-                        if let Some(inferred_author) = extract_author_from_filename(&current_title) {
-                            if effective_author_or_source.is_empty()
-                                || effective_author_or_source.eq_ignore_ascii_case("youtube")
-                                || effective_author_or_source.eq_ignore_ascii_case("tiktok")
-                                || effective_author_or_source.eq_ignore_ascii_case("web_media")
-                            {
-                                let _ = db.update_record_author(&task_id, &inferred_author);
-                            }
+            if path_detected && !downloaded_path.is_empty() {
+                let candidate_name = Path::new(&downloaded_path)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                let clean_name = clean_download_filename(candidate_name, &default_ext);
+                if !clean_name.is_empty() && clean_name != current_title && !is_fallback_title(&clean_name) {
+                    current_title = clean_name.clone();
+                    let _ = db.update_record_title(&task_id, &current_title);
+                    if let Some(inferred_author) = extract_author_from_filename(&current_title) {
+                        if effective_author_or_source.is_empty()
+                            || effective_author_or_source.eq_ignore_ascii_case("youtube")
+                            || effective_author_or_source.eq_ignore_ascii_case("tiktok")
+                            || effective_author_or_source.eq_ignore_ascii_case("web_media")
+                        {
+                            let _ = db.update_record_author(&task_id, &inferred_author);
                         }
                     }
                 }
+            }
 
-                if let Some(caps) = progress_regex.captures(&line) {
-                    let percent: f64 = caps[1].parse().unwrap_or(0.0);
-                    let speed_str = caps[3].to_string();
-                    let eta_str = caps[4].to_string();
+            if let Some(caps) = RE_PROGRESS.captures(&line) {
+                let percent: f64 = caps[1].parse().unwrap_or(0.0);
+                let speed_str = caps[3].to_string();
+                let eta_str = caps[4].to_string();
 
-                    let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(200);
-                    if should_emit {
-                        last_progress_emit = std::time::Instant::now();
-                        let task_update = ActiveDownloadTask {
-                            task_id: task_id.clone(),
-                            url: url.clone(),
-                            title: current_title.clone(),
-                            platform: initial_record.platform.clone(),
-                            format_type: format_type.clone(),
-                            quality: quality.clone(),
-                            status: "downloading".to_string(),
-                            progress: TaskProgress {
-                                percent,
-                                speed_str,
-                                eta_str,
-                                downloaded_bytes: None,
-                                total_bytes: None,
-                            },
-                            error: None,
-                        };
-
-                        process_mgr.update_active_task_snapshot(&task_update);
-                        let _ = app.emit("download-progress", &task_update);
-                    }
-                } else if let Some(caps) = progress_simple_regex.captures(&line) {
-                    let percent: f64 = caps[1].parse().unwrap_or(0.0);
-                    let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(200);
-                    if should_emit {
-                        last_progress_emit = std::time::Instant::now();
-                        let task_update = ActiveDownloadTask {
-                            task_id: task_id.clone(),
-                            url: url.clone(),
-                            title: current_title.clone(),
-                            platform: initial_record.platform.clone(),
-                            format_type: format_type.clone(),
-                            quality: quality.clone(),
-                            status: "downloading".to_string(),
-                            progress: TaskProgress {
-                                percent,
-                                speed_str: "Downloading...".to_string(),
-                                eta_str: String::new(),
-                                downloaded_bytes: None,
-                                total_bytes: None,
-                            },
-                            error: None,
-                        };
-                        process_mgr.update_active_task_snapshot(&task_update);
-                        let _ = app.emit("download-progress", &task_update);
-                    }
-                }
-
-                if let Some(_caps) = destination_regex.captures(&line) {
-                    let receiving_task = ActiveDownloadTask {
+                let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(200);
+                if should_emit {
+                    last_progress_emit = std::time::Instant::now();
+                    let task_update = ActiveDownloadTask {
                         task_id: task_id.clone(),
                         url: url.clone(),
                         title: current_title.clone(),
@@ -1517,22 +1453,70 @@ pub async fn run_download(
                         quality: quality.clone(),
                         status: "downloading".to_string(),
                         progress: TaskProgress {
-                            percent: 1.0,
-                            speed_str: "Receiving stream...".to_string(),
+                            percent,
+                            speed_str,
+                            eta_str,
+                            downloaded_bytes: None,
+                            total_bytes: None,
+                        },
+                        error: None,
+                    };
+
+                    process_mgr.update_active_task_snapshot(&task_update);
+                    let _ = app.emit("download-progress", &task_update);
+                }
+            } else if let Some(caps) = RE_PROGRESS_SIMPLE.captures(&line) {
+                let percent: f64 = caps[1].parse().unwrap_or(0.0);
+                let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(200);
+                if should_emit {
+                    last_progress_emit = std::time::Instant::now();
+                    let task_update = ActiveDownloadTask {
+                        task_id: task_id.clone(),
+                        url: url.clone(),
+                        title: current_title.clone(),
+                        platform: initial_record.platform.clone(),
+                        format_type: format_type.clone(),
+                        quality: quality.clone(),
+                        status: "downloading".to_string(),
+                        progress: TaskProgress {
+                            percent,
+                            speed_str: "Downloading...".to_string(),
                             eta_str: String::new(),
                             downloaded_bytes: None,
                             total_bytes: None,
                         },
                         error: None,
                     };
-                    process_mgr.update_active_task_snapshot(&receiving_task);
-                    let _ = app.emit("download-progress", &receiving_task);
+                    process_mgr.update_active_task_snapshot(&task_update);
+                    let _ = app.emit("download-progress", &task_update);
                 }
+            }
+
+            if let Some(_caps) = RE_DESTINATION.captures(&line) {
+                let receiving_task = ActiveDownloadTask {
+                    task_id: task_id.clone(),
+                    url: url.clone(),
+                    title: current_title.clone(),
+                    platform: initial_record.platform.clone(),
+                    format_type: format_type.clone(),
+                    quality: quality.clone(),
+                    status: "downloading".to_string(),
+                    progress: TaskProgress {
+                        percent: 1.0,
+                        speed_str: "Receiving stream...".to_string(),
+                        eta_str: String::new(),
+                        downloaded_bytes: None,
+                        total_bytes: None,
+                    },
+                    error: None,
+                };
+                process_mgr.update_active_task_snapshot(&receiving_task);
+                let _ = app.emit("download-progress", &receiving_task);
             }
         }
 
-        let status = child.wait().map_err(|e| format!("Process wait failed: {}", e))?;
-        let _ = stderr_handle.join();
+        let status = child.wait().await.map_err(|e| format!("Process wait failed: {}", e))?;
+        let _ = stderr_task.await;
         process_mgr.remove(&task_id);
 
         if db.is_task_cancelled(&task_id) {
