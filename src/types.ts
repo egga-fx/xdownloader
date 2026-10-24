@@ -85,7 +85,9 @@ export interface VideoInfo {
   thumbnail: string;
   uploader: string;
   channel: string;
+  uploaderId?: string;
   description?: string;
+  postType?: string;
   webpageUrl: string;
   images?: string[];
   mediaItems?: MediaItem[];
@@ -101,8 +103,8 @@ export interface BinariesStatus {
   bin_dir: string;
 }
 
-/** `author_title` → `$author_name-$media_title.$ext` | `title_only` → `$media_title.$ext` */
-export type VideoFilenameFormat = "author_title" | "title_only";
+/** `title_author` → `$title_name-$author_name.$ext` | `title_only` → `$media_title.$ext` */
+export type VideoFilenameFormat = "title_author" | "title_only" | "author_title";
 export type CarouselFilenameFormat = "folder_sequential" | "title_sequential";
 
 export interface AppSettings {

@@ -18,6 +18,7 @@ import {
   getSourceAccount,
   isRecordCorruptOrMissing,
   getRecordThumbnail,
+  getDisplayTitle,
 } from "../lib/utils";
 
 interface VaultHistoryGridProps {
@@ -74,8 +75,8 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 ) : (
                   <Loader2 className="w-4 h-4 text-blue-400 animate-spin shrink-0" />
                 )}
-                <span className="text-xs font-bold text-white truncate" title={task.title}>
-                  {task.title}
+                <span className="text-xs font-bold text-white truncate" title={getDisplayTitle(task)}>
+                  {getDisplayTitle(task)}
                 </span>
                 {isSubtitle && (
                   <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
@@ -268,9 +269,9 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                       ? "text-[#f4f4f5] cursor-pointer hover:text-blue-400"
                       : "text-[#71717a]"
                   }`}
-                  title={item.title}
+                  title={getDisplayTitle(item)}
                 >
-                  {item.title}
+                  {getDisplayTitle(item)}
                 </h4>
 
                 <div className="flex items-center justify-between text-[11px] text-[#71717a] mt-1">

@@ -16,6 +16,7 @@ import {
   getSourceAccount,
   isRecordCorruptOrMissing,
   getRecordThumbnail,
+  getDisplayTitle,
 } from "../lib/utils";
 
 interface VaultHistoryTableProps {
@@ -83,8 +84,8 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
               </div>
               <div className="flex flex-col min-w-0 flex-grow gap-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs sm:text-sm font-bold text-white truncate" title={task.title}>
-                    {task.title}
+                  <span className="text-xs sm:text-sm font-bold text-white truncate" title={getDisplayTitle(task)}>
+                    {getDisplayTitle(task)}
                   </span>
                   {isSubtitle && (
                     <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
@@ -262,9 +263,9 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
                       ? "text-[#f4f4f5] cursor-pointer hover:text-blue-400"
                       : "text-[#71717a] cursor-not-allowed"
                   }`}
-                  title={item.title}
+                  title={getDisplayTitle(item)}
                 >
-                  {item.title}
+                  {getDisplayTitle(item)}
                 </span>
 
                 <div className="flex items-center gap-1.5 text-[11px] text-[#71717a] mt-0.5 flex-wrap">

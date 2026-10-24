@@ -338,14 +338,22 @@ fn get_download_records(
                     }
                 }
 
-                // 2. Auto-heal title if still a raw fallback URL or generic "Media"
-                if rec.title.starts_with("http") || rec.title == "Media" || rec.title.trim().is_empty() {
-                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                        let _ = state.db.update_record_title(&rec.id, stem);
-                        rec.title = stem.to_string();
+                // 2. Auto-heal title so it matches the actual output file name on disk
+                if let Some(file_name) = p.file_name().and_then(|s| s.to_str()) {
+                    if rec.title != file_name && (downloader::is_fallback_title(&rec.title) || !rec.title.contains('.')) {
+                        let _ = state.db.update_record_title(&rec.id, file_name);
+                        rec.title = file_name.to_string();
                     }
+                } else if downloader::is_fallback_title(&rec.title) {
+                    let healed = downloader::get_fallback_media_title(&rec.url, Some(&rec.author));
+                    let _ = state.db.update_record_title(&rec.id, &healed);
+                    rec.title = healed;
                 }
             }
+        } else if downloader::is_fallback_title(&rec.title) {
+            let healed = downloader::get_fallback_media_title(&rec.url, Some(&rec.author));
+            let _ = state.db.update_record_title(&rec.id, &healed);
+            rec.title = healed;
         }
     }
 

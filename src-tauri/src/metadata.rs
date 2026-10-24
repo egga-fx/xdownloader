@@ -58,6 +58,10 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         .arg("--socket-timeout")
         .arg("15");
 
+    if let Some((runtime, path)) = crate::binaries::find_js_runtime() {
+        cmd.arg("--js-runtimes").arg(format!("{}:{}", runtime, path.to_string_lossy()));
+    }
+
     cmd.arg(url);
     cmd.kill_on_drop(true);
 
@@ -68,7 +72,14 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
     };
 
     if !output.status.success() {
-        // Fallback: Check if it's an image/photo post that yt-dlp cannot extract (e.g. Pinterest, X, TikTok, IG images)
+        // Fallback 1: For TikTok posts, try TikWm API directly (bypasses ISP/IP blocks on yt-dlp)
+        if url.contains("tiktok.com") {
+            if let Ok(vinfo) = crate::image_extractor::extract_tiktok_video_metadata(url).await {
+                return Ok(vinfo);
+            }
+        }
+
+        // Fallback 2: Check if it's an image/photo post that yt-dlp cannot extract (e.g. Pinterest, X, TikTok, IG images)
         if let Ok(bundle) = crate::image_extractor::try_extract_image_media(url).await {
             return Ok(crate::image_extractor::bundle_to_video_info(&bundle, url));
         }
@@ -158,11 +169,19 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         }
     }
 
+    let uploader_id = json_val["uploader_id"]
+        .as_str()
+        .map(|s| s.to_string());
+    let raw_description = json_val["description"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let is_carousel = extracted_images.len() > 1;
-    let description = if !has_video_formats && (!extracted_images.is_empty() || is_carousel) {
+    let post_type = if !has_video_formats && (!extracted_images.is_empty() || is_carousel) {
         Some("image".to_string())
     } else {
-        None
+        Some("video".to_string())
     };
 
     let effective_title = if url.contains("instagram.com") {
@@ -186,6 +205,13 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
             desc_candidate,
             &post_id,
         )
+    } else if url.contains("tiktok.com") {
+        // For TikTok: prioritize full description (captions & hashtags) over truncated title
+        if let Some(ref desc) = raw_description {
+            desc.clone()
+        } else {
+            raw_title
+        }
     } else {
         raw_title
     };
@@ -218,7 +244,9 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         thumbnail,
         uploader,
         channel,
-        description,
+        uploader_id,
+        description: raw_description,
+        post_type,
         webpage_url,
         images,
         media_items: None,

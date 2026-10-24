@@ -87,7 +87,9 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   const hasMultipleMedia = mediaItems.length > 1;
   const carouselVideosCount = mediaItems.filter((m) => m.kind === "video").length;
   const carouselImagesCount = mediaItems.filter((m) => m.kind === "image").length;
-  const isImage = info.description === "image" && carouselVideosCount === 0;
+  const isImage =
+    (info.postType === "image" || info.description === "image") &&
+    carouselVideosCount === 0;
   const carouselImages: string[] =
     mediaItems.length > 0
       ? mediaItems.map((m) => m.thumbnail || m.url)

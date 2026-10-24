@@ -410,21 +410,26 @@ pub async fn extract_x_photos(url: &str) -> Result<ImageMediaBundle, String> {
 }
 
 /// 3. TikTok Photo Mode & Carousel Extractor
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct TikWmData {
+    pub id: Option<String>,
     pub title: Option<String>,
+    pub cover: Option<String>,
+    pub origin_cover: Option<String>,
+    pub duration: Option<i64>,
+    pub play: Option<String>,
     pub images: Option<Vec<String>>,
     pub music: Option<String>,
     pub author: Option<TikWmAuthor>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct TikWmAuthor {
     pub unique_id: Option<String>,
     pub nickname: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct TikWmResponse {
     pub code: i32,
     pub data: Option<TikWmData>,
@@ -488,6 +493,57 @@ pub async fn extract_tiktok_photos(url: &str) -> Result<ImageMediaBundle, String
         .map_err(|e| format!("Failed to parse TikTok photo response: {}", e))?;
 
     parse_tiktok_response(&res_obj, url)
+}
+
+pub async fn extract_tiktok_video_metadata(url: &str) -> Result<crate::models::VideoInfo, String> {
+    let client = create_http_client();
+    let api_url = format!("https://www.tikwm.com/api/?url={}", url);
+
+    let resp = client
+        .get(&api_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch TikTok details: {}", e))?;
+
+    let res_obj: TikWmResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse TikTok response: {}", e))?;
+
+    if res_obj.code != 0 || res_obj.data.is_none() {
+        return Err("TikTok did not return valid video data.".to_string());
+    }
+
+    let data = res_obj.data.unwrap();
+    let id = data.id.unwrap_or_default();
+    let raw_title = data.title.unwrap_or_default();
+    let title = if !raw_title.trim().is_empty() {
+        raw_title.trim().to_string()
+    } else {
+        "TikTok Video".to_string()
+    };
+    let duration = data.duration.unwrap_or(0);
+    let thumbnail = data.origin_cover.or(data.cover).unwrap_or_default();
+    let uploader = data.author.as_ref().and_then(|a| a.unique_id.clone()).unwrap_or_default();
+    let channel = data.author.as_ref().and_then(|a| a.nickname.clone()).unwrap_or_default();
+
+    let uploader_id = if !uploader.is_empty() { Some(uploader.clone()) } else { None };
+    let description = Some(title.clone());
+
+    Ok(crate::models::VideoInfo {
+        id,
+        title,
+        duration,
+        thumbnail,
+        uploader,
+        channel,
+        uploader_id,
+        description,
+        post_type: Some("video".to_string()),
+        webpage_url: url.to_string(),
+        images: None,
+        media_items: None,
+    })
 }
 
 /// Cleans raw text into a standard post caption/title.
@@ -1116,7 +1172,9 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
                                     thumbnail: primary_thumb,
                                     uploader: if !author.is_empty() { author } else { "Threads Creator".to_string() },
                                     channel: "Threads".to_string(),
+                                    uploader_id: None,
                                     description: Some(desc_tag),
+                                    post_type: None,
                                     webpage_url: final_url.to_string(),
                                     images: Some(thumbs),
                                     media_items: Some(items),
@@ -1159,7 +1217,9 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
                                 thumbnail: single_thumb,
                                 uploader: if !author.is_empty() { author } else { "Threads Creator".to_string() },
                                 channel: "Threads".to_string(),
+                                uploader_id: None,
                                 description: Some(clean_v_url),
+                                post_type: None,
                                 webpage_url: final_url.to_string(),
                                 images: None,
                                 media_items: Some(vec![single_item]),
@@ -1196,7 +1256,9 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
                             thumbnail: clean_img.clone(),
                             uploader: if !author.is_empty() { author } else { "Threads Creator".to_string() },
                             channel: "Threads".to_string(),
+                            uploader_id: None,
                             description: Some("image".to_string()),
+                            post_type: Some("image".to_string()),
                             webpage_url: final_url.to_string(),
                             images: Some(vec![clean_img]),
                             media_items: Some(vec![single_item]),
@@ -1256,7 +1318,9 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
             thumbnail: resolved_thumbnail,
             uploader: if !author.is_empty() { author } else { "Threads Creator".to_string() },
             channel: "Threads".to_string(),
+            uploader_id: None,
             description: Some(v_url),
+            post_type: None,
             webpage_url: final_url.to_string(),
             images: None,
             media_items: Some(vec![single_item]),
@@ -1453,7 +1517,9 @@ pub fn bundle_to_video_info(bundle: &ImageMediaBundle, url: &str) -> VideoInfo {
         thumbnail,
         uploader: bundle.author.clone(),
         channel: bundle.platform.clone(),
+        uploader_id: None,
         description: Some("image".to_string()),
+        post_type: Some("image".to_string()),
         webpage_url: url.to_string(),
         images: if count > 1 { Some(image_urls) } else { None },
         media_items: Some(media_items),
@@ -1472,13 +1538,23 @@ pub async fn download_image_bundle(
 ) -> Result<String, String> {
     let client = create_http_client();
 
+    // Read carousel filename format from settings
+    let settings = db.get_settings().unwrap_or_default();
+    let author_or_source = crate::downloader::resolve_author_or_source(
+        Some(&bundle.author),
+        None,
+        &bundle.platform,
+        &bundle.source_url,
+    );
     let raw_name = custom_name.as_deref().unwrap_or(&bundle.title);
     let carousel_badge_re = Regex::new(r"(?i)\s*\[carousel:?\s*\d+\s*images?\]").unwrap();
     let stripped = carousel_badge_re.replace_all(raw_name, "");
-    let clean_base_name = sanitize_name(stripped.trim());
-
-    // Read carousel filename format from settings
-    let settings = db.get_settings().unwrap_or_default();
+    let clean_raw = sanitize_name(crate::downloader::strip_media_extension(stripped.trim()));
+    let clean_base_name = crate::downloader::build_video_stem(
+        Some(&author_or_source),
+        &clean_raw,
+        &settings.video_filename_format,
+    );
     let is_folder_sequential = settings.carousel_filename_format != "title_sequential";
 
     // If multiple items and folder_sequential: save into a dedicated subfolder with sequential names
@@ -1657,7 +1733,11 @@ pub async fn download_image_bundle(
     let display_title = if count > 1 && !raw_name.contains("[Carousel:") {
         format!("{} [Carousel: {} Images]", clean_base_name, count)
     } else {
-        clean_base_name.to_string()
+        Path::new(&primary_saved_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&clean_base_name)
+            .to_string()
     };
 
     // Save final record in SQLite database
@@ -1765,13 +1845,22 @@ pub async fn download_media_bundle(
 ) -> Result<String, String> {
     let client = create_http_client();
 
+    let settings = db.get_settings().unwrap_or_default();
+    let author_or_source = crate::downloader::resolve_author_or_source(
+        Some(&bundle.author),
+        None,
+        &bundle.platform,
+        &bundle.source_url,
+    );
     let raw_name = custom_name.as_deref().unwrap_or(&bundle.title);
     let carousel_badge_re = Regex::new(r"(?i)\s*\[carousel:?\s*\d+\s*(?:images?|videos?|media)\]").unwrap();
     let stripped = carousel_badge_re.replace_all(raw_name, "");
-    let clean_base_name = sanitize_name(stripped.trim());
-
-    // Read carousel filename format from settings
-    let settings = db.get_settings().unwrap_or_default();
+    let clean_raw = sanitize_name(crate::downloader::strip_media_extension(stripped.trim()));
+    let clean_base_name = crate::downloader::build_video_stem(
+        Some(&author_or_source),
+        &clean_raw,
+        &settings.video_filename_format,
+    );
     let is_folder_sequential = settings.carousel_filename_format != "title_sequential";
 
     // If multiple items and folder_sequential: save into a dedicated subfolder with sequential names
@@ -1818,7 +1907,8 @@ pub async fn download_media_bundle(
         let label = if is_all_video { "Videos" } else if is_all_image { "Images" } else { "Media" };
         format!("{} [Carousel: {} {}]", clean_base_name, count, label)
     } else {
-        clean_base_name.to_string()
+        let ext = if is_all_image { "jpg" } else { "mp4" };
+        format!("{}.{}", clean_base_name, ext)
     };
 
     let initial_record = DownloadRecord {
@@ -2107,11 +2197,21 @@ pub async fn download_media_bundle(
         return Err("No files were saved".to_string());
     }
 
+    let final_title = if count > 1 {
+        display_title
+    } else {
+        Path::new(&primary_saved_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&display_title)
+            .to_string()
+    };
+
     let final_record = DownloadRecord {
         id: task_id.to_string(),
         platform: bundle.platform.clone(),
         url: bundle.source_url.clone(),
-        title: display_title.clone(),
+        title: final_title.clone(),
         author: bundle.author.clone(),
         duration_sec: 0,
         thumbnail_url: bundle.thumbnail.clone(),
@@ -2132,7 +2232,7 @@ pub async fn download_media_bundle(
         ActiveDownloadTask {
             task_id: task_id.to_string(),
             url: bundle.source_url.clone(),
-            title: display_title,
+            title: final_title,
             platform: bundle.platform.clone(),
             format_type: format_type.to_string(),
             quality: "best".to_string(),
@@ -2224,6 +2324,7 @@ mod tests {
                     unique_id: Some("traveler_tokyo".to_string()),
                     nickname: Some("Tokyo Guide".to_string()),
                 }),
+                ..Default::default()
             }),
         };
         let url = "https://www.tiktok.com/@traveler_tokyo/photo/7123456789";

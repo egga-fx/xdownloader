@@ -998,8 +998,8 @@ pub async fn run_transcription(
     let _ = tokio::fs::create_dir_all(&out_dir).await;
 
     let stem = match custom_name {
-        Some(ref n) if !n.trim().is_empty() => sanitize_filename(n),
-        _ => sanitize_filename(&title),
+        Some(ref n) if !n.trim().is_empty() => sanitize_filename(crate::downloader::strip_media_extension(n.trim())),
+        _ => sanitize_filename(crate::downloader::strip_media_extension(&title)),
     };
 
     let srt_path = out_dir.join(format!("{}.srt", stem));
@@ -1044,7 +1044,11 @@ pub async fn run_transcription(
         id: format!("{}_srt", task_id),
         platform,
         url: url.clone(),
-        title: format!("{} [Transcript]", title),
+        title: srt_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("{}.srt", title)),
         author,
         duration_sec,
         thumbnail_url,
@@ -1451,8 +1455,8 @@ pub async fn run_file_transcription(
         .unwrap_or("media");
 
     let stem = match custom_name {
-        Some(ref n) if !n.trim().is_empty() => sanitize_filename(n),
-        _ => sanitize_filename(default_stem),
+        Some(ref n) if !n.trim().is_empty() => sanitize_filename(crate::downloader::strip_media_extension(n.trim())),
+        _ => sanitize_filename(crate::downloader::strip_media_extension(default_stem)),
     };
 
     let srt_path = out_dir.join(format!("{}.srt", stem));
@@ -1480,7 +1484,11 @@ pub async fn run_file_transcription(
         id: format!("{}_srt", task_id),
         platform: "local_file".to_string(),
         url: file_path_str.clone(),
-        title: format!("{} [Transcript]", stem),
+        title: srt_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("{}.srt", stem)),
         author: "Local Studio".to_string(),
         duration_sec: 0,
         thumbnail_url: String::new(),

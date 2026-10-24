@@ -258,6 +258,16 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_record_author(&self, id: &str, author: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
+        conn.execute(
+            "UPDATE downloads SET author = ?1 WHERE id = ?2",
+            params![author, id],
+        )
+        .map_err(|e| format!("Failed to update record author: {}", e))?;
+        Ok(())
+    }
+
     pub fn update_record_thumbnail(&self, id: &str, thumbnail_url: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|_| "Database mutex lock poisoned")?;
         conn.execute(

@@ -12,7 +12,7 @@ import {
   Captions,
 } from "lucide-react";
 import { DownloadRecord } from "../types";
-import { formatDuration, formatFileSize, getRecordThumbnail, getSourceAccount } from "../lib/utils";
+import { formatDuration, formatFileSize, getRecordThumbnail, getSourceAccount, getDisplayTitle } from "../lib/utils";
 import {
   resolvePlaybackUrl,
   triggerDirectBrowserDownload,
@@ -86,8 +86,8 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
             >
               {record.formatType}
             </span>
-            <span className="font-bold text-sm text-white truncate" title={record.title}>
-              {record.title}
+            <span className="font-bold text-sm text-white truncate" title={getDisplayTitle(record)}>
+              {getDisplayTitle(record)}
             </span>
           </div>
           <button
@@ -107,8 +107,8 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
               <div className="w-20 h-20 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-4 shadow-xl">
                 <Captions className="w-10 h-10" />
               </div>
-              <h4 className="font-bold text-sm text-white text-center max-w-md truncate" title={record.title}>
-                {record.title}
+              <h4 className="font-bold text-sm text-white text-center max-w-md truncate" title={getDisplayTitle(record)}>
+                {getDisplayTitle(record)}
               </h4>
               <p className="text-xs text-[#71717a] mt-1 text-center">
                 Subtitle & Transcript File (.srt) · {formatFileSize(record.fileSizeBytes)}

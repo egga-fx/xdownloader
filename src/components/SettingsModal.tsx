@@ -271,7 +271,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [downloadSubtitles, setDownloadSubtitles] = useState<boolean>(false);
   const [desktopNotifications, setDesktopNotifications] = useState<boolean>(true);
   const [checkUpdatesOnStartup, setCheckUpdatesOnStartup] = useState<boolean>(true);
-  const [videoFilenameFormat, setVideoFilenameFormat] = useState<VideoFilenameFormat>("author_title");
+  const [videoFilenameFormat, setVideoFilenameFormat] = useState<VideoFilenameFormat>("title_author");
   const [carouselFilenameFormat, setCarouselFilenameFormat] = useState<CarouselFilenameFormat>("folder_sequential");
   const [maxConcurrentDownloads, setMaxConcurrentDownloads] = useState<number>(settings.maxConcurrentDownloads || 2);
   const [saving, setSaving] = useState<boolean>(false);
@@ -330,8 +330,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setDesktopNotifications(settings.desktopNotifications ?? true);
       setCheckUpdatesOnStartup(settings.checkUpdatesOnStartup ?? true);
       setMaxConcurrentDownloads(settings.maxConcurrentDownloads || 2);
-      // Normalize legacy persisted values (e.g. "source_channel_title") to the current union
-      setVideoFilenameFormat(settings.videoFilenameFormat === "title_only" ? "title_only" : "author_title");
+      // Normalize legacy persisted values (e.g. "source_channel_title" or "author_title") to the current union
+      setVideoFilenameFormat(settings.videoFilenameFormat === "title_only" ? "title_only" : "title_author");
       setCarouselFilenameFormat(settings.carouselFilenameFormat || "folder_sequential");
       setUpdateError(null);
       setEngineStatusMsg(null);
@@ -516,7 +516,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setDownloadSubtitles(false);
     setDesktopNotifications(true);
     setCheckUpdatesOnStartup(true);
-    setVideoFilenameFormat("author_title");
+    setVideoFilenameFormat("title_author");
     setCarouselFilenameFormat("folder_sequential");
     setMaxConcurrentDownloads(2);
     if (transcriptionConfig) {
@@ -759,19 +759,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                   <button
                     type="button"
-                    onClick={() => setVideoFilenameFormat("author_title")}
+                    onClick={() => setVideoFilenameFormat("title_author")}
                     className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-all cursor-pointer ${
-                      videoFilenameFormat === "author_title"
+                      videoFilenameFormat === "title_author" || videoFilenameFormat === "author_title"
                         ? "bg-blue-600/15 border-blue-500 text-white shadow-sm shadow-blue-500/10"
                         : "bg-[#141418] border-[#27272a] text-zinc-400 hover:text-white hover:border-[#3f3f46]"
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-white">Author + Title</span>
+                      <span className="font-bold text-white">Title + Author</span>
                       <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 font-extrabold">Default</span>
                     </div>
                     <span className="text-[10px] font-mono text-zinc-400 truncate">
-                      MrBeast-VideoTitle.mp4
+                      VideoTitle-MrBeast.mp4
                     </span>
                   </button>
 

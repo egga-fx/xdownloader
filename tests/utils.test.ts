@@ -11,6 +11,9 @@ import {
   timestampToSeconds,
   getErrorMessage,
   sanitizeTitle,
+  stripMediaExtension,
+  getSourcePlatformName,
+  buildOutputFileName,
 } from "../src/lib/utils";
 
 describe("AI Spec-First Audit: src/lib/utils.ts", () => {
@@ -265,6 +268,149 @@ describe("AI Spec-First Audit: src/lib/utils.ts", () => {
       const longTitle = "A".repeat(120);
       const result = sanitizeTitle(longTitle);
       expect(result.length).toBeLessThanOrEqual(80);
+    });
+
+    it("should strip trailing media extensions to prevent double-extension output", () => {
+      expect(sanitizeTitle("my_custom_video.mp4")).toBe("my_custom_video");
+      expect(sanitizeTitle("podcast_episode.MP3")).toBe("podcast_episode");
+      expect(sanitizeTitle("photo_slide.jpg")).toBe("photo_slide");
+      expect(sanitizeTitle("subtitles_id.srt")).toBe("subtitles_id");
+      expect(sanitizeTitle("complex.clip.name.webm")).toBe("complex.clip.name");
+    });
+  });
+
+  // --- 9. stripMediaExtension ---
+  describe("stripMediaExtension()", () => {
+    it("should return empty string for undefined or empty input", () => {
+      expect(stripMediaExtension("")).toBe("");
+      expect(stripMediaExtension(undefined)).toBe("");
+    });
+
+    it("should strip video, audio, image, and subtitle extensions case-insensitively", () => {
+      expect(stripMediaExtension("video.mp4")).toBe("video");
+      expect(stripMediaExtension("video.MKV")).toBe("video");
+      expect(stripMediaExtension("audio.m4a")).toBe("audio");
+      expect(stripMediaExtension("image.PNG")).toBe("image");
+      expect(stripMediaExtension("captions.vtt")).toBe("captions");
+      expect(stripMediaExtension("plain_text.txt")).toBe("plain_text");
+    });
+
+    it("should leave filenames without media extensions untouched", () => {
+      expect(stripMediaExtension("my_great_video")).toBe("my_great_video");
+      expect(stripMediaExtension("archive.tar.gz")).toBe("archive.tar.gz");
+    });
+  });
+
+  // --- 10. getSourcePlatformName ---
+  describe("getSourcePlatformName()", () => {
+    it("should resolve human-friendly names for recognized platforms", () => {
+      expect(getSourcePlatformName("https://www.youtube.com/watch?v=123")).toBe("YouTube");
+      expect(getSourcePlatformName("https://tiktok.com/@creator/video/123")).toBe("TikTok");
+      expect(getSourcePlatformName("https://instagram.com/reel/123")).toBe("Instagram");
+      expect(getSourcePlatformName("https://x.com/user/status/123")).toBe("X");
+      expect(getSourcePlatformName("https://threads.net/@user/post/123")).toBe("Threads");
+      expect(getSourcePlatformName("https://pin.it/123")).toBe("Pinterest");
+    });
+
+    it("should extract host/domain name or fallback for arbitrary URLs", () => {
+      expect(getSourcePlatformName("https://vimeo.com/123456")).toBe("Vimeo");
+      expect(getSourcePlatformName("")).toBe("Media");
+    });
+  });
+
+  // --- 11. buildOutputFileName ---
+  describe("buildOutputFileName() [$file_name-$author/channel/source_name.$format]", () => {
+    it("should format as file_name-author.format when author is provided", () => {
+      const result = buildOutputFileName({
+        title: "Awesome Podcast Episode 1",
+        author: "JohnDoe",
+        format: "mp4",
+      });
+      expect(result).toBe("Awesome Podcast Episode 1-JohnDoe.mp4");
+    });
+
+    it("should fall back to channel when author is empty or na", () => {
+      const result = buildOutputFileName({
+        title: "Awesome Podcast Episode 1",
+        author: "na",
+        channel: "TechChannel",
+        format: "mp4",
+      });
+      expect(result).toBe("Awesome Podcast Episode 1-TechChannel.mp4");
+    });
+
+    it("should fall back to source_name derived from URL when author and channel are missing", () => {
+      const result = buildOutputFileName({
+        title: "Short Clip",
+        url: "https://www.youtube.com/watch?v=xyz",
+        format: "mp4",
+      });
+      expect(result).toBe("Short Clip-YouTube.mp4");
+    });
+
+    it("should avoid duplicate author suffix if title already ends with or starts with author", () => {
+      const result = buildOutputFileName({
+        title: "Veritasium - The Science of Thinking",
+        author: "Veritasium",
+        format: "mp4",
+      });
+      expect(result).toBe("Veritasium - The Science of Thinking.mp4");
+    });
+
+    it("should clean media extension from incoming title to avoid double extension", () => {
+      const result = buildOutputFileName({
+        title: "Funny Cat Video.mp4",
+        author: "CatLover",
+        format: "mp4",
+      });
+      expect(result).toBe("Funny Cat Video-CatLover.mp4");
+    });
+
+    it("should use description as stem and channel as suffix for TikTok with hashtags preserved", () => {
+      const result = buildOutputFileName({
+        title: "TikTok Video 12345...",
+        description: "Tips coding pemula agar cepat mahir #coding #pemula #belajar",
+        author: "indonesia_hariini",
+        channel: "Indonesia Hari Ini??",
+        url: "https://www.tiktok.com/@indonesia_hariini/video/7699391539155307783",
+        format: "mp4",
+      });
+      expect(result).toBe("Tips coding pemula agar cepat mahir #coding #pemula #belajar-Indonesia Hari Ini.mp4");
+    });
+
+    it("should truncate long TikTok descriptions cleanly at word boundary under 80 chars", () => {
+      const result = buildOutputFileName({
+        description: "Menteri ESDM, Bahlil Lahadalia pertegas akan menghentikan ekspor gas alam (LNG) mulai 2026. #eksporgas #menteriesdm",
+        author: "indonesia_hariini",
+        channel: "Indonesia Hari Ini",
+        url: "https://www.tiktok.com/@indonesia_hariini/video/7699391539155307783",
+        format: "mp4",
+      });
+      expect(result).toBe("Menteri ESDM, Bahlil Lahadalia pertegas akan menghentikan ekspor gas alam (LNG)-Indonesia Hari Ini.mp4");
+    });
+
+    it("should use video title and uploaderId (without @) for YouTube", () => {
+      const result = buildOutputFileName({
+        title: "Me at the zoo",
+        author: "jawed",
+        channel: "jawed",
+        uploaderId: "@jawed",
+        url: "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        format: "mp4",
+      });
+      expect(result).toBe("Me at the zoo-jawed.mp4");
+    });
+
+    it("should use video title and strip @ from uploaderId for Veritasium on YouTube", () => {
+      const result = buildOutputFileName({
+        title: "How To Solve The 100 Prisoners Riddle",
+        author: "Veritasium",
+        channel: "Veritasium",
+        uploaderId: "@veritasium",
+        url: "https://www.youtube.com/watch?v=iSNsgj1OCLA",
+        format: "mp4",
+      });
+      expect(result).toBe("How To Solve The 100 Prisoners Riddle-veritasium.mp4");
     });
   });
 });

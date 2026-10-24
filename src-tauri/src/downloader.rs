@@ -347,9 +347,23 @@ pub fn sanitize_filename(name: &str) -> String {
     // 3. Trim leading/trailing whitespace, periods, and commas
     let trimmed = collapsed.trim().trim_matches(|c| c == '.' || c == ' ' || c == ',');
 
-    // 4. Truncate unicode stem to max 80 chars
-    let truncated: String = trimmed.chars().take(80).collect();
-    let final_clean = truncated.trim().trim_matches(|c| c == '.' || c == ' ').to_string();
+    // 4. Truncate unicode stem to max 80 chars cleanly at word boundary if long
+    let char_count = trimmed.chars().count();
+    let truncated: String = if char_count <= 80 {
+        trimmed.to_string()
+    } else {
+        let first_80: String = trimmed.chars().take(80).collect();
+        if let Some(last_space) = first_80.rfind(' ') {
+            if last_space > 50 {
+                first_80[..last_space].to_string()
+            } else {
+                first_80
+            }
+        } else {
+            first_80
+        }
+    };
+    let final_clean = truncated.trim().trim_matches(|c| c == '.' || c == ' ' || c == '-' || c == '_' || c == ',').to_string();
 
     if final_clean.is_empty() {
         "media_download".to_string()
@@ -358,11 +372,197 @@ pub fn sanitize_filename(name: &str) -> String {
     }
 }
 
-/// Builds the output stem for single video/audio downloads.
-/// Default format: `$author_name-$media_title`. Falls back to `$media_title`
-/// when the author is unknown/empty or when `title_only` is selected.
+/// Strips common media, audio, image, and subtitle extensions from custom filenames or stems.
+pub fn strip_media_extension(name: &str) -> &str {
+    let lower = name.to_lowercase();
+    const EXTENSIONS: &[&str] = &[
+        ".mp4", ".webm", ".mkv", ".mov", ".avi", ".flv", ".ts", ".m4v", ".wmv",
+        ".mp3", ".m4a", ".wav", ".flac", ".aac", ".opus", ".ogg",
+        ".jpg", ".jpeg", ".png", ".webp", ".gif",
+        ".srt", ".vtt", ".txt",
+    ];
+    for ext in EXTENSIONS {
+        if lower.ends_with(ext) {
+            return &name[..name.len() - ext.len()];
+        }
+    }
+    name
+}
+
+/// Normalizes intermediate or format-tagged download filenames emitted by yt-dlp into canonical output filenames.
+/// Strips `.part`, `.ytdl`, and internal format tags like `.f137.mp4` -> `.mp4`.
+pub fn clean_download_filename(filename: &str, default_ext: &str) -> String {
+    let mut s = filename.trim();
+    if let Some(stripped) = s.strip_suffix(".part") {
+        s = stripped.trim();
+    }
+    if let Some(stripped) = s.strip_suffix(".ytdl") {
+        s = stripped.trim();
+    }
+
+    // Handle yt-dlp format selectors e.g. "MyVideo-Author.f137.mp4" or "MyVideo-Author.f140.m4a"
+    // Format IDs in yt-dlp are numeric (e.g. f137, f248) or format aliases (fba, fbv).
+    if let Some(f_idx) = s.rfind(".f") {
+        let after_dot = &s[f_idx + 2..];
+        let starts_with_format_id = after_dot.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+            || after_dot.starts_with("ba")
+            || after_dot.starts_with("bv");
+        if starts_with_format_id {
+            let format_id_len = after_dot.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').count();
+            if format_id_len > 0 {
+                let rest = &after_dot[format_id_len..];
+                let stem = &s[..f_idx];
+                let ext = if rest.starts_with('.') {
+                    &rest[1..]
+                } else {
+                    default_ext
+                };
+                return format!("{}.{}", stem, ext);
+            }
+        }
+    }
+
+    let stem = strip_media_extension(s);
+    let ext = std::path::Path::new(s)
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.is_empty())
+        .unwrap_or(default_ext);
+
+    format!("{}.{}", stem, ext)
+}
+
+/// Extracts clean author or channel name from a standardized filename stem ($file_name-$author.$format).
+pub fn extract_author_from_filename(filename: &str) -> Option<String> {
+    let stem = strip_media_extension(filename);
+    if let Some(idx) = stem.rfind('-') {
+        let potential_author = stem[idx + 1..].trim();
+        let clean = potential_author.trim_start_matches('@').trim();
+        if !clean.is_empty()
+            && !clean.eq_ignore_ascii_case("youtube")
+            && !clean.eq_ignore_ascii_case("tiktok")
+            && !clean.eq_ignore_ascii_case("instagram")
+            && !clean.eq_ignore_ascii_case("web_media")
+            && !clean.eq_ignore_ascii_case("unknown")
+            && !clean.eq_ignore_ascii_case("na")
+        {
+            return Some(clean.to_string());
+        }
+    }
+    None
+}
+
+/// Identifies whether a raw title string is an unparsed fallback URL or generic placeholder.
+pub fn is_fallback_title(title: &str) -> bool {
+    let trimmed = title.trim();
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("media")
+        || trimmed.eq_ignore_ascii_case("media_download")
+        || trimmed.eq_ignore_ascii_case("untitled media")
+    {
+        return true;
+    }
+    let lower = trimmed.to_lowercase();
+    lower.starts_with("http")
+        || lower.contains("://")
+        || lower.contains("youtube.com")
+        || lower.contains("youtu.be")
+        || lower.contains("tiktok.com")
+        || lower.contains("instagram.com")
+        || lower.contains("twitter.com")
+        || lower.contains("x.com")
+        || lower.contains("pinterest.")
+        || lower.contains("pin.it")
+        || lower.contains("threads.net")
+        || lower.contains("threads.com")
+        || lower.starts_with("tiktok video")
+        || lower.starts_with("youtube video")
+        || lower.starts_with("youtube shorts")
+        || lower.starts_with("instagram post")
+        || lower.starts_with("x post")
+        || lower.starts_with("threads post")
+        || lower.starts_with("pinterest pin")
+        || lower.starts_with("pinterest media")
+}
+
+/// Resolves author, channel, or platform source name in order of priority:
+/// 1. TikTok: channel display name, then author/uploader, then "TikTok"
+/// 2. YouTube: author/uploader_id (without @), then channel, then "YouTube"
+/// 3. Other platforms: author, then channel, then platform source name
+pub fn resolve_author_or_source(
+    author: Option<&str>,
+    channel: Option<&str>,
+    platform: &str,
+    url: &str,
+) -> String {
+    let plat_lower = platform.to_lowercase();
+    let url_lower = url.to_lowercase();
+    let is_tiktok = plat_lower == "tiktok" || url_lower.contains("tiktok.com");
+    let is_youtube = plat_lower == "youtube" || url_lower.contains("youtube.com") || url_lower.contains("youtu.be");
+
+    // TikTok: Prioritize channel display name, fallback to uploader/author
+    if is_tiktok {
+        let clean_channel = channel
+            .map(|c| c.trim().trim_start_matches('@').trim())
+            .filter(|c| !c.is_empty() && *c != "media_download" && !c.eq_ignore_ascii_case("unknown") && !c.eq_ignore_ascii_case("na"));
+        if let Some(c) = clean_channel {
+            return sanitize_filename(c).chars().take(40).collect::<String>().trim().to_string();
+        }
+    }
+
+    let clean_author = author
+        .map(|a| a.trim().trim_start_matches('@').trim())
+        .filter(|a| !a.is_empty() && *a != "media_download" && !a.eq_ignore_ascii_case("unknown") && !a.eq_ignore_ascii_case("na"));
+    if let Some(a) = clean_author {
+        return sanitize_filename(a).chars().take(40).collect::<String>().trim().to_string();
+    }
+
+    let clean_channel = channel
+        .map(|c| c.trim().trim_start_matches('@').trim())
+        .filter(|c| !c.is_empty() && *c != "media_download" && !c.eq_ignore_ascii_case("unknown") && !c.eq_ignore_ascii_case("na"));
+    if let Some(c) = clean_channel {
+        return sanitize_filename(c).chars().take(40).collect::<String>().trim().to_string();
+    }
+
+    if is_youtube {
+        "YouTube".to_string()
+    } else if is_tiktok {
+        "TikTok".to_string()
+    } else if plat_lower == "instagram" || url_lower.contains("instagram.com") {
+        "Instagram".to_string()
+    } else if plat_lower == "x" || plat_lower == "twitter" || url_lower.contains("twitter.com") || url_lower.contains("x.com") {
+        "X".to_string()
+    } else if plat_lower == "threads" || url_lower.contains("threads.net") || url_lower.contains("threads.com") {
+        "Threads".to_string()
+    } else if plat_lower == "pinterest" || url_lower.contains("pinterest.") || url_lower.contains("pin.it") {
+        "Pinterest".to_string()
+    } else {
+        if let Ok(parsed) = reqwest::Url::parse(url) {
+            if let Some(host) = parsed.host_str() {
+                let clean_host = host.trim_start_matches("www.");
+                let parts: Vec<&str> = clean_host.split('.').collect();
+                if !parts.is_empty() && !parts[0].is_empty() {
+                    let mut chars = parts[0].chars();
+                    let capitalized = match chars.next() {
+                        None => String::new(),
+                        Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+                    };
+                    if !capitalized.is_empty() {
+                        return sanitize_filename(&capitalized);
+                    }
+                }
+            }
+        }
+        "WebMedia".to_string()
+    }
+}
+
+/// Builds the output stem for single video/audio downloads following convention:
+/// `$file_name-$author/channel/source_name`.
+/// Falls back to `$file_name` when `title_only` is selected or when already deduplicated.
 pub fn build_video_stem(author: Option<&str>, title: &str, filename_format: &str) -> String {
-    let clean_title = sanitize_filename(title);
+    let stripped_title = strip_media_extension(title);
+    let clean_title = sanitize_filename(stripped_title);
     if filename_format == "title_only" {
         return clean_title;
     }
@@ -371,12 +571,137 @@ pub fn build_video_stem(author: Option<&str>, title: &str, filename_format: &str
         .map(|a| a.trim().trim_start_matches('@').trim())
         .filter(|a| !a.is_empty())
         .map(sanitize_filename)
-        .filter(|a| a != "media_download" && !a.eq_ignore_ascii_case("unknown"))
+        .filter(|a| a != "media_download" && !a.eq_ignore_ascii_case("unknown") && !a.eq_ignore_ascii_case("na"))
         .map(|a| a.chars().take(40).collect::<String>().trim().to_string());
 
     match clean_author {
-        Some(author_name) if !author_name.is_empty() => format!("{}-{}", author_name, clean_title),
+        Some(author_name) if !author_name.is_empty() => {
+            let author_lower = author_name.to_lowercase();
+            let title_lower = clean_title.to_lowercase();
+            // Deduplicate if title already ends with author (e.g. "Video Title - MrBeast")
+            if title_lower.ends_with(&author_lower) {
+                let remainder = &title_lower[..title_lower.len() - author_lower.len()];
+                if remainder.is_empty()
+                    || remainder.ends_with(' ')
+                    || remainder.ends_with('-')
+                    || remainder.ends_with('_')
+                    || remainder.ends_with(':')
+                {
+                    return clean_title;
+                }
+            }
+            // Deduplicate if title already begins with author (e.g. "MrBeast - I Built 100 Houses")
+            if title_lower.starts_with(&author_lower) {
+                let remainder = &title_lower[author_lower.len()..];
+                if remainder.is_empty()
+                    || remainder.starts_with(' ')
+                    || remainder.starts_with('-')
+                    || remainder.starts_with('_')
+                    || remainder.starts_with(':')
+                {
+                    return clean_title;
+                }
+            }
+            format!("{}-{}", clean_title, author_name)
+        }
         _ => clean_title,
+    }
+}
+
+pub fn get_fallback_media_title(url: &str, author: Option<&str>) -> String {
+    let clean_url = url.trim();
+    if clean_url.contains("tiktok.com") {
+        let vid = regex::Regex::new(r#"/video/(\d+)"#)
+            .ok()
+            .and_then(|re| re.captures(clean_url))
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str());
+        let photo_id = regex::Regex::new(r#"/photo/(\d+)"#)
+            .ok()
+            .and_then(|re| re.captures(clean_url))
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str());
+        let id = vid.or(photo_id);
+        let user = author
+            .map(|a| a.trim().trim_start_matches('@'))
+            .filter(|a| !a.is_empty())
+            .or_else(|| {
+                regex::Regex::new(r#"@([^/?#]+)"#)
+                    .ok()
+                    .and_then(|re| re.captures(clean_url))
+                    .and_then(|c| c.get(1))
+                    .map(|m| m.as_str())
+            });
+        match (id, user) {
+            (Some(i), Some(u)) => format!("TikTok Video {}-{}", i, u),
+            (Some(i), None) => format!("TikTok Video {}", i),
+            (None, Some(u)) => format!("TikTok Post-{}", u),
+            _ => "TikTok Video".to_string(),
+        }
+    } else if clean_url.contains("youtube.com") || clean_url.contains("youtu.be") {
+        let is_shorts = clean_url.contains("/shorts/");
+        if let Some(yt_id) = extract_youtube_id(clean_url) {
+            let base = if is_shorts {
+                format!("YouTube Shorts {}", yt_id)
+            } else {
+                format!("YouTube Video {}", yt_id)
+            };
+            if let Some(u) = author.map(|a| a.trim().trim_start_matches('@')).filter(|a| !a.is_empty()) {
+                format!("{}-{}", base, u)
+            } else {
+                base
+            }
+        } else {
+            "YouTube Video".to_string()
+        }
+    } else if clean_url.contains("instagram.com") {
+        let code = regex::Regex::new(r#"/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)"#)
+            .ok()
+            .and_then(|re| re.captures(clean_url))
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str());
+        let user = author
+            .map(|a| a.trim().trim_start_matches('@'))
+            .filter(|a| !a.is_empty())
+            .or_else(|| {
+                regex::Regex::new(r#"instagram\.com/([A-Za-z0-9_.]+)(?:/reel|/p|/tv)?"#)
+                    .ok()
+                    .and_then(|re| re.captures(clean_url))
+                    .and_then(|c| c.get(1))
+                    .map(|m| m.as_str())
+                    .filter(|u| !["p", "reel", "reels", "tv", "stories", "explore"].contains(u))
+            });
+        match (code, user) {
+            (Some(c), Some(u)) => format!("Instagram Post {}-{}", c, u),
+            (Some(c), None) => format!("Instagram Post {}", c),
+            _ => "Instagram Media".to_string(),
+        }
+    } else if clean_url.contains("twitter.com") || clean_url.contains("x.com") {
+        let id = regex::Regex::new(r#"/status/(\d+)"#)
+            .ok()
+            .and_then(|re| re.captures(clean_url))
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str());
+        let user = author.map(|a| a.trim().trim_start_matches('@')).filter(|a| !a.is_empty());
+        match (id, user) {
+            (Some(pid), Some(u)) => format!("X Post {}-{}", pid, u),
+            (Some(pid), None) => format!("X Post {}", pid),
+            _ => "X Media".to_string(),
+        }
+    } else if clean_url.contains("threads.net") || clean_url.contains("threads.com") {
+        let id = regex::Regex::new(r#"/post/([A-Za-z0-9_-]+)"#)
+            .ok()
+            .and_then(|re| re.captures(clean_url))
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str());
+        match id {
+            Some(pid) => format!("Threads Post {}", pid),
+            None => "Threads Media".to_string(),
+        }
+    } else if clean_url.contains("pinterest.") || clean_url.contains("pin.it") {
+        "Pinterest Media".to_string()
+    } else {
+        "Media Download".to_string()
     }
 }
 
@@ -695,38 +1020,88 @@ pub async fn run_download(
         "web_media"
     };
 
-    // Template output filename and stem identification (sanitized for Windows filesystem)
-    let raw_title_stem = match custom_name.as_deref() {
-        Some(name) if !name.trim().is_empty() => name.trim().to_string(),
-        _ => {
-            if crate::image_extractor::is_threads_url(&url) {
-                resolved_title.as_deref().unwrap_or("threads_video").to_string()
-            } else if let Some(ref t) = resolved_title {
-                t.clone()
-            } else if let Some(yt_id) = extract_youtube_id(&url) {
-                yt_id
-            } else {
-                url.clone()
-            }
-        }
-    };
     // Read AppSettings for video filename format preference ($author_name-$media_title by default)
     let settings = db.get_settings().unwrap_or_default();
-    let task_stem = build_video_stem(
+    let has_explicit_custom_name = custom_name
+        .as_deref()
+        .map(|n| !n.trim().is_empty())
+        .unwrap_or(false);
+
+    let default_ext = match format_type.as_str() {
+        "audio" => match quality.to_lowercase().as_str() {
+            "m4a" => "m4a",
+            "wav" => "wav",
+            "flac" => "flac",
+            _ => "mp3",
+        },
+        "subtitle" => "srt",
+        "image" => "jpg",
+        _ => "mp4",
+    };
+
+    let effective_author_or_source = resolve_author_or_source(
         resolved_author.as_deref(),
-        &raw_title_stem,
-        &settings.video_filename_format,
-    );
-    // Escape '%' in both directory and stem: yt-dlp treats the whole -o value as a template
-    let out_template = format!(
-        "{}.%(ext)s",
-        escape_ytdlp_template(&out_dir.join(&task_stem).to_string_lossy())
+        None,
+        platform,
+        &url,
     );
 
-    // Metadata resolution for the initial DB record
-    let rec_title = custom_name.clone().or(resolved_title).unwrap_or_else(|| url.clone());
+    let is_fallback = resolved_title
+        .as_deref()
+        .map(is_fallback_title)
+        .unwrap_or(true);
+
+    let task_stem = if has_explicit_custom_name {
+        let raw_custom = custom_name.as_deref().unwrap_or("").trim();
+        let stripped = strip_media_extension(raw_custom);
+        let clean = sanitize_filename(stripped);
+        build_video_stem(
+            Some(&effective_author_or_source),
+            &clean,
+            &settings.video_filename_format,
+        )
+    } else {
+        let raw_title_stem = if crate::image_extractor::is_threads_url(&url) {
+            resolved_title.as_deref().unwrap_or("threads_video").to_string()
+        } else if !is_fallback {
+            resolved_title.as_deref().unwrap_or("media").to_string()
+        } else {
+            get_fallback_media_title(&url, Some(&effective_author_or_source))
+        };
+
+        build_video_stem(
+            Some(&effective_author_or_source),
+            &raw_title_stem,
+            &settings.video_filename_format,
+        )
+    };
+
+    // When title is a generic fallback and user hasn't provided a custom name,
+    // let yt-dlp generate the filename dynamically using actual post metadata
+    let out_template = if is_fallback && !has_explicit_custom_name {
+        let pattern = if platform == "tiktok" {
+            "%(description|title).80s-%(channel|uploader)s.%(ext)s"
+        } else if platform == "youtube" {
+            "%(title).80s-%(uploader|channel)s.%(ext)s"
+        } else {
+            "%(title).80s-%(uploader|creator|channel)s.%(ext)s"
+        };
+        format!(
+            "{}/{}",
+            escape_ytdlp_template(&out_dir.to_string_lossy()),
+            pattern
+        )
+    } else {
+        format!(
+            "{}.%(ext)s",
+            escape_ytdlp_template(&out_dir.join(&task_stem).to_string_lossy())
+        )
+    };
+
+    // Initial output filename with extension strictly matching convention: $file_name-$author/channel/source_name.$format
+    let initial_file_name = format!("{}.{}", task_stem, default_ext);
+
     let mut rec_thumb = resolved_thumbnail.unwrap_or_default();
-    let rec_author = resolved_author.unwrap_or_default();
     let rec_duration = resolved_duration.unwrap_or(0);
 
     // Fallback: extract YouTube thumbnail directly from video ID if empty
@@ -741,8 +1116,8 @@ pub async fn run_download(
         id: task_id.clone(),
         platform: platform.to_string(),
         url: url.clone(),
-        title: rec_title.clone(),
-        author: rec_author.clone(),
+        title: initial_file_name.clone(),
+        author: effective_author_or_source.clone(),
         duration_sec: rec_duration,
         thumbnail_url: rec_thumb.clone(),
         format_type: format_type.clone(),
@@ -1038,10 +1413,44 @@ pub async fn run_download(
 
         let reader = BufReader::new(stdout);
         let mut downloaded_path = String::new();
+        let mut current_title = initial_record.title.clone();
         let mut last_progress_emit = std::time::Instant::now() - std::time::Duration::from_millis(200);
 
         for line_res in reader.lines() {
             if let Ok(line) = line_res {
+                let mut path_detected = false;
+                if let Some(caps) = merger_regex.captures(&line) {
+                    downloaded_path = caps["path"].trim().to_string();
+                    path_detected = true;
+                } else if let Some(caps) = destination_regex.captures(&line) {
+                    downloaded_path = caps[1].trim().to_string();
+                    path_detected = true;
+                } else if let Some(caps) = already_downloaded_regex.captures(&line) {
+                    downloaded_path = caps[1].trim().to_string();
+                    path_detected = true;
+                }
+
+                if path_detected && !downloaded_path.is_empty() {
+                    let candidate_name = Path::new(&downloaded_path)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("");
+                    let clean_name = clean_download_filename(candidate_name, &default_ext);
+                    if !clean_name.is_empty() && clean_name != current_title && !is_fallback_title(&clean_name) {
+                        current_title = clean_name.clone();
+                        let _ = db.update_record_title(&task_id, &current_title);
+                        if let Some(inferred_author) = extract_author_from_filename(&current_title) {
+                            if effective_author_or_source.is_empty()
+                                || effective_author_or_source.eq_ignore_ascii_case("youtube")
+                                || effective_author_or_source.eq_ignore_ascii_case("tiktok")
+                                || effective_author_or_source.eq_ignore_ascii_case("web_media")
+                            {
+                                let _ = db.update_record_author(&task_id, &inferred_author);
+                            }
+                        }
+                    }
+                }
+
                 if let Some(caps) = progress_regex.captures(&line) {
                     let percent: f64 = caps[1].parse().unwrap_or(0.0);
                     let speed_str = caps[3].to_string();
@@ -1053,7 +1462,7 @@ pub async fn run_download(
                         let task_update = ActiveDownloadTask {
                             task_id: task_id.clone(),
                             url: url.clone(),
-                            title: initial_record.title.clone(),
+                            title: current_title.clone(),
                             platform: initial_record.platform.clone(),
                             format_type: format_type.clone(),
                             quality: quality.clone(),
@@ -1079,7 +1488,7 @@ pub async fn run_download(
                         let task_update = ActiveDownloadTask {
                             task_id: task_id.clone(),
                             url: url.clone(),
-                            title: initial_record.title.clone(),
+                            title: current_title.clone(),
                             platform: initial_record.platform.clone(),
                             format_type: format_type.clone(),
                             quality: quality.clone(),
@@ -1098,14 +1507,11 @@ pub async fn run_download(
                     }
                 }
 
-                if let Some(caps) = merger_regex.captures(&line) {
-                    downloaded_path = caps["path"].trim().to_string();
-                } else if let Some(caps) = destination_regex.captures(&line) {
-                    downloaded_path = caps[1].trim().to_string();
+                if let Some(_caps) = destination_regex.captures(&line) {
                     let receiving_task = ActiveDownloadTask {
                         task_id: task_id.clone(),
                         url: url.clone(),
-                        title: initial_record.title.clone(),
+                        title: current_title.clone(),
                         platform: initial_record.platform.clone(),
                         format_type: format_type.clone(),
                         quality: quality.clone(),
@@ -1121,8 +1527,6 @@ pub async fn run_download(
                     };
                     process_mgr.update_active_task_snapshot(&receiving_task);
                     let _ = app.emit("download-progress", &receiving_task);
-                } else if let Some(caps) = already_downloaded_regex.captures(&line) {
-                    downloaded_path = caps[1].trim().to_string();
                 }
             }
         }
@@ -1142,6 +1546,7 @@ pub async fn run_download(
         }
 
         if status.success() {
+
             // 1. Authoritative resolution: read exact path written by yt-dlp --print-to-file
             if meta_file_path.exists() {
                 if let Ok(content) = std::fs::read_to_string(&meta_file_path) {
@@ -1231,29 +1636,41 @@ pub async fn run_download(
                 return Err(err_msg);
             }
 
-            // Clean up any remaining partial artifacts now that final file is verified on disk
-            cleanup_task_artifacts(&out_dir, Some(&task_stem));
-
             let file_size = std::fs::metadata(&downloaded_path).map(|m| m.len() as i64).unwrap_or(0);
 
-            // If initial title was a raw fallback URL or generic, resolve it from the actual downloaded filename stem
-            let resolved_title = if initial_record.title.starts_with("http")
-                || initial_record.title == "Media"
-                || initial_record.title.trim().is_empty()
-            {
-                let stem = Path::new(&downloaded_path)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(&initial_record.title);
-                let _ = db.update_record_title(&task_id, stem);
-                stem.to_string()
-            } else {
-                initial_record.title
-            };
+            // Determine the EXACT authoritative filename from disk
+            let final_file_name = Path::new(&downloaded_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| initial_file_name.clone());
+
+            // Clean up any remaining partial artifacts now that final file is verified on disk
+            let final_stem_for_cleanup = Path::new(&downloaded_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&task_stem);
+            cleanup_task_artifacts(&out_dir, Some(final_stem_for_cleanup));
 
             // Extract reliable local thumbnail so Media Vault never has broken/missing thumbnails
             if let Some(local_thumb) = generate_local_thumbnail(Path::new(&downloaded_path), &task_id) {
                 let _ = db.update_record_thumbnail(&task_id, &local_thumb);
+            }
+
+            // Authoritatively persist title, author, and completed path in SQLite database
+            let _ = db.update_record_title(&task_id, &final_file_name);
+            let mut resolved_final_author = effective_author_or_source.clone();
+            if resolved_final_author.is_empty()
+                || resolved_final_author.eq_ignore_ascii_case("youtube")
+                || resolved_final_author.eq_ignore_ascii_case("tiktok")
+                || resolved_final_author.eq_ignore_ascii_case("web_media")
+            {
+                if let Some(inferred_author) = extract_author_from_filename(&final_file_name) {
+                    resolved_final_author = inferred_author;
+                }
+            }
+            if !resolved_final_author.is_empty() {
+                let _ = db.update_record_author(&task_id, &resolved_final_author);
             }
 
             let _ = db.update_record(
@@ -1275,7 +1692,7 @@ pub async fn run_download(
             let final_task = ActiveDownloadTask {
                 task_id: task_id.clone(),
                 url: url.clone(),
-                title: resolved_title,
+                title: final_file_name,
                 platform: initial_record.platform,
                 format_type,
                 quality,
@@ -1397,35 +1814,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn video_stem_uses_author_dash_title() {
+    fn video_stem_uses_title_dash_author() {
         assert_eq!(
-            build_video_stem(Some("MrBeast"), "I Built 100 Houses", "author_title"),
-            "MrBeast-I Built 100 Houses"
+            build_video_stem(Some("MrBeast"), "I Built 100 Houses", "title_author"),
+            "I Built 100 Houses-MrBeast"
         );
     }
 
     #[test]
-    fn video_stem_legacy_format_value_maps_to_author_title() {
+    fn video_stem_legacy_format_value_maps_to_title_author() {
         assert_eq!(
             build_video_stem(Some("MrBeast"), "Video", "source_channel_title"),
-            "MrBeast-Video"
+            "Video-MrBeast"
+        );
+        assert_eq!(
+            build_video_stem(Some("MrBeast"), "Video", "author_title"),
+            "Video-MrBeast"
         );
     }
 
     #[test]
     fn video_stem_strips_at_prefix_and_illegal_chars() {
         assert_eq!(
-            build_video_stem(Some("@creator"), "What? A/B: test", "author_title"),
-            "creator-What A B test"
+            build_video_stem(Some("@creator"), "What? A/B: test", "title_author"),
+            "What A B test-creator"
         );
     }
 
     #[test]
     fn video_stem_falls_back_to_title_when_author_missing() {
-        assert_eq!(build_video_stem(None, "Clip", "author_title"), "Clip");
-        assert_eq!(build_video_stem(Some("  "), "Clip", "author_title"), "Clip");
-        assert_eq!(build_video_stem(Some("Unknown"), "Clip", "author_title"), "Clip");
-        assert_eq!(build_video_stem(Some("@"), "Clip", "author_title"), "Clip");
+        assert_eq!(build_video_stem(None, "Clip", "title_author"), "Clip");
+        assert_eq!(build_video_stem(Some("  "), "Clip", "title_author"), "Clip");
+        assert_eq!(build_video_stem(Some("Unknown"), "Clip", "title_author"), "Clip");
+        assert_eq!(build_video_stem(Some("@"), "Clip", "title_author"), "Clip");
     }
 
     #[test]
@@ -1436,13 +1857,76 @@ mod tests {
     #[test]
     fn video_stem_caps_author_length() {
         let long_author = "a".repeat(100);
-        let stem = build_video_stem(Some(&long_author), "T", "author_title");
-        assert_eq!(stem, format!("{}-T", "a".repeat(40)));
+        let stem = build_video_stem(Some(&long_author), "T", "title_author");
+        assert_eq!(stem, format!("T-{}", "a".repeat(40)));
     }
 
     #[test]
     fn ytdlp_template_escapes_percent() {
         assert_eq!(escape_ytdlp_template("100% Real"), "100%% Real");
+    }
+
+    #[test]
+    fn video_stem_deduplicates_author_when_already_in_title() {
+        assert_eq!(
+            build_video_stem(Some("MrBeast"), "MrBeast - I Built 100 Houses", "title_author"),
+            "MrBeast - I Built 100 Houses"
+        );
+        assert_eq!(
+            build_video_stem(Some("Taylor Swift"), "Taylor Swift: Anti-Hero", "title_author"),
+            "Taylor Swift Anti-Hero"
+        );
+        assert_eq!(
+            build_video_stem(Some("IGN"), "IGN_Cyberpunk_Review", "title_author"),
+            "IGN_Cyberpunk_Review"
+        );
+        assert_eq!(
+            build_video_stem(Some("MrBeast"), "I Built 100 Houses - MrBeast", "title_author"),
+            "I Built 100 Houses - MrBeast"
+        );
+    }
+
+    #[test]
+    fn test_get_fallback_media_title() {
+        assert_eq!(
+            get_fallback_media_title("https://www.tiktok.com/@yangviral_trending/video/76991337333", None),
+            "TikTok Video 76991337333-yangviral_trending"
+        );
+        assert_eq!(
+            get_fallback_media_title("https://www.youtube.com/watch?v=dQw4w9WgXcQ", Some("Rick Astley")),
+            "YouTube Video dQw4w9WgXcQ-Rick Astley"
+        );
+        assert_eq!(
+            get_fallback_media_title("https://www.youtube.com/shorts/abc12345678", None),
+            "YouTube Shorts abc12345678"
+        );
+        assert_eq!(
+            get_fallback_media_title("https://www.instagram.com/reel/DFxyz123/", Some("creator")),
+            "Instagram Post DFxyz123-creator"
+        );
+    }
+
+    #[test]
+    fn strip_media_extension_removes_known_extensions() {
+        assert_eq!(strip_media_extension("video.mp4"), "video");
+        assert_eq!(strip_media_extension("clip.MKV"), "clip");
+        assert_eq!(strip_media_extension("song.mp3"), "song");
+        assert_eq!(strip_media_extension("photo.jpg"), "photo");
+        assert_eq!(strip_media_extension("subtitles.srt"), "subtitles");
+        assert_eq!(strip_media_extension("no_extension"), "no_extension");
+        assert_eq!(strip_media_extension("my.complex.name.mp4"), "my.complex.name");
+    }
+
+    #[test]
+    fn is_fallback_title_detects_urls_and_placeholders() {
+        assert!(is_fallback_title("https://www.youtube.com/watch?v=123"));
+        assert!(is_fallback_title("youtube.com/watch?v=123"));
+        assert!(is_fallback_title("tiktok.com/@user/video/456"));
+        assert!(is_fallback_title("Media"));
+        assert!(is_fallback_title("media_download"));
+        assert!(is_fallback_title("   "));
+        assert!(!is_fallback_title("Never Gonna Give You Up"));
+        assert!(!is_fallback_title("Rick Astley - Never Gonna Give You Up"));
     }
 
     #[test]
@@ -1469,6 +1953,122 @@ mod tests {
         assert!(!part_file.exists(), "my.film.mp4.part must be deleted!");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_resolve_author_or_source() {
+        assert_eq!(
+            resolve_author_or_source(Some("@MrBeast"), None, "youtube", "https://youtube.com/watch?v=1"),
+            "MrBeast"
+        );
+        assert_eq!(
+            resolve_author_or_source(None, Some("Veritasium"), "youtube", "https://youtube.com/watch?v=1"),
+            "Veritasium"
+        );
+        assert_eq!(
+            resolve_author_or_source(None, None, "youtube", "https://youtube.com/watch?v=1"),
+            "YouTube"
+        );
+        assert_eq!(
+            resolve_author_or_source(None, None, "tiktok", "https://www.tiktok.com/@user/video/1"),
+            "TikTok"
+        );
+        assert_eq!(
+            resolve_author_or_source(None, None, "instagram", "https://www.instagram.com/reel/1"),
+            "Instagram"
+        );
+        assert_eq!(
+            resolve_author_or_source(None, None, "x", "https://x.com/status/1"),
+            "X"
+        );
+        assert_eq!(
+            resolve_author_or_source(None, None, "threads", "https://threads.net/post/1"),
+            "Threads"
+        );
+        assert_eq!(
+            resolve_author_or_source(None, None, "pinterest", "https://pinterest.com/pin/1"),
+            "Pinterest"
+        );
+        assert_eq!(
+            resolve_author_or_source(None, None, "web_media", "https://vimeo.com/12345"),
+            "Vimeo"
+        );
+        // TikTok: Prioritize channel display name over handle
+        assert_eq!(
+            resolve_author_or_source(Some("indonesia_hariini"), Some("Indonesia Hari Ini??"), "tiktok", "https://tiktok.com/@indonesia_hariini/video/1"),
+            "Indonesia Hari Ini"
+        );
+        // YouTube: Strip leading @ from uploader handle
+        assert_eq!(
+            resolve_author_or_source(Some("@jawed"), Some("jawed"), "youtube", "https://youtube.com/watch?v=1"),
+            "jawed"
+        );
+    }
+
+    #[test]
+    fn test_output_filename_convention() {
+        let author_or_source = resolve_author_or_source(Some("MrBeast"), None, "youtube", "https://youtube.com");
+        let stem = build_video_stem(Some(&author_or_source), "I Built 100 Houses", "title_author");
+        let filename = format!("{}.mp4", stem);
+        assert_eq!(filename, "I Built 100 Houses-MrBeast.mp4");
+
+        // Custom name
+        let stem_custom = build_video_stem(Some(&author_or_source), "my_custom_clip", "title_author");
+        let filename_custom = format!("{}.mp4", stem_custom);
+        assert_eq!(filename_custom, "my_custom_clip-MrBeast.mp4");
+
+        // Missing author falls back to channel or platform source name
+        let fallback_source = resolve_author_or_source(None, None, "youtube", "https://youtube.com");
+        let stem_fallback = build_video_stem(Some(&fallback_source), "Clip", "title_author");
+        assert_eq!(format!("{}.mp4", stem_fallback), "Clip-YouTube.mp4");
+    }
+
+    #[test]
+    fn test_clean_download_filename() {
+        assert_eq!(
+            clean_download_filename("MyVideo-Author.mp4", "mp4"),
+            "MyVideo-Author.mp4"
+        );
+        assert_eq!(
+            clean_download_filename("MyVideo-Author.f137.mp4", "mp4"),
+            "MyVideo-Author.mp4"
+        );
+        assert_eq!(
+            clean_download_filename("MyVideo-Author.f140.m4a.part", "m4a"),
+            "MyVideo-Author.m4a"
+        );
+        assert_eq!(
+            clean_download_filename("How I Run Capcut On Linux!-Fosslicious.f248.webm", "mp4"),
+            "How I Run Capcut On Linux!-Fosslicious.webm"
+        );
+        assert_eq!(
+            clean_download_filename("Spider-Man.Far.From.Home.mp4", "mp4"),
+            "Spider-Man.Far.From.Home.mp4"
+        );
+        assert_eq!(
+            clean_download_filename("My.favorite.film.mp4", "mp4"),
+            "My.favorite.film.mp4"
+        );
+    }
+
+    #[test]
+    fn test_extract_author_from_filename() {
+        assert_eq!(
+            extract_author_from_filename("How I Run Capcut On Linux!-Fosslicious.mp4"),
+            Some("Fosslicious".to_string())
+        );
+        assert_eq!(
+            extract_author_from_filename("How I Run Capcut On Linux!-@Fosslicious.mp4"),
+            Some("Fosslicious".to_string())
+        );
+        assert_eq!(
+            extract_author_from_filename("Menteri ESDM...-Indonesia Hari Ini.mp4"),
+            Some("Indonesia Hari Ini".to_string())
+        );
+        assert_eq!(
+            extract_author_from_filename("My Video-YouTube.mp4"),
+            None
+        );
     }
 }
 

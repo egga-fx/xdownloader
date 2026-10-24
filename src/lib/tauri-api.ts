@@ -19,7 +19,7 @@ import {
   VideoInfo,
   MediaItem,
 } from "../types";
-import { detectPlatform } from "./utils";
+import { detectPlatform, buildOutputFileName } from "./utils";
 
 // Synchronous check if running inside Tauri Desktop shell
 export function isTauriEnvironment(): boolean {
@@ -542,12 +542,22 @@ export async function startDownload(params: {
 
   // Fallback simulation if backend server is not running
   const taskId = `browser-${Date.now().toString(36)}`;
-  const title = params.title || params.customName || `Downloaded_${params.formatType}_${Date.now()}`;
   const platform = detectPlatform(params.url);
   const fmtType = params.formatType as DownloaderFormatType;
   const qual = params.quality as DownloaderQuality;
-  const ext = fmtType === "audio" ? "mp3" : "mp4";
-  const fileName = `${title}.${ext}`;
+
+  // Build filename strictly conforming to Settings and Custom Filename claims
+  const settings = await getAppSettings();
+  const fileName = buildOutputFileName({
+    title: params.title,
+    customName: params.customName,
+    author: params.author,
+    url: params.url,
+    formatType: fmtType,
+    quality: qual,
+    videoFilenameFormat: settings.videoFilenameFormat,
+  });
+  const title = fileName;
 
   let percent = 0;
   const timer = window.setInterval(() => {
@@ -942,7 +952,7 @@ export async function getAppSettings(): Promise<AppSettings> {
     downloadSubtitles: false,
     checkUpdatesOnStartup: true,
     desktopNotifications: true,
-    videoFilenameFormat: "author_title",
+    videoFilenameFormat: "title_author",
     carouselFilenameFormat: "folder_sequential",
   };
 }

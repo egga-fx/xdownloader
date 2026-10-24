@@ -22,6 +22,7 @@ bin/
 
 # Local SQLite databases & data
 data/
+.vault/
 vault.db*
 *.db
 *.db-wal

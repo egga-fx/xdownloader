@@ -25,7 +25,7 @@ import {
   TranscriptionProgress,
   MediaItem,
 } from "./types";
-import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage, sanitizeTitle } from "./lib/utils";
+import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage, sanitizeTitle, isFallbackTitle, buildOutputFileName } from "./lib/utils";
 import {
   checkBinariesStatus,
   checkForAppUpdate,
@@ -125,7 +125,7 @@ export function App() {
     autoClipboardDetect: true,
     downloadSubtitles: false,
     checkUpdatesOnStartup: true,
-    videoFilenameFormat: "author_title",
+    videoFilenameFormat: "title_author",
     carouselFilenameFormat: "folder_sequential",
     maxConcurrentDownloads: 2,
   });
@@ -378,10 +378,8 @@ export function App() {
       // Ensure user hasn't changed url while request was in-flight
       if (currentUrlRef.current.trim() === cleanTarget) {
         setVideoInfo(info);
-        const rawTitle = info.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
-        const cleanTitle = sanitizeTitle(rawTitle);
-        setCustomName(cleanTitle);
-        if (info.description === "image") {
+        const isPostImage = info.postType === "image" || info.description === "image";
+        if (isPostImage) {
           setFormatType("image");
           setQuality("best");
         } else {
@@ -400,14 +398,24 @@ export function App() {
             (task.title.startsWith("http") ||
               task.title === cleanTarget ||
               task.title === "Media" ||
-              task.title.includes("://"))
+              task.title.includes("://") ||
+              isFallbackTitle(task.title))
           ) {
-            const rawTitle = info.title.replace(/\s*\[Carousel:?\s*\d+\s*Images?\]/i, "").trim();
-            const cleanTitle = sanitizeTitle(rawTitle);
-            if (cleanTitle) {
+            const upgradedTitle = buildOutputFileName({
+              title: info.title,
+              description: info.description,
+              author: info.uploader,
+              channel: info.channel,
+              uploaderId: info.uploaderId,
+              url: cleanTarget,
+              formatType: task.formatType,
+              quality: task.quality,
+              videoFilenameFormat: appSettings.videoFilenameFormat,
+            });
+            if (upgradedTitle) {
               next.set(id, {
                 ...task,
-                title: cleanTitle,
+                title: upgradedTitle,
               });
               updated = true;
             }
@@ -488,8 +496,9 @@ export function App() {
       }
     }
 
+    const isImage = matchedInfo?.postType === "image" || matchedInfo?.description === "image";
     const finalFormatType =
-      matchedInfo?.description === "image"
+      isImage
         ? "image"
         : formatType === "image"
         ? "video"
@@ -499,25 +508,41 @@ export function App() {
       return handleStartTranscription();
     }
     const finalQuality =
-      matchedInfo?.description === "image"
+      isImage
         ? "best"
         : quality === "best"
         ? (appSettings.defaultVideoQuality as DownloaderQuality) || "1080p"
         : quality;
 
-    const finalTitle =
-      sanitizeTitle(customName) ||
-      sanitizeTitle(matchedInfo?.title) ||
-      cleanMediaUrl(targetUrl);
-    const finalAuthor = matchedInfo?.uploader || matchedInfo?.channel || "";
+    const isTikTok = targetUrl.includes("tiktok.com");
+    const isYouTube = targetUrl.includes("youtube.com") || targetUrl.includes("youtu.be");
+    const finalAuthor = isTikTok
+      ? (matchedInfo?.channel || matchedInfo?.uploader || "")
+      : isYouTube
+      ? (matchedInfo?.uploaderId?.replace(/^@/, "") || matchedInfo?.channel || matchedInfo?.uploader || "")
+      : (matchedInfo?.uploader || matchedInfo?.channel || "");
     const finalDuration = matchedInfo?.duration || 0;
 
+    const finalTitle = buildOutputFileName({
+      title: matchedInfo?.title,
+      description: matchedInfo?.description,
+      customName,
+      author: matchedInfo?.uploader,
+      channel: matchedInfo?.channel,
+      uploaderId: matchedInfo?.uploaderId,
+      url: targetUrl,
+      formatType: finalFormatType,
+      quality: finalQuality,
+      videoFilenameFormat: appSettings.videoFilenameFormat,
+    });
+
+    const trimmedCustom = customName.trim();
     const queuedItem: QueuedDownloadItem = {
       id: `queue_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       targetUrl,
       formatType: finalFormatType,
       quality: finalQuality,
-      customName: sanitizeTitle(customName) || (matchedInfo ? sanitizeTitle(matchedInfo.title) : undefined),
+      customName: trimmedCustom ? sanitizeTitle(trimmedCustom) : undefined,
       outputFolder: outputFolder || undefined,
       title: finalTitle,
       thumbnailUrl: finalThumb,
@@ -791,12 +816,13 @@ export function App() {
     setIsStartingTranscription(true);
     try {
       setError(null);
-      const taskId = await startTranscription({
-        url: targetUrl,
-        languageCode: transcriptionConfig.languageCode || undefined,
-        customName: sanitizeTitle(customName) || (videoInfo ? sanitizeTitle(videoInfo.title) : undefined),
-        outputFolder: outputFolder || undefined,
-      });
+    const trimmedCustom = customName.trim();
+    const taskId = await startTranscription({
+      url: targetUrl,
+      languageCode: transcriptionConfig.languageCode || undefined,
+      customName: trimmedCustom ? sanitizeTitle(trimmedCustom) : undefined,
+      outputFolder: outputFolder || undefined,
+    });
 
       setActiveTranscriptions((prev) => {
         const next = new Map(prev);

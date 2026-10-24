@@ -72,7 +72,9 @@ pub struct VideoInfo {
     pub thumbnail: String,
     pub uploader: String,
     pub channel: String,
+    pub uploader_id: Option<String>,
     pub description: Option<String>,
+    pub post_type: Option<String>,
     pub webpage_url: String,
     pub images: Option<Vec<String>>,
     pub media_items: Option<Vec<MediaItem>>,
@@ -131,7 +133,7 @@ fn default_audio_quality() -> String {
 }
 
 fn default_video_filename_format() -> String {
-    "author_title".to_string()
+    "title_author".to_string()
 }
 
 fn default_carousel_filename_format() -> String {
