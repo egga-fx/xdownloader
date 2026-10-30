@@ -64,6 +64,8 @@ pub struct TaskProgress {
     pub eta_str: String,
     pub downloaded_bytes: Option<i64>,
     pub total_bytes: Option<i64>,
+    #[serde(default)]
+    pub downloaded_duration_sec: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -26,7 +26,7 @@ import {
   MediaItem,
   LiveStreamConfig,
 } from "./types";
-import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage, sanitizeTitle, isFallbackTitle, buildOutputFileName } from "./lib/utils";
+import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage, sanitizeTitle, isFallbackTitle, buildOutputFileName, stripMediaExtension } from "./lib/utils";
 import {
   checkBinariesStatus,
   checkForAppUpdate,
@@ -546,15 +546,22 @@ export function App() {
       formatType: finalFormatType,
       quality: finalQuality,
       videoFilenameFormat: appSettings.videoFilenameFormat,
+      liveConfig,
     });
 
     const trimmedCustom = customName.trim();
+    const resolvedCustomName = liveConfig
+      ? sanitizeTitle(stripMediaExtension(finalTitle))
+      : trimmedCustom
+      ? sanitizeTitle(trimmedCustom)
+      : undefined;
+
     const queuedItem: QueuedDownloadItem = {
       id: `queue_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       targetUrl,
       formatType: finalFormatType,
       quality: finalQuality,
-      customName: trimmedCustom ? sanitizeTitle(trimmedCustom) : undefined,
+      customName: resolvedCustomName,
       outputFolder: outputFolder || undefined,
       title: finalTitle,
       thumbnailUrl: finalThumb,

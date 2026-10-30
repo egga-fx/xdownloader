@@ -5,9 +5,10 @@ import {
   X,
   Loader2,
   Globe,
+  Radio,
 } from "lucide-react";
 import { DownloaderPlatform } from "../types";
-import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls } from "../lib/utils";
+import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, isLiveStreamUrl } from "../lib/utils";
 import { getClipboardUrl, isTauriEnvironment } from "../lib/tauri-api";
 import {
   YoutubeIcon,
@@ -115,22 +116,38 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
 
   const hasValidInputUrl = Boolean(url.trim() && isSupportedMediaUrl(url.trim()));
   const hasValidClipboardUrl = Boolean(clipboardUrl && isSupportedMediaUrl(clipboardUrl));
+  const isClipboardLive = Boolean(clipboardUrl && isLiveStreamUrl(clipboardUrl));
+  const isInputLive = Boolean(url.trim() && isLiveStreamUrl(url.trim()));
 
   const handleSmartDownloadClick = async () => {
-    // 1. If live clipboard contains a valid media URL, DYNAMICALLY use it:
+    // 1. If clipboard contains a live stream URL: route to Live Studio by loading metadata (Option 1)
+    if (hasValidClipboardUrl && isClipboardLive && (!hasMetadata || clipboardUrl !== url.trim())) {
+      onUrlChange(clipboardUrl);
+      return;
+    }
+
+    // 2. If live clipboard contains a regular valid media URL, DYNAMICALLY use it:
     if (hasValidClipboardUrl && (!hasMetadata || clipboardUrl !== url.trim())) {
       onUrlChange(clipboardUrl);
       onStartDownload(clipboardUrl);
       return;
     }
 
-    // 2. If the user already typed/pasted a valid URL in the input field:
+    // 3. If input field contains a live stream URL and metadata is not yet loaded:
+    if (hasValidInputUrl && isInputLive) {
+      if (!hasMetadata) {
+        onUrlChange(url.trim());
+      }
+      return;
+    }
+
+    // 4. If the user already typed/pasted a valid URL in the input field:
     if (hasValidInputUrl) {
       onStartDownload(url.trim());
       return;
     }
 
-    // 3. Otherwise, trigger onPaste
+    // 5. Otherwise, trigger onPaste
     onPaste();
   };
 
@@ -169,34 +186,66 @@ export const UrlInputSection: React.FC<UrlInputSectionProps> = ({
         {/* Left Action / Platform Icon */}
         <div className="flex items-center pl-1 pr-1.5 shrink-0">
           {hasValidClipboardUrl && (!hasMetadata || clipboardUrl !== url.trim()) ? (
-            // Clipboard contains a valid media link: show "Download from clipboard" button with clean static highlight
-            <button
-              onClick={handleSmartDownloadClick}
-              onMouseEnter={() => checkClipboard(true)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/40 hover:border-blue-500/60 shadow-sm shadow-blue-500/10 cursor-pointer transition-all shrink-0"
-              title={`Download from clipboard: ${clipboardUrl}`}
-            >
-              {fetchingInfo ? (
-                <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin shrink-0" />
-              ) : (
-                renderPlatformIcon(clipboardPlatform, "w-3.5 h-3.5")
-              )}
-              <span>Download from clipboard</span>
-            </button>
+            isClipboardLive ? (
+              // Option 1: Live Stream in clipboard: show "Record from clipboard" button with red broadcast styling
+              <button
+                onClick={handleSmartDownloadClick}
+                onMouseEnter={() => checkClipboard(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/40 hover:border-red-500/60 shadow-sm shadow-red-500/15 cursor-pointer transition-all shrink-0 animate-in fade-in duration-200"
+                title={`Record live stream from clipboard: ${clipboardUrl}`}
+              >
+                {fetchingInfo ? (
+                  <Loader2 className="w-3.5 h-3.5 text-red-400 animate-spin shrink-0" />
+                ) : (
+                  <Radio className="w-3.5 h-3.5 text-red-400 animate-pulse shrink-0" />
+                )}
+                <span>Record from clipboard</span>
+              </button>
+            ) : (
+              // Regular media in clipboard: show "Download from clipboard" button with blue styling
+              <button
+                onClick={handleSmartDownloadClick}
+                onMouseEnter={() => checkClipboard(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/40 hover:border-blue-500/60 shadow-sm shadow-blue-500/10 cursor-pointer transition-all shrink-0"
+                title={`Download from clipboard: ${clipboardUrl}`}
+              >
+                {fetchingInfo ? (
+                  <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin shrink-0" />
+                ) : (
+                  renderPlatformIcon(clipboardPlatform, "w-3.5 h-3.5")
+                )}
+                <span>Download from clipboard</span>
+              </button>
+            )
           ) : hasValidInputUrl ? (
-            // Input field contains a valid media link: show "Download" button with clean static highlight
-            <button
-              onClick={handleSmartDownloadClick}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-600/30 cursor-pointer transition-all shrink-0"
-              title={`Download: ${url.trim()}`}
-            >
-              {fetchingInfo ? (
-                <Loader2 className="w-3.5 h-3.5 text-white animate-spin shrink-0" />
-              ) : (
-                renderPlatformIcon(detectedPlatform, "w-3.5 h-3.5")
-              )}
-              <span>Download</span>
-            </button>
+            isInputLive ? (
+              <button
+                onClick={handleSmartDownloadClick}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-500 text-white shadow-sm shadow-red-600/30 cursor-pointer transition-all shrink-0"
+                title={`Record Live: ${url.trim()}`}
+              >
+                {fetchingInfo ? (
+                  <Loader2 className="w-3.5 h-3.5 text-white animate-spin shrink-0" />
+                ) : (
+                  <Radio className="w-3.5 h-3.5 text-white animate-pulse shrink-0" />
+                )}
+                <span>Record Live</span>
+              </button>
+            ) : (
+              // Input field contains a valid media link: show "Download" button with clean static highlight
+              <button
+                onClick={handleSmartDownloadClick}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-600/30 cursor-pointer transition-all shrink-0"
+                title={`Download: ${url.trim()}`}
+              >
+                {fetchingInfo ? (
+                  <Loader2 className="w-3.5 h-3.5 text-white animate-spin shrink-0" />
+                ) : (
+                  renderPlatformIcon(detectedPlatform, "w-3.5 h-3.5")
+                )}
+                <span>Download</span>
+              </button>
+            )
           ) : hasMetadata ? (
             // Metadata loaded: download button disappears cleanly, showing only clean static platform icon
             <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5">

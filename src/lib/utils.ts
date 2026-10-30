@@ -680,6 +680,7 @@ export function buildOutputFileName(params: {
   quality?: string;
   format?: string;
   videoFilenameFormat?: string;
+  liveConfig?: LiveStreamConfig;
 }): string {
   const {
     title,
@@ -694,6 +695,7 @@ export function buildOutputFileName(params: {
     quality,
     format,
     videoFilenameFormat,
+    liveConfig,
   } = params;
 
   const ext =
@@ -781,6 +783,20 @@ export function buildOutputFileName(params: {
     stem = `${cleanBase}-${authorOrSource}`;
   }
 
+  // Append live stream unique recording suffix to avoid overwriting or reading stale files
+  if (liveConfig) {
+    if (liveConfig.mode === "capture_time_range" && liveConfig.timeRange) {
+      const s = (liveConfig.timeRange.start || "00:00:00").trim().replace(/[:\s]/g, "-");
+      const e = (liveConfig.timeRange.end || "00:30:00").trim().replace(/[:\s]/g, "-");
+      stem = `${stem} [Range ${s} - ${e}]`;
+    } else {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+      stem = `${stem} [${ts}]`;
+    }
+  }
+
   return `${stem}.${ext}`;
 }
 
@@ -853,6 +869,19 @@ export function generatePresetSegments(
 }
 
 /**
+ * Checks whether an arbitrary URL string explicitly represents a YouTube live stream format.
+ */
+export function isLiveStreamUrl(url?: string): boolean {
+  if (!url) return false;
+  const targetUrl = url.trim();
+  return (
+    /youtube\.com\/(?:live\/|@[^/]+\/live)/i.test(targetUrl) ||
+    /\/live\/[a-zA-Z0-9_-]+/i.test(targetUrl) ||
+    /\/@[^/]+\/live$/i.test(targetUrl)
+  );
+}
+
+/**
  * Determines whether a video metadata payload or URL represents a live stream, upcoming broadcast, or archived live stream.
  */
 export function isLiveStreamMetadata(metadata?: VideoInfo | null, url?: string): boolean {
@@ -864,10 +893,7 @@ export function isLiveStreamMetadata(metadata?: VideoInfo | null, url?: string):
     return true;
   }
   const targetUrl = (url || metadata?.webpageUrl || "").trim();
-  if (/youtube\.com\/(?:live\/|@[^/]+\/live)/i.test(targetUrl)) {
-    return true;
-  }
-  return false;
+  return isLiveStreamUrl(targetUrl);
 }
 
 /**

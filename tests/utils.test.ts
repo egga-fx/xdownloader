@@ -15,6 +15,7 @@ import {
   stripMediaExtension,
   getSourcePlatformName,
   buildOutputFileName,
+  isLiveStreamUrl,
   isLiveStreamMetadata,
   buildLiveYtdlpCommandPreview,
 } from "../src/lib/utils";
@@ -530,6 +531,55 @@ describe("AI Spec-First Audit: src/lib/utils.ts", () => {
         }
       );
       expect(cmdChat).toContain('--write-subs --sub-langs "live_chat" --live-from-start');
+    });
+
+    it("should accurately detect live stream URLs via isLiveStreamUrl", () => {
+      expect(isLiveStreamUrl("https://www.youtube.com/live/efdAMrfFSt0?si=test")).toBe(true);
+      expect(isLiveStreamUrl("https://youtube.com/@CNNIDOFFICIAL/live")).toBe(true);
+      expect(isLiveStreamUrl("https://www.youtube.com/watch?v=PDDOkUq33Sw")).toBe(false);
+      expect(isLiveStreamUrl("https://tiktok.com/@user/video/12345")).toBe(false);
+      expect(isLiveStreamUrl("")).toBe(false);
+      expect(isLiveStreamUrl(undefined)).toBe(false);
+    });
+
+    it("should append unique timestamp suffix for live recordings to prevent overwriting", () => {
+      const fileName = buildOutputFileName({
+        title: "LIVE STREAMING 24 JAM CNN INDONESIA",
+        author: "CNNIDOFFICIAL",
+        url: "https://www.youtube.com/watch?v=PDDOkUq33Sw",
+        formatType: "video",
+        quality: "1080p",
+        liveConfig: {
+          mode: "record_from_now",
+          durationSec: 300,
+          downloadChat: false,
+          waitForStream: false,
+          autoReconnect: true,
+          forceKeyframes: false,
+        },
+      });
+
+      expect(fileName).toMatch(/^LIVE STREAMING 24 JAM CNN INDONESIA-CNNIDOFFICIAL \[\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}\]\.mp4$/);
+    });
+
+    it("should append range suffix for live stream capture_time_range", () => {
+      const fileName = buildOutputFileName({
+        title: "LIVE STREAMING 24 JAM CNN INDONESIA",
+        author: "CNNIDOFFICIAL",
+        url: "https://www.youtube.com/watch?v=PDDOkUq33Sw",
+        formatType: "video",
+        quality: "1080p",
+        liveConfig: {
+          mode: "capture_time_range",
+          timeRange: { start: "01:30:00", end: "02:00:00" },
+          downloadChat: false,
+          waitForStream: false,
+          autoReconnect: true,
+          forceKeyframes: true,
+        },
+      });
+
+      expect(fileName).toBe("LIVE STREAMING 24 JAM CNN INDONESIA-CNNIDOFFICIAL [Range 01-30-00 - 02-00-00].mp4");
     });
   });
 });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Download,
   Film,
@@ -27,6 +27,7 @@ import {
   Copy,
   Square,
   AlertTriangle,
+  ArrowDown,
 } from "lucide-react";
 import {
   ActiveDownloadTask,
@@ -43,6 +44,7 @@ import {
   formatFileSize,
   formatLiveDuration,
   isLiveStreamMetadata,
+  timestampToSeconds,
 } from "../lib/utils";
 import { CarouselSelectionModal } from "./CarouselSelectionModal";
 
@@ -158,37 +160,76 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   const [autoReconnect, setAutoReconnect] = useState<boolean>(true);
   const [showLiveLogs, setShowLiveLogs] = useState<boolean>(false);
   const [copiedLiveLogs, setCopiedLiveLogs] = useState<boolean>(false);
-  const [recordingElapsedSec, setRecordingElapsedSec] = useState<number>(0);
-  const recordingStartRef = useRef<number | null>(null);
+  // Smart autoscroll for live recording logs
+  const liveLogsContainerRef = useRef<HTMLDivElement>(null);
+  const isLogsAutoScrollRef = useRef<boolean>(true);
+  const [isLogsAtBottom, setIsLogsAtBottom] = useState<boolean>(true);
+
+  // Ground-truth media duration downloaded so far (reported by backend via TaskProgress.downloadedDurationSec)
+  const downloadedDurationSec = activeLiveTask?.progress?.downloadedDurationSec ?? 0;
+
+  // Target media duration for the active mode/segment
+  const targetDurationSec = useMemo(() => {
+    if (liveMode === "record_from_now") {
+      return liveDurationSec;
+    }
+    if (liveMode === "capture_time_range") {
+      const s = timestampToSeconds(rangeStart);
+      const e = timestampToSeconds(rangeEnd);
+      if (e > s) {
+        return e - s;
+      }
+    }
+    return null;
+  }, [liveMode, liveDurationSec, rangeStart, rangeEnd]);
+
+  // Automatically open logs drawer when actively recording and reset autoscroll to bottom
+  useEffect(() => {
+    if (activeLiveTask) {
+      setShowLiveLogs(true);
+      isLogsAutoScrollRef.current = true;
+      setIsLogsAtBottom(true);
+    }
+  }, [activeLiveTask?.taskId]);
+
+  const handleLogsScroll = () => {
+    const el = liveLogsContainerRef.current;
+    if (!el) return;
+    // Considered at the bottom if within 25px
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 25;
+    isLogsAutoScrollRef.current = atBottom;
+    setIsLogsAtBottom(atBottom);
+  };
+
+  const scrollToLatestLogs = () => {
+    const el = liveLogsContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    isLogsAutoScrollRef.current = true;
+    setIsLogsAtBottom(true);
+  };
+
+  const lastLiveLog = activeLiveTask?.recentLogs?.length
+    ? activeLiveTask.recentLogs[activeLiveTask.recentLogs.length - 1]
+    : "";
+
+  // Auto-scroll to latest log only when user is at the bottom (smart autoscroll)
+  useEffect(() => {
+    if (!showLiveLogs) return;
+    const el = liveLogsContainerRef.current;
+    if (!el) return;
+
+    if (isLogsAutoScrollRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [showLiveLogs, activeLiveTask?.recentLogs?.length, lastLiveLog]);
+
   const [streamLiveDuration, setStreamLiveDuration] = useState<number>(() => {
     if (info.releaseTimestamp) {
       return Math.max(0, Math.floor(Date.now() / 1000) - info.releaseTimestamp);
     }
     return info.duration || 0;
   });
-
-  // Track recording elapsed time every second while actively recording
-  useEffect(() => {
-    if (!activeLiveTask) {
-      recordingStartRef.current = null;
-      setRecordingElapsedSec(0);
-      return;
-    }
-    if (recordingStartRef.current === null) {
-      recordingStartRef.current = Date.now();
-      setShowLiveLogs(true);
-    }
-    const updateElapsed = () => {
-      if (recordingStartRef.current) {
-        setRecordingElapsedSec(
-          Math.max(0, Math.floor((Date.now() - recordingStartRef.current) / 1000))
-        );
-      }
-    };
-    updateElapsed();
-    const timer = setInterval(updateElapsed, 1000);
-    return () => clearInterval(timer);
-  }, [activeLiveTask?.taskId]);
 
   // Keep live stream broadcast duration ticking every second when stream is currently live
   useEffect(() => {
@@ -273,6 +314,8 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
   const formatDropdownRef = useRef<HTMLDivElement>(null);
   const [isQualityDropdownOpen, setIsQualityDropdownOpen] = useState<boolean>(false);
   const qualityDropdownRef = useRef<HTMLDivElement>(null);
+  const [isLiveQualityDropdownOpen, setIsLiveQualityDropdownOpen] = useState<boolean>(false);
+  const liveQualityDropdownRef = useRef<HTMLDivElement>(null);
 
   // Close format dropdown on outside click or Escape key
   useEffect(() => {
@@ -325,6 +368,32 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isQualityDropdownOpen]);
+
+  // Close live studio quality dropdown on outside click or Escape key
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        liveQualityDropdownRef.current &&
+        !liveQualityDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsLiveQualityDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsLiveQualityDropdownOpen(false);
+      }
+    };
+
+    if (isLiveQualityDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isLiveQualityDropdownOpen]);
 
   useEffect(() => {
     setActiveImageIndex(getInitialIndex());
@@ -1190,7 +1259,8 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-500/30">
-                        REC LIVE • {formatElapsed(recordingElapsedSec)}
+                        REC LIVE • {formatElapsed(Math.floor(downloadedDurationSec))}
+                        {targetDurationSec && targetDurationSec > 0 ? ` / ${formatElapsed(targetDurationSec)}` : ""}
                       </span>
                       <span className="text-xs font-semibold text-white">
                         {activeLiveTask.progress.speedStr || "Recording stream..."}
@@ -1210,7 +1280,15 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
-                    onClick={() => setShowLiveLogs((p) => !p)}
+                    onClick={() =>
+                      setShowLiveLogs((p) => {
+                        if (!p) {
+                          isLogsAutoScrollRef.current = true;
+                          setIsLogsAtBottom(true);
+                        }
+                        return !p;
+                      })
+                    }
                     className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-all ${
                       showLiveLogs
                         ? "bg-zinc-800 border-zinc-600 text-white"
@@ -1234,7 +1312,7 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                       <span>
                         {activeLiveTask.progress?.etaStr === "Saving"
                           ? "Finalizing..."
-                          : `Stop Recording (${formatElapsed(recordingElapsedSec)})`}
+                          : `Stop Recording (${formatElapsed(Math.floor(downloadedDurationSec))})`}
                       </span>
                     </button>
                   )}
@@ -1246,8 +1324,8 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                 <div
                   className="h-full bg-gradient-to-r from-red-600 via-rose-500 to-amber-500 animate-pulse transition-all duration-300"
                   style={{
-                    width: liveDurationSec
-                      ? `${Math.min(100, Math.max(3, Math.round((recordingElapsedSec / liveDurationSec) * 100)))}%`
+                    width: targetDurationSec && targetDurationSec > 0
+                      ? `${Math.min(100, Math.max(3, Math.round((downloadedDurationSec / targetDurationSec) * 100)))}%`
                       : "100%",
                   }}
                 />
@@ -1266,18 +1344,35 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                     ({activeLiveTask.recentLogs?.length || 0} events)
                   </span>
                 </div>
-                {activeLiveTask.recentLogs && activeLiveTask.recentLogs.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleCopyLiveLogs}
-                    className="h-6 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-[10px] font-sans font-medium flex items-center gap-1 cursor-pointer transition-colors"
-                  >
-                    {copiedLiveLogs ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-zinc-400" />}
-                    <span>{copiedLiveLogs ? "Copied" : "Copy"}</span>
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {!isLogsAtBottom && (activeLiveTask.recentLogs?.length || 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={scrollToLatestLogs}
+                      className="h-6 px-2 rounded bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 hover:text-blue-200 text-[10px] font-sans font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                      title="Scroll down to the latest live log"
+                    >
+                      <ArrowDown className="w-2.5 h-2.5" />
+                      <span>Scroll to Latest</span>
+                    </button>
+                  )}
+                  {activeLiveTask.recentLogs && activeLiveTask.recentLogs.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleCopyLiveLogs}
+                      className="h-6 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-[10px] font-sans font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      {copiedLiveLogs ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-zinc-400" />}
+                      <span>{copiedLiveLogs ? "Copied" : "Copy"}</span>
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="max-h-48 overflow-y-auto space-y-1 pr-1 font-mono text-[11px] scrollbar-thin scrollbar-thumb-zinc-700">
+              <div
+                ref={liveLogsContainerRef}
+                onScroll={handleLogsScroll}
+                className="max-h-48 overflow-y-auto space-y-1 pr-1 font-mono text-[11px] scrollbar-thin scrollbar-thumb-zinc-700"
+              >
                 {activeLiveTask.recentLogs && activeLiveTask.recentLogs.length > 0 ? (
                   activeLiveTask.recentLogs.map((log, idx) => (
                     <div key={idx} className="text-zinc-300 leading-relaxed break-all">
@@ -1309,80 +1404,45 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
               </div>
             </div>
           )}
-        </div>
-      )}
 
-      {/* Quality Options & Action Buttons Toolbar */}
-      <div className="pt-3 border-t border-[#27272a] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Quality Section: Direct buttons/badge without label, matching h-10 height */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {isImage ? (
-            <div
-              className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 shadow-sm"
-              title="Original Resolution (Lossless)"
-            >
-              <ImageIcon className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Original</span>
-            </div>
-          ) : formatType === "subtitle" && !isLiveStudioActive ? (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <div
-                className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-purple-500/30 bg-purple-500/10 text-purple-300 flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 shadow-sm"
-                title="ElevenLabs AI Speech-to-Text Model"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                <span>ElevenLabs Scribe v2</span>
-              </div>
-              <div
-                className="h-10 px-3.5 rounded-xl font-medium text-xs border border-[#27272a] bg-[#18181c] text-[#a1a1aa] flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
-                title="Automatically generated transcript format"
-              >
-                <span>Format:</span>
-                <span className="font-bold text-white">SRT</span>
-                <span>·</span>
-                <span className="font-bold text-white">VTT</span>
-                <span>·</span>
-                <span className="font-bold text-white">TXT</span>
-              </div>
-            </div>
-          ) : (
-            <div className="relative inline-block text-left" ref={qualityDropdownRef}>
+          {/* 4. Live Studio Action Bar: Resolution Selector & Start/Stop Recording */}
+          <div className="pt-2 border-t border-[#27272a]/80 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            {/* Resolution Selector Dropdown - Specialized Live Stream Styling */}
+            <div className="relative inline-block text-left" ref={liveQualityDropdownRef}>
               <button
                 type="button"
-                onClick={() => setIsQualityDropdownOpen((prev) => !prev)}
-                className={`h-10 px-3.5 rounded-xl border flex items-center gap-2 cursor-pointer transition-all duration-150 select-none shadow-sm shrink-0 ${
-                  isQualityDropdownOpen
-                    ? "bg-[#1f1f26] border-blue-500 ring-2 ring-blue-500/20 text-white"
-                    : "bg-[#18181c] hover:bg-[#1f1f24] border-[#27272a] hover:border-[#3f3f46] text-white"
+                onClick={() => setIsLiveQualityDropdownOpen((p) => !p)}
+                className={`h-9 px-3 rounded-xl border flex items-center gap-2 cursor-pointer transition-all duration-150 select-none shadow-sm ${
+                  isLiveQualityDropdownOpen
+                    ? "bg-red-950/40 border-red-500/80 ring-2 ring-red-500/30 text-white"
+                    : "bg-[#181214] hover:bg-[#201518] border-red-500/30 hover:border-red-500/50 text-zinc-200"
                 }`}
-                title="Select media quality or resolution"
+                title="Select live stream recording resolution"
               >
-                {formatType === "video" || isLiveStudioActive ? (
-                  <Film className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                ) : (
-                  <Music className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                )}
-
+                <Radio className="w-3.5 h-3.5 text-red-500 animate-pulse shrink-0" />
                 <div className="flex items-center gap-1.5 text-xs">
-                  <span className="text-[#71717a] font-normal">Quality:</span>
-                  <span className="text-white font-bold uppercase">
+                  <span className="text-red-400 font-semibold text-[11px] uppercase tracking-wider">Stream Res:</span>
+                  <span className="text-white font-extrabold uppercase px-1.5 py-0.5 rounded bg-red-500/25 text-red-200 border border-red-500/40 text-[11px]">
                     {quality === "best" ? "Original HD" : quality}
                   </span>
                 </div>
-
                 <ChevronDown
-                  className={`w-3.5 h-3.5 text-[#71717a] transition-transform duration-200 ${
-                    isQualityDropdownOpen ? "rotate-180 text-white" : ""
+                  className={`w-3.5 h-3.5 text-red-400/70 transition-transform duration-200 ${
+                    isLiveQualityDropdownOpen ? "rotate-180 text-white" : ""
                   }`}
                 />
               </button>
 
-              {isQualityDropdownOpen && (
-                <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-64 sm:w-72 origin-bottom-left bg-[#16161a]/98 backdrop-blur-xl border border-[#27272a] rounded-xl shadow-2xl shadow-black/95 p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 zoom-in-95 duration-150">
-                  <div className="px-2.5 py-1 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider border-b border-[#27272a]/60">
-                    {formatType === "video" || isLiveStudioActive ? "Video Resolution Options" : "Audio Format Options"}
+              {isLiveQualityDropdownOpen && (
+                <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-64 sm:w-72 origin-bottom-left bg-[#141012]/98 backdrop-blur-xl border border-red-500/30 rounded-xl shadow-2xl shadow-black/95 p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 zoom-in-95 duration-150">
+                  <div className="px-2.5 py-1.5 text-[10px] font-bold text-red-400 uppercase tracking-wider border-b border-red-500/20 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                      <span>Live Stream Resolution</span>
+                    </div>
+                    <span className="text-[9px] text-zinc-500 font-normal">H.264 / AAC</span>
                   </div>
-                  {(formatType === "video" || isLiveStudioActive ? VIDEO_QUALITY_OPTIONS : AUDIO_QUALITY_OPTIONS).map((opt) => {
+                  {VIDEO_QUALITY_OPTIONS.map((opt) => {
                     const isSelected = quality === opt.id;
                     return (
                       <button
@@ -1390,185 +1450,304 @@ export const MetadataPreviewCard: React.FC<MetadataPreviewCardProps> = ({
                         type="button"
                         onClick={() => {
                           setQuality(opt.id as DownloaderQuality);
-                          setIsQualityDropdownOpen(false);
+                          setIsLiveQualityDropdownOpen(false);
                         }}
                         className={`w-full flex items-center justify-between p-2 rounded-lg text-left cursor-pointer transition-all ${
                           isSelected
-                            ? "bg-blue-500/15 border border-blue-500/30 text-white shadow-sm"
-                            : "border border-transparent text-[#d4d4d8] hover:bg-[#202026] hover:text-white"
+                            ? "bg-red-500/20 border border-red-500/40 text-white shadow-sm"
+                            : "border border-transparent text-[#d4d4d8] hover:bg-red-500/10 hover:text-white"
                         }`}
                       >
                         <div className="flex flex-col min-w-0 pr-2">
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-white uppercase">{opt.label}</span>
+                            <span className={`text-xs font-bold ${isSelected ? "text-red-300" : "text-white"}`}>
+                              {opt.label}
+                            </span>
                             <span
-                              className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold border ${
+                              className={`text-[9px] font-black px-1.5 py-0.2 rounded uppercase tracking-wider shrink-0 border ${
                                 isSelected
-                                  ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
-                                  : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                                  ? "bg-red-500/30 text-red-200 border-red-500/50"
+                                  : "bg-zinc-800 text-zinc-400 border-zinc-700/60"
                               }`}
                             >
                               {opt.badge}
                             </span>
                           </div>
-                          <span className="text-[10px] text-[#71717a] line-clamp-1 mt-0.5">{opt.desc}</span>
+                          <span className="text-[10px] text-[#71717a] truncate mt-0.5">{opt.desc}</span>
                         </div>
-                        {isSelected && <Check className="w-4 h-4 text-blue-400 shrink-0" />}
+                        {isSelected && <Check className="w-4 h-4 text-red-400 shrink-0" />}
                       </button>
                     );
                   })}
                 </div>
               )}
             </div>
-          )}
+
+            {/* Start / Stop Live Recording Button inside Live Studio Card */}
+            {activeLiveTask && onStopLiveRecord ? (
+              <button
+                type="button"
+                onClick={() => onStopLiveRecord(activeLiveTask.taskId)}
+                disabled={activeLiveTask.progress?.etaStr === "Saving"}
+                className="h-9 px-4 rounded-xl font-bold text-xs bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all whitespace-nowrap shrink-0 active:scale-98 disabled:opacity-75"
+                title="Stop live stream recording and finalize MP4"
+              >
+                <Square className="w-3 h-3 fill-current animate-pulse text-white" />
+                <span>
+                  {activeLiveTask.progress?.etaStr === "Saving"
+                    ? "Finalizing..."
+                    : `Stop Recording (${formatElapsed(Math.floor(downloadedDurationSec))})`}
+                </span>
+              </button>
+            ) : !isStreamEnded && onStartLiveRecord ? (
+              <button
+                type="button"
+                onClick={() => onStartLiveRecord(currentLiveConfig)}
+                disabled={isDownloadingCurrentUrl}
+                className="h-9 px-4 rounded-xl font-bold text-xs bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all whitespace-nowrap shrink-0 active:scale-98 disabled:opacity-50"
+              >
+                <Radio className="w-3.5 h-3.5 animate-pulse" />
+                <span>
+                  {liveMode === "rewind_live"
+                    ? "Rewind & Record Stream"
+                    : liveMode === "capture_time_range"
+                    ? "Capture Stream Highlight"
+                    : liveMode === "chat_replay"
+                    ? "Record Stream + Chat (.SRT)"
+                    : waitForStream && info.liveStatus === "is_upcoming"
+                    ? "Wait & Record Stream"
+                    : "Start Live Recording"}
+                </span>
+              </button>
+            ) : null}
+          </div>
         </div>
+      )}
 
-        {/* Action Buttons: Proportionate, single-line, aligned */}
-        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-end">
-          {isCarousel && (
-            <>
-              {/* Button Select Media / Photos */}
-              <button
-                type="button"
-                onClick={() => setIsSelectionModalOpen(true)}
-                disabled={isDownloadingCurrentUrl}
-                className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
-                title={carouselVideosCount > 0 ? "Select specific media items to download" : "Select specific photos to download"}
+      {/* Quality Options & Action Buttons Toolbar (Hidden when Live Stream Studio is active) */}
+      {!(isLiveStudioActive && canUseLiveStudio) && (
+        <div className="pt-3 border-t border-[#27272a] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          {/* Quality Section: Direct buttons/badge without label, matching h-10 height */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {isImage ? (
+              <div
+                className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 shadow-sm"
+                title="Original Resolution (Lossless)"
               >
-                <Layers className="w-3.5 h-3.5 text-zinc-400" />
-                <span>{carouselVideosCount > 0 ? "Select Media" : "Select Photos"}</span>
-              </button>
-
-              {/* Quick Download Active Slide */}
-              <button
-                type="button"
-                onClick={() => onDownload([activeImageIndex])}
-                disabled={isDownloadingCurrentUrl}
-                className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
-                title={`Download slide #${activeImageIndex + 1} only`}
-              >
-                {isCurrentSlideVideo ? (
-                  <Film className="w-3.5 h-3.5 text-zinc-400" />
-                ) : (
-                  <ImageIcon className="w-3.5 h-3.5 text-zinc-400" />
-                )}
-                <span>{isCurrentSlideVideo ? "Video" : "Photo"} #{activeImageIndex + 1}</span>
-              </button>
-            </>
-          )}
-
-          {isLiveStudioActive && canUseLiveStudio && activeLiveTask && onStopLiveRecord ? (
-            <button
-              type="button"
-              onClick={() => onStopLiveRecord(activeLiveTask.taskId)}
-              disabled={activeLiveTask.progress?.etaStr === "Saving"}
-              className="h-10 px-5 rounded-xl font-bold text-xs sm:text-sm bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all whitespace-nowrap shrink-0 active:scale-98 disabled:opacity-75"
-              title="Stop live stream recording and save output MP4"
-            >
-              <Square className="w-3.5 h-3.5 fill-current animate-pulse text-white" />
-              <span>
-                {activeLiveTask.progress?.etaStr === "Saving"
-                  ? "Finalizing MP4..."
-                  : `Stop Recording (${formatElapsed(recordingElapsedSec)})`}
-              </span>
-            </button>
-          ) : isLiveStudioActive && canUseLiveStudio && !isStreamEnded && onStartLiveRecord ? (
-            <button
-              type="button"
-              onClick={() => onStartLiveRecord(currentLiveConfig)}
-              disabled={isDownloadingCurrentUrl}
-              className="h-10 px-5 rounded-xl font-bold text-xs sm:text-sm bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all whitespace-nowrap shrink-0 active:scale-98 disabled:opacity-50"
-            >
-              <Radio className="w-4 h-4 animate-pulse" />
-              <span>
-                {liveMode === "rewind_live"
-                  ? "Rewind & Record Stream"
-                  : liveMode === "capture_time_range"
-                  ? "Capture Stream Highlight"
-                  : liveMode === "chat_replay"
-                  ? "Record Stream + Chat (.SRT)"
-                  : waitForStream && info.liveStatus === "is_upcoming"
-                  ? "Wait & Record Stream"
-                  : "Start Live Recording"}
-              </span>
-            </button>
-          ) : isCurrentlyStreaming ? (
-            <button
-              type="button"
-              disabled
-              className="h-10 px-5 rounded-xl font-bold text-xs sm:text-sm bg-[#1e1e24] border border-red-500/30 text-zinc-400 flex items-center justify-center gap-2 cursor-not-allowed whitespace-nowrap shrink-0 shadow-sm"
-              title="Stream is currently broadcasting live. Video download will become available once the stream has ended."
-            >
-              <Radio className="w-4 h-4 text-red-500 animate-pulse" />
-              <span>Live in Progress (Download Disabled)</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => {
-                if (formatType === "subtitle") {
-                  onTranscribe ? onTranscribe() : onDownload();
-                } else {
-                  onDownload();
-                }
-              }}
-              disabled={
-                isDownloadingCurrentUrl ||
-                (!isLiveStudioActive && formatType === "subtitle" && (!transcriptionReady || isTranscribing))
-              }
-              className={`h-10 px-5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all whitespace-nowrap shrink-0 active:scale-98 ${
-                isDownloadingCurrentUrl || (!isLiveStudioActive && formatType === "subtitle" && isTranscribing)
-                  ? "bg-[#27272a] text-[#71717a] !cursor-not-allowed"
-                  : formatType === "subtitle"
-                  ? "bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30"
-                  : isImage
-                  ? "bg-zinc-100 hover:bg-white text-zinc-950 shadow-md hover:shadow-lg border border-zinc-200"
-                  : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30"
-              }`}
-            >
-              {isDownloadingCurrentUrl ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
-                  <span>Downloading in Media Vault...</span>
-                </>
-              ) : !isLiveStudioActive && formatType === "subtitle" && isTranscribing ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-purple-300" />
-                  <span>
-                    {transcriptionProgress && transcriptionProgress.percent > 0
-                      ? `Transcribing (${Math.round(transcriptionProgress.percent)}%)...`
-                      : "Transcribing Audio..."}
-                  </span>
-                </>
-              ) : (
-                <>
-                  {formatType === "subtitle" ? (
-                    <Captions className="w-4 h-4" />
+                <ImageIcon className="w-3.5 h-3.5 text-zinc-400" />
+                <span>Original</span>
+              </div>
+            ) : formatType === "subtitle" && !isLiveStudioActive ? (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <div
+                  className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-purple-500/30 bg-purple-500/10 text-purple-300 flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 shadow-sm"
+                  title="ElevenLabs AI Speech-to-Text Model"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                  <span>ElevenLabs Scribe v2</span>
+                </div>
+                <div
+                  className="h-10 px-3.5 rounded-xl font-medium text-xs border border-[#27272a] bg-[#18181c] text-[#a1a1aa] flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+                  title="Automatically generated transcript format"
+                >
+                  <span>Format:</span>
+                  <span className="font-bold text-white">SRT</span>
+                  <span>·</span>
+                  <span className="font-bold text-white">VTT</span>
+                  <span>·</span>
+                  <span className="font-bold text-white">TXT</span>
+                </div>
+              </div>
+            ) : (
+              <div className="relative inline-block text-left" ref={qualityDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsQualityDropdownOpen((prev) => !prev)}
+                  className={`h-10 px-3.5 rounded-xl border flex items-center gap-2 cursor-pointer transition-all duration-150 select-none shadow-sm shrink-0 ${
+                    isQualityDropdownOpen
+                      ? "bg-[#1f1f26] border-blue-500 ring-2 ring-blue-500/20 text-white"
+                      : "bg-[#18181c] hover:bg-[#1f1f24] border-[#27272a] hover:border-[#3f3f46] text-white"
+                  }`}
+                  title="Select media quality or resolution"
+                >
+                  {formatType === "video" || isLiveStudioActive ? (
+                    <Film className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                   ) : (
-                    <Download className="w-4 h-4" />
+                    <Music className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   )}
-                  <span>
-                    {isCarousel
-                      ? `Download All (${carouselImages.length} ${
-                          carouselVideosCount > 0 && carouselImagesCount > 0
-                            ? "Media"
-                            : carouselVideosCount > 0
-                            ? "Videos"
-                            : "Photos"
-                        })`
-                      : isImage
-                      ? "Download Photo (HD)"
-                      : formatType === "subtitle"
-                      ? "Download Transcript (SRT)"
-                      : formatType === "audio"
-                      ? "Audio"
-                      : "Video"}
-                  </span>
-                </>
-              )}
-            </button>
-          )}
+
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="text-[#71717a] font-normal">Quality:</span>
+                    <span className="text-white font-bold uppercase">
+                      {quality === "best" ? "Original HD" : quality}
+                    </span>
+                  </div>
+
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 text-[#71717a] transition-transform duration-200 ${
+                      isQualityDropdownOpen ? "rotate-180 text-white" : ""
+                    }`}
+                  />
+                </button>
+
+                {isQualityDropdownOpen && (
+                  <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-64 sm:w-72 origin-bottom-left bg-[#16161a]/98 backdrop-blur-xl border border-[#27272a] rounded-xl shadow-2xl shadow-black/95 p-1.5 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 zoom-in-95 duration-150">
+                    <div className="px-2.5 py-1 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider border-b border-[#27272a]/60">
+                      {formatType === "video" || isLiveStudioActive ? "Video Resolution Options" : "Audio Format Options"}
+                    </div>
+                    {(formatType === "video" || isLiveStudioActive ? VIDEO_QUALITY_OPTIONS : AUDIO_QUALITY_OPTIONS).map((opt) => {
+                      const isSelected = quality === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => {
+                            setQuality(opt.id as DownloaderQuality);
+                            setIsQualityDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between p-2 rounded-lg text-left cursor-pointer transition-all ${
+                            isSelected
+                              ? "bg-blue-500/15 border border-blue-500/30 text-white shadow-sm"
+                              : "border border-transparent text-[#d4d4d8] hover:bg-[#202026] hover:text-white"
+                          }`}
+                        >
+                          <div className="flex flex-col min-w-0 pr-2">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-white uppercase">{opt.label}</span>
+                              <span
+                                className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold border ${
+                                  isSelected
+                                    ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                                    : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                                }`}
+                              >
+                                {opt.badge}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-[#71717a] line-clamp-1 mt-0.5">{opt.desc}</span>
+                          </div>
+                          {isSelected && <Check className="w-4 h-4 text-blue-400 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Action Buttons: Proportionate, single-line, aligned */}
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-end">
+            {isCarousel && (
+              <>
+                {/* Button Select Media / Photos */}
+                <button
+                  type="button"
+                  onClick={() => setIsSelectionModalOpen(true)}
+                  disabled={isDownloadingCurrentUrl}
+                  className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
+                  title={carouselVideosCount > 0 ? "Select specific media items to download" : "Select specific photos to download"}
+                >
+                  <Layers className="w-3.5 h-3.5 text-zinc-400" />
+                  <span>{carouselVideosCount > 0 ? "Select Media" : "Select Photos"}</span>
+                </button>
+
+                {/* Quick Download Active Slide */}
+                <button
+                  type="button"
+                  onClick={() => onDownload([activeImageIndex])}
+                  disabled={isDownloadingCurrentUrl}
+                  className="h-10 px-3.5 rounded-xl font-semibold text-xs border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 whitespace-nowrap shrink-0 active:scale-98 shadow-sm"
+                  title={`Download slide #${activeImageIndex + 1} only`}
+                >
+                  {isCurrentSlideVideo ? (
+                    <Film className="w-3.5 h-3.5 text-zinc-400" />
+                  ) : (
+                    <ImageIcon className="w-3.5 h-3.5 text-zinc-400" />
+                  )}
+                  <span>{isCurrentSlideVideo ? "Video" : "Photo"} #{activeImageIndex + 1}</span>
+                </button>
+              </>
+            )}
+
+            {isCurrentlyStreaming ? (
+              <button
+                type="button"
+                disabled
+                className="h-10 px-5 rounded-xl font-bold text-xs sm:text-sm bg-[#1e1e24] border border-red-500/30 text-zinc-400 flex items-center justify-center gap-2 cursor-not-allowed whitespace-nowrap shrink-0 shadow-sm"
+                title="Stream is currently broadcasting live. Video download will become available once the stream has ended. Use the Record Live Stream Studio above to capture live broadcasts."
+              >
+                <Radio className="w-4 h-4 text-red-500 animate-pulse" />
+                <span>Live in Progress (Download Disabled)</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  if (formatType === "subtitle") {
+                    onTranscribe ? onTranscribe() : onDownload();
+                  } else {
+                    onDownload();
+                  }
+                }}
+                disabled={
+                  isDownloadingCurrentUrl ||
+                  (!isLiveStudioActive && formatType === "subtitle" && (!transcriptionReady || isTranscribing))
+                }
+                className={`h-10 px-5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all whitespace-nowrap shrink-0 active:scale-98 ${
+                  isDownloadingCurrentUrl || (!isLiveStudioActive && formatType === "subtitle" && isTranscribing)
+                    ? "bg-[#27272a] text-[#71717a] !cursor-not-allowed"
+                    : formatType === "subtitle"
+                    ? "bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30"
+                    : isImage
+                    ? "bg-zinc-100 hover:bg-white text-zinc-950 shadow-md hover:shadow-lg border border-zinc-200"
+                    : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30"
+                }`}
+              >
+                {isDownloadingCurrentUrl ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
+                    <span>Downloading in Media Vault...</span>
+                  </>
+                ) : !isLiveStudioActive && formatType === "subtitle" && isTranscribing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-purple-300" />
+                    <span>
+                      {transcriptionProgress && transcriptionProgress.percent > 0
+                        ? `Transcribing (${Math.round(transcriptionProgress.percent)}%)...`
+                        : "Transcribing Audio..."}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    {formatType === "subtitle" ? (
+                      <Captions className="w-4 h-4" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                    <span>
+                      {isCarousel
+                        ? `Download All (${carouselImages.length} ${
+                            carouselVideosCount > 0 && carouselImagesCount > 0
+                              ? "Media"
+                              : carouselVideosCount > 0
+                              ? "Videos"
+                              : "Photos"
+                          })`
+                        : isImage
+                        ? "Download Photo (HD)"
+                        : formatType === "subtitle"
+                        ? "Download Transcript (SRT)"
+                        : formatType === "audio"
+                        ? "Audio"
+                        : "Video"}
+                    </span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Selection Modal */}
       {isCarousel && (

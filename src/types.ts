@@ -79,6 +79,7 @@ export interface TaskProgress {
   etaStr: string;
   downloadedBytes?: number;
   totalBytes?: number;
+  downloadedDurationSec?: number;
 }
 
 export interface ActiveDownloadTask {
