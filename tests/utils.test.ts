@@ -8,12 +8,15 @@ import {
   cleanMediaUrl,
   extractMultipleUrls,
   secondsToTimestamp,
+  formatLiveDuration,
   timestampToSeconds,
   getErrorMessage,
   sanitizeTitle,
   stripMediaExtension,
   getSourcePlatformName,
   buildOutputFileName,
+  isLiveStreamMetadata,
+  buildLiveYtdlpCommandPreview,
 } from "../src/lib/utils";
 
 describe("AI Spec-First Audit: src/lib/utils.ts", () => {
@@ -213,6 +216,14 @@ describe("AI Spec-First Audit: src/lib/utils.ts", () => {
         expect(timestampToSeconds(secondsToTimestamp(val))).toBe(val);
       }
     });
+
+    it("should format live durations with days prefix for streams longer than 24 hours", () => {
+      expect(formatLiveDuration(3665)).toBe("01:01:05");
+      expect(formatLiveDuration(86400)).toBe("1d 00:00:00");
+      expect(formatLiveDuration(11528365)).toBe("133d 10:19:25");
+      expect(formatLiveDuration(-5)).toBe("00:00:00");
+      expect(formatLiveDuration(NaN)).toBe("00:00:00");
+    });
   });
 
   // --- 7. getErrorMessage ---
@@ -411,6 +422,114 @@ describe("AI Spec-First Audit: src/lib/utils.ts", () => {
         format: "mp4",
       });
       expect(result).toBe("How To Solve The 100 Prisoners Riddle-veritasium.mp4");
+    });
+  });
+
+  // --- 12. Record Live Stream URL & CLI Builder ---
+  describe("Record Live Stream: isLiveStreamMetadata() & buildLiveYtdlpCommandPreview()", () => {
+    it("should validate and clean YouTube /live/<id> and /@handle/live URLs", () => {
+      expect(isSupportedMediaUrl("https://www.youtube.com/live/jfKfPfyJRdk?si=abc")).toBe(true);
+      expect(isSupportedMediaUrl("https://www.youtube.com/@LofiGirl/live")).toBe(true);
+      expect(cleanMediaUrl("https://www.youtube.com/live/jfKfPfyJRdk?si=abc123")).toBe(
+        "https://www.youtube.com/live/jfKfPfyJRdk"
+      );
+    });
+
+    it("should detect live stream metadata across is_live, is_upcoming, was_live, and /live/ URLs", () => {
+      expect(
+        isLiveStreamMetadata({
+          id: "1",
+          title: "Stream",
+          webpageUrl: "https://www.youtube.com/watch?v=1",
+          duration: 0,
+          thumbnail: "",
+          uploader: "Creator",
+          channel: "Creator",
+          description: "",
+          isLive: true,
+          liveStatus: "is_live",
+        })
+      ).toBe(true);
+
+      expect(
+        isLiveStreamMetadata({
+          id: "2",
+          title: "Upcoming",
+          webpageUrl: "https://www.youtube.com/watch?v=2",
+          duration: 0,
+          thumbnail: "",
+          uploader: "Creator",
+          channel: "Creator",
+          description: "",
+          isLive: false,
+          liveStatus: "is_upcoming",
+        })
+      ).toBe(true);
+
+      expect(isLiveStreamMetadata(null, "https://www.youtube.com/live/jfKfPfyJRdk")).toBe(true);
+      expect(isLiveStreamMetadata(null, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe(false);
+    });
+
+    it("should generate copy-ready yt-dlp CLI commands for all 4 Record Live Stream modes", () => {
+      const cmdNow = buildLiveYtdlpCommandPreview(
+        "https://www.youtube.com/watch?v=live_id",
+        "1080p",
+        {
+          mode: "record_from_now",
+          durationSec: 600,
+          downloadChat: false,
+          waitForStream: false,
+          autoReconnect: true,
+          forceKeyframes: true,
+        }
+      );
+      expect(cmdNow).toContain('-f "bestvideo[height<=1080]+bestaudio/best" --merge-output-format mp4');
+      expect(cmdNow).toContain('--downloader ffmpeg --downloader-args "ffmpeg_i:-t 600"');
+      expect(cmdNow).toContain("--retries 10 --fragment-retries infinite");
+
+      const cmdRewindWait = buildLiveYtdlpCommandPreview(
+        "https://www.youtube.com/watch?v=upcoming_id",
+        "1080p",
+        {
+          mode: "rewind_live",
+          downloadChat: false,
+          waitForStream: true,
+          waitIntervalSec: 600,
+          autoReconnect: true,
+          forceKeyframes: false,
+        }
+      );
+      expect(cmdRewindWait).toContain("--live-from-start");
+      expect(cmdRewindWait).toContain("--wait-for-video 600");
+      expect(cmdRewindWait).toContain("--retries 10 --fragment-retries infinite");
+
+      const cmdRange = buildLiveYtdlpCommandPreview(
+        "https://www.youtube.com/watch?v=live_id",
+        "1080p",
+        {
+          mode: "capture_time_range",
+          timeRange: { start: "01:30:00", end: "02:00:00" },
+          downloadChat: false,
+          waitForStream: false,
+          autoReconnect: false,
+          forceKeyframes: true,
+        }
+      );
+      expect(cmdRange).toContain('--download-sections "*01:30:00-02:00:00"');
+      expect(cmdRange).toContain("--force-keyframes-at-cuts");
+
+      const cmdChat = buildLiveYtdlpCommandPreview(
+        "https://www.youtube.com/watch?v=live_id",
+        "1080p",
+        {
+          mode: "chat_replay",
+          downloadChat: true,
+          waitForStream: false,
+          autoReconnect: false,
+          forceKeyframes: false,
+        }
+      );
+      expect(cmdChat).toContain('--write-subs --sub-langs "live_chat" --live-from-start');
     });
   });
 });

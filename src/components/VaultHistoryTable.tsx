@@ -1,3 +1,4 @@
+import React, { useState } from "react";
 import {
   XCircle,
   Film,
@@ -7,6 +8,11 @@ import {
   Captions,
   Pause,
   Play,
+  Radio,
+  Square,
+  Terminal,
+  Copy,
+  Check,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
 import { VaultItemActions } from "./VaultItemActions";
@@ -23,6 +29,7 @@ interface VaultHistoryTableProps {
   activeTasks: ActiveDownloadTask[];
   onPauseTask?: (taskId: string) => void;
   onResumeTask?: (taskId: string) => void;
+  onStopLiveTask?: (taskId: string) => void;
   onCancelTask: (taskId: string) => void;
   records: DownloadRecord[];
   onSelectRecord: (record: DownloadRecord) => void;
@@ -37,6 +44,7 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
   activeTasks,
   onPauseTask,
   onResumeTask,
+  onStopLiveTask,
   onCancelTask,
   records,
   onSelectRecord,
@@ -46,129 +54,241 @@ export const VaultHistoryTable: React.FC<VaultHistoryTableProps> = ({
   onRetryRecord,
   onOpenTranscriptStudio,
 }) => {
+  const [expandedLogTaskIds, setExpandedLogTaskIds] = useState<Record<string, boolean>>({});
+  const [copiedTaskId, setCopiedTaskId] = useState<string | null>(null);
+
+  const handleCopyTaskLogs = (task: ActiveDownloadTask) => {
+    if (!task.recentLogs?.length) return;
+    navigator.clipboard?.writeText(task.recentLogs.join("\n")).catch(() => {});
+    setCopiedTaskId(task.taskId);
+    setTimeout(() => setCopiedTaskId(null), 2000);
+  };
+
   return (
     <div className="flex flex-col divide-y divide-[#1f1f23]">
       {/* 1. ACTIVE RUNNING TASKS */}
       {activeTasks.map((task) => {
         const isPaused = task.status === "paused";
         const isSubtitle = task.formatType === "subtitle";
+        const isLive = Boolean(task.isLiveRecording);
 
         return (
           <div
             key={task.taskId}
-            className={`flex items-center justify-between p-3.5 sm:p-4 min-h-[78px] bg-[#121215]/80 border-b gap-3 transition-colors ${
+            className={`flex flex-col p-3.5 sm:p-4 min-h-[78px] bg-[#121215]/80 border-b gap-2.5 transition-colors ${
               isPaused
                 ? "border-amber-500/20 bg-amber-500/[0.02]"
+                : isLive
+                ? "border-red-500/30 bg-red-950/[0.1]"
                 : isSubtitle
                 ? "border-purple-500/30 bg-purple-950/[0.08]"
                 : "border-blue-500/20"
             }`}
           >
-            <div className="flex items-center gap-3.5 min-w-0 flex-grow">
-              <div
-                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
-                  isPaused
-                    ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                    : isSubtitle
-                    ? "bg-purple-500/15 border-purple-500/35 text-purple-300"
-                    : "bg-blue-500/10 border-blue-500/30 text-blue-400"
-                }`}
-              >
-                {isPaused ? (
-                  <Pause className="w-4 h-4" />
-                ) : isSubtitle ? (
-                  <Captions className="w-5 h-5 text-purple-400 animate-pulse" />
-                ) : (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                )}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5 min-w-0 flex-grow">
+                <div
+                  className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
+                    isPaused
+                      ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                      : isLive
+                      ? "bg-red-500/15 border-red-500/40 text-red-400"
+                      : isSubtitle
+                      ? "bg-purple-500/15 border-purple-500/35 text-purple-300"
+                      : "bg-blue-500/10 border-blue-500/30 text-blue-400"
+                  }`}
+                >
+                  {isPaused ? (
+                    <Pause className="w-4 h-4" />
+                  ) : isLive ? (
+                    <Radio className="w-5 h-5 text-red-400 animate-pulse" />
+                  ) : isSubtitle ? (
+                    <Captions className="w-5 h-5 text-purple-400 animate-pulse" />
+                  ) : (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  )}
+                </div>
+                <div className="flex flex-col min-w-0 flex-grow gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs sm:text-sm font-bold text-white truncate" title={getDisplayTitle(task)}>
+                      {getDisplayTitle(task)}
+                    </span>
+                    {isLive && (
+                      <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/40 shrink-0 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />
+                        REC
+                      </span>
+                    )}
+                    {isSubtitle && (
+                      <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                        AI Scribe v2
+                      </span>
+                    )}
+                    {isPaused && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
+                        Paused
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-[#a1a1aa]">
+                    <span
+                      className={`font-bold ${
+                        isPaused
+                          ? "text-amber-400"
+                          : isLive
+                          ? "text-red-400"
+                          : isSubtitle
+                          ? "text-purple-300"
+                          : "text-blue-400"
+                      }`}
+                    >
+                      {isLive
+                        ? task.progress.etaStr || "LIVE"
+                        : task.progress.percent > 0
+                        ? `${Math.round(task.progress.percent)}%`
+                        : isPaused
+                        ? "Paused"
+                        : "Connecting..."}
+                    </span>
+                    <span>•</span>
+                    <span className="truncate">
+                      {task.progress.speedStr || (isPaused ? "Paused" : "Starting...")}
+                    </span>
+                    {!isLive && task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused && !isSubtitle && (
+                      <>
+                        <span>•</span>
+                        <span>ETA {task.progress.etaStr}</span>
+                      </>
+                    )}
+                  </div>
+                  {/* Progress Bar */}
+                  <div className="w-full h-1 bg-[#27272a] rounded-full overflow-hidden mt-0.5">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        isPaused
+                          ? "bg-amber-500"
+                          : isLive
+                          ? "bg-gradient-to-r from-red-600 via-rose-500 to-amber-500 animate-pulse"
+                          : isSubtitle
+                          ? "bg-gradient-to-r from-purple-500 to-indigo-500"
+                          : "bg-blue-500"
+                      }`}
+                      style={{ width: `${Math.max(task.progress.percent, 3)}%` }}
+                    />
+                  </div>
+                  {/* Current Step indicator */}
+                  {task.currentStep && (
+                    <div className="text-[10px] text-zinc-400 font-mono truncate flex items-center gap-1.5 mt-0.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 animate-pulse" />
+                      <span className="truncate">{task.currentStep}</span>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-col min-w-0 flex-grow gap-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs sm:text-sm font-bold text-white truncate" title={getDisplayTitle(task)}>
-                    {getDisplayTitle(task)}
-                  </span>
-                  {isSubtitle && (
-                    <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
-                      AI Scribe v2
-                    </span>
-                  )}
-                  {isPaused && (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
-                      Paused
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-[#a1a1aa]">
-                  <span
-                    className={`font-bold ${
-                      isPaused
-                        ? "text-amber-400"
-                        : isSubtitle
-                        ? "text-purple-300"
-                        : "text-blue-400"
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                {task.recentLogs && task.recentLogs.length > 0 && (
+                  <button
+                    onClick={() =>
+                      setExpandedLogTaskIds((prev) => ({
+                        ...prev,
+                        [task.taskId]: !prev[task.taskId],
+                      }))
+                    }
+                    className={`h-7 px-2 rounded-md border text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
+                      expandedLogTaskIds[task.taskId]
+                        ? "bg-zinc-800 border-zinc-600 text-white"
+                        : "bg-[#18181c] hover:bg-[#222228] border-[#27272a] text-zinc-400 hover:text-zinc-200"
                     }`}
+                    title="Toggle Process Logs"
                   >
-                    {task.progress.percent > 0
-                      ? `${Math.round(task.progress.percent)}%`
-                      : isPaused
-                      ? "Paused"
-                      : "Connecting..."}
-                  </span>
-                  <span>•</span>
-                  <span className="truncate">
-                    {task.progress.speedStr || (isPaused ? "Paused" : "Starting...")}
-                  </span>
-                  {task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused && !isSubtitle && (
-                    <>
-                      <span>•</span>
-                      <span>ETA {task.progress.etaStr}</span>
-                    </>
-                  )}
-                </div>
-                {/* Progress Bar */}
-                <div className="w-full h-1 bg-[#27272a] rounded-full overflow-hidden mt-0.5">
-                  <div
-                    className={`h-full transition-all duration-300 ${
-                      isPaused
-                        ? "bg-amber-500"
-                        : isSubtitle
-                        ? "bg-gradient-to-r from-purple-500 to-indigo-500"
-                        : "bg-blue-500"
-                    }`}
-                    style={{ width: `${Math.max(task.progress.percent, 3)}%` }}
-                  />
-                </div>
+                    <Terminal className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Logs</span>
+                  </button>
+                )}
+
+                {isLive && onStopLiveTask ? (
+                  <button
+                    onClick={() => onStopLiveTask(task.taskId)}
+                    className="h-7 px-2.5 rounded-md bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                    title="Stop Live Recording & Save MP4"
+                  >
+                    <Square className="w-3 h-3 fill-current text-red-400" />
+                    <span>Stop & Save</span>
+                  </button>
+                ) : !isSubtitle ? (
+                  isPaused ? (
+                    <button
+                      onClick={() => onResumeTask?.(task.taskId)}
+                      className="w-7 h-7 rounded-md text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                      title="Resume Download"
+                    >
+                      <Play className="w-4 h-4 fill-amber-400/20" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onPauseTask?.(task.taskId)}
+                      className="w-7 h-7 rounded-md text-[#a1a1aa] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                      title="Pause Download"
+                    >
+                      <Pause className="w-4 h-4" />
+                    </button>
+                  )
+                ) : null}
+                <button
+                  onClick={() => onCancelTask(task.taskId)}
+                  className="w-7 h-7 rounded-md text-[#71717a] hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center cursor-pointer transition-colors"
+                  title={isSubtitle ? "Cancel Transcription" : isLive ? "Discard Live Recording" : "Cancel Download"}
+                >
+                  <XCircle className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
-            <div className="flex items-center gap-1 shrink-0">
-              {!isSubtitle && (
-                isPaused ? (
+            {/* Error Banner */}
+            {task.error && (
+              <div className="p-2.5 rounded-lg bg-red-950/40 border border-red-500/40 text-xs text-red-200 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                  <span className="truncate">{task.error}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Expandable Process Logs Console */}
+            {expandedLogTaskIds[task.taskId] && task.recentLogs && task.recentLogs.length > 0 && (
+              <div className="rounded-lg bg-[#09090b] border border-zinc-800 p-2.5 flex flex-col gap-2 font-mono text-[11px] mt-1">
+                <div className="flex items-center justify-between border-b border-zinc-800/80 pb-1.5">
+                  <div className="flex items-center gap-1.5 text-zinc-400">
+                    <Terminal className="w-3 h-3 text-blue-400" />
+                    <span className="font-semibold text-zinc-300">Process Logs</span>
+                    <span className="text-[10px] text-zinc-600 font-sans">({task.recentLogs.length} events)</span>
+                  </div>
                   <button
-                    onClick={() => onResumeTask?.(task.taskId)}
-                    className="w-7 h-7 rounded-md text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                    title="Resume Download"
+                    type="button"
+                    onClick={() => handleCopyTaskLogs(task)}
+                    className="h-5 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-[10px] font-sans font-medium flex items-center gap-1 cursor-pointer transition-colors"
                   >
-                    <Play className="w-4 h-4 fill-amber-400/20" />
+                    {copiedTaskId === task.taskId ? (
+                      <Check className="w-2.5 h-2.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-2.5 h-2.5 text-zinc-400" />
+                    )}
+                    <span>{copiedTaskId === task.taskId ? "Copied" : "Copy"}</span>
                   </button>
-                ) : (
-                  <button
-                    onClick={() => onPauseTask?.(task.taskId)}
-                    className="w-7 h-7 rounded-md text-[#a1a1aa] hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                    title="Pause Download"
-                  >
-                    <Pause className="w-4 h-4" />
-                  </button>
-                )
-              )}
-              <button
-                onClick={() => onCancelTask(task.taskId)}
-                className="w-7 h-7 rounded-md text-[#71717a] hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center cursor-pointer transition-colors"
-                title={isSubtitle ? "Cancel Transcription" : "Cancel Download"}
-              >
-                <XCircle className="w-4 h-4" />
-              </button>
-            </div>
+                </div>
+                <div className="max-h-36 overflow-y-auto space-y-0.5 pr-1 font-mono text-[10px] leading-relaxed scrollbar-thin scrollbar-thumb-zinc-700">
+                  {task.recentLogs.map((log, idx) => (
+                    <div key={idx} className="text-zinc-300 break-all">
+                      <span className="text-zinc-600 select-none mr-2">
+                        {String(idx + 1).padStart(2, "0")}
+                      </span>
+                      {log}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         );
       })}

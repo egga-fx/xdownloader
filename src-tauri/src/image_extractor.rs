@@ -551,6 +551,9 @@ pub async fn extract_tiktok_video_metadata(url: &str) -> Result<crate::models::V
         webpage_url: url.to_string(),
         images: None,
         media_items: None,
+        is_live: None,
+        live_status: None,
+        release_timestamp: None,
     })
 }
 
@@ -1183,6 +1186,9 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
                                     webpage_url: final_url.to_string(),
                                     images: Some(thumbs),
                                     media_items: Some(items),
+                                    is_live: None,
+                                    live_status: None,
+                                    release_timestamp: None,
                                 });
                             }
                         }
@@ -1228,6 +1234,9 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
                                 webpage_url: final_url.to_string(),
                                 images: None,
                                 media_items: Some(vec![single_item]),
+                                is_live: None,
+                                live_status: None,
+                                release_timestamp: None,
                             });
                         }
                     }
@@ -1267,6 +1276,9 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
                             webpage_url: final_url.to_string(),
                             images: Some(vec![clean_img]),
                             media_items: Some(vec![single_item]),
+                            is_live: None,
+                            live_status: None,
+                            release_timestamp: None,
                         });
                     }
                 }
@@ -1329,6 +1341,9 @@ pub fn parse_threads_html(html: &str, final_url: &str, original_url: &str) -> Re
             webpage_url: final_url.to_string(),
             images: None,
             media_items: Some(vec![single_item]),
+            is_live: None,
+            live_status: None,
+            release_timestamp: None,
         });
     }
 
@@ -1528,6 +1543,9 @@ pub fn bundle_to_video_info(bundle: &ImageMediaBundle, url: &str) -> VideoInfo {
         webpage_url: url.to_string(),
         images: if count > 1 { Some(image_urls) } else { None },
         media_items: Some(media_items),
+        is_live: None,
+        live_status: None,
+        release_timestamp: None,
     }
 }
 
@@ -1680,6 +1698,10 @@ pub async fn download_image_bundle(
                         total_bytes: Some(curr_bytes),
                     },
                     error: None,
+                    is_live_recording: None,
+                    live_mode: None,
+                    current_step: None,
+                    recent_logs: None,
                 },
             );
 
@@ -1784,6 +1806,10 @@ pub async fn download_image_bundle(
                 total_bytes: Some(total_bytes),
             },
             error: None,
+            is_live_recording: None,
+            live_mode: None,
+            current_step: None,
+            recent_logs: None,
         },
     );
 
@@ -2145,6 +2171,10 @@ pub async fn download_media_bundle(
                                 total_bytes: None,
                             },
                             error: None,
+                            is_live_recording: None,
+                            live_mode: None,
+                            current_step: None,
+                            recent_logs: None,
                         },
                     );
 
@@ -2248,6 +2278,10 @@ pub async fn download_media_bundle(
                 total_bytes: Some(overall_downloaded_bytes),
             },
             error: None,
+            is_live_recording: None,
+            live_mode: None,
+            current_step: None,
+            recent_logs: None,
         },
     );
 

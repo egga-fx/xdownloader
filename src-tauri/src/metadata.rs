@@ -108,9 +108,36 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         .unwrap_or(url)
         .to_string();
 
+    let live_status = json_val["live_status"]
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| {
+            if json_val["is_live"].as_bool() == Some(true) {
+                Some("is_live".to_string())
+            } else if json_val["was_live"].as_bool() == Some(true) {
+                Some("was_live".to_string())
+            } else {
+                None
+            }
+        });
+    let is_live = json_val["is_live"]
+        .as_bool()
+        .or_else(|| live_status.as_deref().map(|s| s == "is_live"));
+    let release_timestamp = json_val["release_timestamp"]
+        .as_i64()
+        .or_else(|| json_val["release_timestamp"].as_f64().map(|t| t as i64))
+        .or_else(|| json_val["timestamp"].as_i64())
+        .or_else(|| json_val["timestamp"].as_f64().map(|t| t as i64));
+    let is_live_or_stream_event = is_live == Some(true)
+        || matches!(
+            live_status.as_deref(),
+            Some("is_live" | "is_upcoming" | "was_live" | "post_live")
+        )
+        || url.contains("/live/");
+
     // Check for video formats across root object and entries
     let mut extracted_images: Vec<String> = Vec::new();
-    let mut has_video_formats = false;
+    let mut has_video_formats = is_live_or_stream_event;
 
     // 1. Root level formats (single video post, e.g. Instagram Reels or video posts)
     if let Some(formats) = json_val["formats"].as_array() {
@@ -250,5 +277,8 @@ pub async fn fetch_video_metadata(url: &str) -> Result<VideoInfo, String> {
         webpage_url,
         images,
         media_items: None,
+        is_live,
+        live_status,
+        release_timestamp,
     })
 }

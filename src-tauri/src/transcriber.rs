@@ -699,6 +699,7 @@ pub async fn run_transcription(
         None,
         None,
         None,
+        None,
     )
     .await;
 

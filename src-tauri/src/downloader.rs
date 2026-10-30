@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter};
 use crate::binaries::find_binary;
 use crate::db::Database;
 use crate::models::{
-    ActiveDownloadTask, DownloadRecord, MediaItem, TaskProgress, TimeRange,
+    ActiveDownloadTask, DownloadRecord, LiveStreamConfig, MediaItem, TaskProgress, TimeRange,
 };
 
 #[cfg(target_os = "windows")]
@@ -33,6 +33,15 @@ static RE_PROGRESS: LazyLock<Regex> = LazyLock::new(|| {
 });
 static RE_PROGRESS_SIMPLE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[download\]\s+([0-9.]+)%").unwrap()
+});
+static RE_LIVE_PROGRESS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[download\]\s+([0-9.]+[A-Za-z]+)\s+at\s+([0-9.]+[A-Za-z/]+|\S+)(?:\s+\(([0-9:]+)\))?(?:\s+\(frag\s+(\d+)\))?").unwrap()
+});
+static RE_FFMPEG_PROGRESS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"size=\s*([0-9.]+[A-Za-z]+)\s+time=([0-9:.]+)\s+bitrate=\s*([0-9.]+[A-Za-z/]+)(?:\s+speed=\s*([0-9.]+x))?").unwrap()
+});
+static RE_WAIT_STREAM: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[wait\]\s+Waiting for\s+([0-9:]+)").unwrap()
 });
 static RE_MERGER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"\[Merger\] Merging formats into "(?P<path>[^"]+)""#).unwrap()
@@ -68,6 +77,7 @@ pub struct DownloadTaskContext {
     pub selected_indices: Option<Vec<usize>>,
     pub image_urls: Option<Vec<String>>,
     pub media_items: Option<Vec<MediaItem>>,
+    pub live_config: Option<LiveStreamConfig>,
     pub out_dir: PathBuf,
     pub raw_stem: String,
 }
@@ -77,7 +87,9 @@ pub struct ProcessManager {
     native_tasks: Mutex<HashMap<String, (tokio::task::AbortHandle, PathBuf, String)>>,
     contexts: Mutex<HashMap<String, DownloadTaskContext>>,
     paused: Mutex<HashMap<String, bool>>,
+    stopped_live: Mutex<HashMap<String, bool>>,
     snapshots: Mutex<HashMap<String, ActiveDownloadTask>>,
+    logs: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl Default for ProcessManager {
@@ -93,7 +105,9 @@ impl ProcessManager {
             native_tasks: Mutex::new(HashMap::new()),
             contexts: Mutex::new(HashMap::new()),
             paused: Mutex::new(HashMap::new()),
+            stopped_live: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(HashMap::new()),
+            logs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -135,6 +149,24 @@ impl ProcessManager {
         self.snapshots.lock().ok().and_then(|map| map.get(task_id).cloned())
     }
 
+    pub fn append_log(&self, task_id: &str, line: &str) {
+        let clean = line.trim();
+        if clean.is_empty() {
+            return;
+        }
+        if let Ok(mut map) = self.logs.lock() {
+            let entry = map.entry(task_id.to_string()).or_insert_with(Vec::new);
+            entry.push(clean.to_string());
+            if entry.len() > 60 {
+                entry.remove(0);
+            }
+        }
+    }
+
+    pub fn get_logs(&self, task_id: &str) -> Vec<String> {
+        self.logs.lock().ok().and_then(|map| map.get(task_id).cloned()).unwrap_or_default()
+    }
+
     pub fn is_paused(&self, task_id: &str) -> bool {
         self.paused.lock().ok().and_then(|map| map.get(task_id).copied()).unwrap_or(false)
     }
@@ -143,6 +175,51 @@ impl ProcessManager {
         if let Ok(mut map) = self.paused.lock() {
             map.remove(task_id);
         }
+    }
+
+    pub fn is_stopped_live(&self, task_id: &str) -> bool {
+        self.stopped_live.lock().ok().and_then(|map| map.get(task_id).copied()).unwrap_or(false)
+    }
+
+    pub fn unmark_stopped_live(&self, task_id: &str) {
+        if let Ok(mut map) = self.stopped_live.lock() {
+            map.remove(task_id);
+        }
+    }
+
+    /// Stops an active live stream recording and preserves `.part` / `.live_chat.json`
+    /// so `run_download` can remux and finalize the video file onto disk.
+    pub fn stop_live(&self, task_id: &str) -> bool {
+        let mut stopped = false;
+        if let Ok(mut map) = self.stopped_live.lock() {
+            map.insert(task_id.to_string(), true);
+        }
+
+        if let Ok(mut map) = self.children.lock() {
+            if let Some(info) = map.remove(task_id) {
+                crate::logger::write_file_log(
+                    "INFO",
+                    "PROCESS",
+                    task_id,
+                    &format!("Stopping live recording process PID {} to finalize file", info.pid),
+                );
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = Command::new("taskkill")
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .args(["/F", "/T", "/PID", &info.pid.to_string()])
+                        .output();
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let _ = Command::new("kill")
+                        .args(["-2", &info.pid.to_string()])
+                        .output();
+                }
+                stopped = true;
+            }
+        }
+        stopped
     }
 
     pub fn remove(&self, task_id: &str) {
@@ -234,6 +311,7 @@ impl ProcessManager {
 
         self.remove_context(task_id);
         self.unmark_paused(task_id);
+        self.unmark_stopped_live(task_id);
         if let Ok(mut map) = self.snapshots.lock() {
             map.remove(task_id);
         }
@@ -798,6 +876,527 @@ fn extract_youtube_id(url: &str) -> Option<String> {
     Some(caps[1].to_string())
 }
 
+/// Parses human-readable byte strings from yt-dlp / ffmpeg (e.g. "14.52MiB", "15360KiB", "1.2GiB") into raw bytes.
+pub fn parse_size_to_bytes(size_str: &str) -> Option<i64> {
+    let s = size_str.trim();
+    let num_end = s
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(s.len());
+    if num_end == 0 {
+        return None;
+    }
+    let val: f64 = s[..num_end].parse().ok()?;
+    let unit = s[num_end..].trim().to_lowercase();
+    let mult: f64 = match unit.as_str() {
+        "b" | "" => 1.0,
+        "kib" | "kb" | "k" => 1024.0,
+        "mib" | "mb" | "m" => 1024.0 * 1024.0,
+        "gib" | "gb" | "g" => 1024.0 * 1024.0 * 1024.0,
+        "tib" | "tb" | "t" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some((val * mult) as i64)
+}
+
+/// Parses "HH:MM:SS(.ms)" or "MM:SS" into seconds.
+pub fn parse_hhmmss_to_secs(ts: &str) -> Option<f64> {
+    let parts: Vec<&str> = ts.trim().split(':').collect();
+    match parts.len() {
+        3 => {
+            let h: f64 = parts[0].parse().ok()?;
+            let m: f64 = parts[1].parse().ok()?;
+            let s: f64 = parts[2].parse().ok()?;
+            Some(h * 3600.0 + m * 60.0 + s)
+        }
+        2 => {
+            let m: f64 = parts[0].parse().ok()?;
+            let s: f64 = parts[1].parse().ok()?;
+            Some(m * 60.0 + s)
+        }
+        1 => parts[0].parse().ok(),
+        _ => None,
+    }
+}
+
+/// Builds the exact yt-dlp CLI arguments for YouTube Live Stream recording across all 4 modes:
+/// - `record_from_now`: Start capturing immediately (with optional duration or until stream ends)
+/// - `rewind_live`: Rewind from start (`--live-from-start`)
+/// - `capture_time_range`: Frame-accurate section slicing (`--download-sections` + `--force-keyframes-at-cuts`)
+/// - `chat_replay`: Save live chat replay (`--write-subs --sub-langs live_chat --live-from-start`)
+pub fn build_live_ytdlp_args(cfg: &LiveStreamConfig, quality: &str) -> Vec<String> {
+    let mut args = Vec::<String>::new();
+
+    // 1. Resolution & MP4 Container Compatibility (Reference #1)
+    let fmt_selector = match quality {
+        "4k" | "2160p" => "bestvideo[height<=2160]+bestaudio/best",
+        "1440p" => "bestvideo[height<=1440]+bestaudio/best",
+        "1080p" => "bestvideo[height<=1080]+bestaudio/best",
+        "720p" => "bestvideo[height<=720]+bestaudio/best",
+        "480p" => "bestvideo[height<=480]+bestaudio/best",
+        "360p" => "bestvideo[height<=360]+bestaudio/best",
+        _ => "bestvideo+bestaudio/best",
+    };
+    args.push("-f".to_string());
+    args.push(fmt_selector.to_string());
+    args.push("--merge-output-format".to_string());
+    args.push("mp4".to_string());
+
+    // 2. Mode-Specific Arguments
+    match cfg.mode.as_str() {
+        "rewind_live" => {
+            args.push("--live-from-start".to_string());
+            args.push("--hls-use-mpegts".to_string());
+        }
+        "capture_time_range" => {
+            if let Some(ref tr) = cfg.time_range {
+                let start = tr.start.trim();
+                let end = tr.end.trim();
+                if !start.is_empty() && !end.is_empty() {
+                    args.push("--download-sections".to_string());
+                    args.push(format!("*{}-{}", start, end));
+                }
+            }
+            if cfg.force_keyframes {
+                args.push("--force-keyframes-at-cuts".to_string());
+            }
+        }
+        "chat_replay" => {
+            args.push("--write-subs".to_string());
+            args.push("--sub-langs".to_string());
+            args.push("live_chat".to_string());
+            args.push("--live-from-start".to_string());
+            args.push("--hls-use-mpegts".to_string());
+        }
+        _ => {
+            // Default: "record_from_now"
+            args.push("--hls-use-mpegts".to_string());
+            if let Some(dur) = cfg.duration_sec {
+                if dur > 0 {
+                    args.push("--downloader".to_string());
+                    args.push("ffmpeg".to_string());
+                    args.push("--downloader-args".to_string());
+                    args.push(format!("ffmpeg_i:-t {}", dur));
+                }
+            }
+        }
+    }
+
+    // 3. Save Live Chat Replay alongside Video when toggled on other modes (Reference #2)
+    if cfg.download_chat && cfg.mode != "chat_replay" {
+        args.push("--write-subs".to_string());
+        args.push("--sub-langs".to_string());
+        args.push("live_chat".to_string());
+    }
+
+    // 4. Idle Wait & Endless Reconnect for Upcoming & Flaky Streams (Reference #3)
+    if cfg.wait_for_stream {
+        let interval = cfg.wait_interval_sec.unwrap_or(600).max(10);
+        args.push("--wait-for-video".to_string());
+        args.push(interval.to_string());
+    }
+    if cfg.auto_reconnect {
+        args.push("--retries".to_string());
+        args.push("10".to_string());
+        args.push("--fragment-retries".to_string());
+        args.push("infinite".to_string());
+    }
+
+    args
+}
+
+/// Converts a yt-dlp `.live_chat.json` (JSON Lines) file into a standard SubRip `.srt` subtitle file
+/// so clippers get both `.live_chat.json` and `.live_chat.srt` alongside their recorded video.
+pub fn convert_live_chat_json_to_srt(out_dir: &Path, task_stem: &str) -> Option<PathBuf> {
+    if !out_dir.exists() || !out_dir.is_dir() {
+        return None;
+    }
+
+    let clean_stem = sanitize_filename(task_stem);
+    let mut target_json: Option<PathBuf> = None;
+
+    if let Ok(entries) = std::fs::read_dir(out_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if !clean_stem.is_empty() && !name.contains(&clean_stem) {
+                continue;
+            }
+            if name.ends_with(".live_chat.json.part") {
+                let renamed = p.with_file_name(name.trim_end_matches(".part"));
+                if std::fs::rename(&p, &renamed).is_ok() {
+                    target_json = Some(renamed);
+                    break;
+                } else {
+                    target_json = Some(p);
+                    break;
+                }
+            } else if name.ends_with(".live_chat.json") {
+                target_json = Some(p);
+                break;
+            }
+        }
+    }
+
+    let json_path = target_json?;
+    let file = std::fs::File::open(&json_path).ok()?;
+    let reader = std::io::BufReader::new(file);
+
+    struct ChatEntry {
+        offset_ms: i64,
+        author: String,
+        text: String,
+    }
+
+    let mut entries: Vec<ChatEntry> = Vec::new();
+    let mut first_timestamp_usec: Option<i64> = None;
+
+    use std::io::BufRead;
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // yt-dlp live_chat.json lines can either be direct `{ "replayChatItemAction": ... }`
+        // or nested inside `response.continuationContents.liveChatContinuation.actions[]`
+        let top_actions: Vec<&serde_json::Value> = if val.get("replayChatItemAction").is_some()
+            || val.get("addChatItemAction").is_some()
+        {
+            vec![&val]
+        } else if let Some(arr) = val
+            .pointer("/response/continuationContents/liveChatContinuation/actions")
+            .and_then(|a| a.as_array())
+        {
+            arr.iter().collect()
+        } else {
+            Vec::new()
+        };
+
+        for act in top_actions {
+            let replay = act.get("replayChatItemAction");
+            let explicit_offset_ms = replay
+                .and_then(|r| r.get("videoOffsetTimeMsec"))
+                .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
+                .or_else(|| {
+                    act.get("videoOffsetTimeMsec").and_then(|v| {
+                        v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64())
+                    })
+                });
+
+            let inner_actions: Vec<&serde_json::Value> = if let Some(r) = replay {
+                r.get("actions")
+                    .and_then(|a| a.as_array())
+                    .map(|a| a.iter().collect())
+                    .unwrap_or_default()
+            } else {
+                vec![act]
+            };
+
+            for inner in inner_actions {
+                let item = match inner.pointer("/addChatItemAction/item") {
+                    Some(it) => it,
+                    None => continue,
+                };
+
+                let (renderer, paid_prefix) = if let Some(txt_r) = item.get("liveChatTextMessageRenderer") {
+                    (txt_r, None)
+                } else if let Some(paid_r) = item.get("liveChatPaidMessageRenderer") {
+                    let amt = paid_r
+                        .pointer("/purchaseAmountText/simpleText")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("SuperChat");
+                    (paid_r, Some(format!("[SuperChat {}] ", amt)))
+                } else {
+                    continue;
+                };
+
+                let author = renderer
+                    .pointer("/authorName/simpleText")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("Viewer")
+                    .to_string();
+
+                let mut msg = String::new();
+                if let Some(runs) = renderer.pointer("/message/runs").and_then(|r| r.as_array()) {
+                    for run in runs {
+                        if let Some(t) = run.get("text").and_then(|s| s.as_str()) {
+                            msg.push_str(t);
+                        } else if let Some(sc) = run
+                            .pointer("/emoji/shortcuts/0")
+                            .and_then(|s| s.as_str())
+                        {
+                            msg.push_str(sc);
+                        }
+                    }
+                }
+                let clean_msg = msg.trim();
+                if clean_msg.is_empty() && paid_prefix.is_none() {
+                    continue;
+                }
+
+                let offset_ms = if let Some(ms) = explicit_offset_ms {
+                    ms.max(0)
+                } else if let Some(ts_usec) = renderer
+                    .get("timestampUsec")
+                    .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
+                {
+                    let base = *first_timestamp_usec.get_or_insert(ts_usec);
+                    ((ts_usec - base) / 1000).max(0)
+                } else {
+                    0
+                };
+
+                let full_text = match paid_prefix {
+                    Some(prefix) => format!("{}{}", prefix, clean_msg),
+                    None => clean_msg.to_string(),
+                };
+
+                entries.push(ChatEntry {
+                    offset_ms,
+                    author,
+                    text: full_text,
+                });
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    entries.sort_by_key(|e| e.offset_ms);
+
+    let mut srt_out = String::new();
+    for (idx, entry) in entries.iter().enumerate() {
+        let start_secs = (entry.offset_ms as f64) / 1000.0;
+        let default_end_secs = start_secs + 3.5;
+        let end_secs = if let Some(next) = entries.get(idx + 1) {
+            let next_start = (next.offset_ms as f64) / 1000.0;
+            if next_start > start_secs && next_start < default_end_secs {
+                (next_start).max(start_secs + 0.5)
+            } else {
+                default_end_secs
+            }
+        } else {
+            default_end_secs
+        };
+
+        srt_out.push_str(&format!(
+            "{}\n{} --> {}\n[{}]: {}\n\n",
+            idx + 1,
+            crate::transcriber::format_srt_time(start_secs),
+            crate::transcriber::format_srt_time(end_secs),
+            entry.author,
+            entry.text
+        ));
+    }
+
+    let json_name = json_path.file_name().and_then(|s| s.to_str()).unwrap_or("live_chat.json");
+    let srt_name = if let Some(stripped) = json_name.strip_suffix(".json") {
+        format!("{}.srt", stripped)
+    } else {
+        format!("{}.live_chat.srt", clean_stem)
+    };
+    let srt_path = out_dir.join(srt_name);
+    std::fs::write(&srt_path, srt_out.as_bytes()).ok()?;
+    Some(srt_path)
+}
+
+/// Checks if a file starts with MPEG-TS sync byte (0x47) instead of standard ISO-BMFF (ftyp/moov/mdat).
+pub fn is_mpegts_file(path: &Path) -> bool {
+    if let Ok(mut file) = std::fs::File::open(path) {
+        use std::io::Read;
+        let mut buf = [0u8; 188];
+        if let Ok(n) = file.read(&mut buf) {
+            if n >= 8 {
+                let has_ftyp = &buf[4..8] == b"ftyp";
+                let is_ts_sync = buf[0] == 0x47;
+                return is_ts_sync && !has_ftyp;
+            }
+        }
+    }
+    false
+}
+
+/// Losslessly remuxes a video file (e.g. MPEG-TS stream dump from HLS) into a faststart MP4 container
+/// so HTML5 WebView2 and built-in media players can play and seek immediately without errors.
+pub fn remux_to_faststart_mp4(input_path: &Path, ffmpeg_path: Option<&Path>) -> Result<PathBuf, String> {
+    if !input_path.exists() || !input_path.is_file() {
+        return Err("Input file does not exist".to_string());
+    }
+
+    let ff_bin = match ffmpeg_path {
+        Some(ff) => if ff.is_dir() { ff.join("ffmpeg") } else { ff.to_path_buf() },
+        None => match crate::binaries::find_binary("ffmpeg") {
+            Some(p) => p,
+            None => return Ok(input_path.to_path_buf()),
+        },
+    };
+
+    let parent = input_path.parent().unwrap_or(Path::new("."));
+    let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("live_recording");
+    let temp_remuxed = parent.join(format!("{}.faststart_tmp.mp4", stem));
+
+    let mut cmd = Command::new(&ff_bin);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .args(["-y", "-nostdin", "-fflags", "+genpts+igndts", "-avoid_negative_ts", "make_zero"])
+        .arg("-i")
+        .arg(input_path)
+        .args(["-c", "copy", "-movflags", "+faststart"])
+        .arg(&temp_remuxed);
+
+    let status = match cmd.status() {
+        Ok(s) => s,
+        Err(_) => return Ok(input_path.to_path_buf()),
+    };
+
+    if status.success() && temp_remuxed.exists() {
+        if let Ok(meta) = std::fs::metadata(&temp_remuxed) {
+            if meta.len() > 0 {
+                // Retry loop for Windows file lock release
+                for _ in 0..5 {
+                    if std::fs::remove_file(input_path).is_ok() {
+                        if std::fs::rename(&temp_remuxed, input_path).is_ok() {
+                            return Ok(input_path.to_path_buf());
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(60));
+                }
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(&temp_remuxed);
+    Ok(input_path.to_path_buf())
+}
+
+/// Remuxes or finalizes `.part` live stream recordings when stopped by user ("Stop & Save")
+/// or when a live stream ends with unmerged `.part` files on disk.
+pub fn finalize_live_recording_artifacts(
+    out_dir: &Path,
+    task_stem: &str,
+    ffmpeg_path: Option<&Path>,
+) -> Option<PathBuf> {
+    if !out_dir.exists() || !out_dir.is_dir() {
+        return None;
+    }
+    let clean_stem = sanitize_filename(task_stem);
+    let target_mp4 = out_dir.join(format!("{}.mp4", clean_stem));
+    if target_mp4.exists() && std::fs::metadata(&target_mp4).map(|m| m.len() > 0).unwrap_or(false) {
+        if is_mpegts_file(&target_mp4) {
+            let _ = remux_to_faststart_mp4(&target_mp4, ffmpeg_path);
+        }
+        return Some(target_mp4);
+    }
+
+    let mut video_parts: Vec<PathBuf> = Vec::new();
+    let mut audio_parts: Vec<PathBuf> = Vec::new();
+    let mut frag_debris: Vec<PathBuf> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(out_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if !clean_stem.is_empty() && !name.contains(&clean_stem) {
+                continue;
+            }
+            let lower = name.to_lowercase();
+            if lower.contains(".part-frag") {
+                frag_debris.push(p);
+                continue;
+            }
+            if lower.ends_with(".live_chat.json.part") || lower.ends_with(".ytdl") {
+                continue;
+            }
+            if lower.ends_with(".part") {
+                if lower.contains(".m4a.part") || lower.contains(".aac.part") || lower.contains(".opus.part") || lower.contains(".mp3.part") {
+                    audio_parts.push(p);
+                } else {
+                    video_parts.push(p);
+                }
+            }
+        }
+    }
+
+    for frag in frag_debris {
+        let _ = std::fs::remove_file(frag);
+    }
+
+    if video_parts.is_empty() && audio_parts.is_empty() {
+        return None;
+    }
+
+    if let Some(ff) = ffmpeg_path {
+        let ff_bin = if ff.is_dir() { ff.join("ffmpeg") } else { ff.to_path_buf() };
+        if let (Some(v_part), Some(a_part)) = (video_parts.first(), audio_parts.first()) {
+            let mut cmd = Command::new(&ff_bin);
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            cmd.args(["-y", "-fflags", "+genpts+igndts", "-avoid_negative_ts", "make_zero"])
+                .arg("-i")
+                .arg(v_part)
+                .arg("-i")
+                .arg(a_part)
+                .args(["-c", "copy", "-movflags", "+faststart"])
+                .arg(&target_mp4);
+            let _ = cmd.output();
+        } else if let Some(v_part) = video_parts.first() {
+            let mut cmd = Command::new(&ff_bin);
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            cmd.args(["-y", "-fflags", "+genpts+igndts", "-avoid_negative_ts", "make_zero"])
+                .arg("-i")
+                .arg(v_part)
+                .args(["-c", "copy", "-movflags", "+faststart"])
+                .arg(&target_mp4);
+            let _ = cmd.output();
+        }
+    }
+
+    // Fallback: if ffmpeg was unavailable or copy failed, rename the primary video .part directly
+    if !target_mp4.exists() || std::fs::metadata(&target_mp4).map(|m| m.len() == 0).unwrap_or(true) {
+        if let Some(v_part) = video_parts.first() {
+            if std::fs::metadata(v_part).map(|m| m.len() > 0).unwrap_or(false) {
+                let _ = std::fs::rename(v_part, &target_mp4);
+            }
+        }
+    }
+
+    if target_mp4.exists() && std::fs::metadata(&target_mp4).map(|m| m.len() > 0).unwrap_or(false) {
+        if is_mpegts_file(&target_mp4) {
+            let _ = remux_to_faststart_mp4(&target_mp4, ffmpeg_path);
+        }
+        for vp in video_parts {
+            let _ = std::fs::remove_file(vp);
+        }
+        for ap in audio_parts {
+            let _ = std::fs::remove_file(ap);
+        }
+        Some(target_mp4)
+    } else {
+        None
+    }
+}
+
 pub async fn run_download(
     app: AppHandle,
     db: Arc<Database>,
@@ -817,6 +1416,7 @@ pub async fn run_download(
     selected_indices: Option<Vec<usize>>,
     image_urls: Option<Vec<String>>,
     media_items: Option<Vec<MediaItem>>,
+    live_config: Option<LiveStreamConfig>,
 ) -> Result<(), String> {
     let out_dir = match output_folder {
         Some(ref f) if !f.trim().is_empty() => PathBuf::from(f),
@@ -1073,7 +1673,25 @@ pub async fn run_download(
 
     // When title is a generic fallback and user hasn't provided a custom name,
     // let yt-dlp generate the filename dynamically using actual post metadata
-    let out_template = if is_fallback && !has_explicit_custom_name {
+    let is_live_recording = live_config.is_some();
+    let live_mode = live_config.as_ref().map(|c| c.mode.clone());
+    let is_live_opt_flag = if is_live_recording { Some(true) } else { None };
+    let target_live_duration_sec: Option<f64> = live_config.as_ref().and_then(|cfg| {
+        if cfg.mode == "record_from_now" {
+            cfg.duration_sec.filter(|&d| d > 0).map(|d| d as f64)
+        } else if cfg.mode == "capture_time_range" {
+            cfg.time_range.as_ref().and_then(|tr| {
+                let s = parse_hhmmss_to_secs(&tr.start)?;
+                let e = parse_hhmmss_to_secs(&tr.end)?;
+                if e > s { Some(e - s) } else { None }
+            })
+        } else {
+            None
+        }
+    });
+    process_mgr.unmark_stopped_live(&task_id);
+
+    let out_template = if is_fallback && !has_explicit_custom_name && !is_live_recording {
         let pattern = if platform == "tiktok" {
             "%(description|title).80s-%(channel|uploader)s.%(ext)s"
         } else if platform == "youtube" {
@@ -1106,7 +1724,8 @@ pub async fn run_download(
         }
     }
 
-    // Initial record in DB
+    // Initial record in DB (Only insert for non-live downloads;
+    // live stream recordings only enter Media Vault history once stopped and saved!)
     let initial_record = DownloadRecord {
         id: task_id.clone(),
         platform: platform.to_string(),
@@ -1125,9 +1744,21 @@ pub async fn run_download(
         time_range: time_range.clone(),
         exists: false,
     };
-    let _ = db.add_record(&initial_record);
+    if !is_live_recording {
+        let _ = db.add_record(&initial_record);
+    }
 
     // Emit initial active task progress immediately so UI does not remain stuck on "Connecting..."
+    let startup_speed_msg = if is_live_recording {
+        if live_config.as_ref().map(|c| c.wait_for_stream).unwrap_or(false) {
+            "Waiting for live stream...".to_string()
+        } else {
+            "Connecting to live stream...".to_string()
+        }
+    } else {
+        "Starting engine...".to_string()
+    };
+    process_mgr.append_log(&task_id, &format!("Engine starting for '{}' [{}]", initial_record.title, quality));
     let startup_task = ActiveDownloadTask {
         task_id: task_id.clone(),
         url: url.clone(),
@@ -1138,17 +1769,19 @@ pub async fn run_download(
         status: "downloading".to_string(),
         progress: TaskProgress {
             percent: 0.5,
-            speed_str: "Starting engine...".to_string(),
-            eta_str: String::new(),
+            speed_str: startup_speed_msg,
+            eta_str: if is_live_recording { "LIVE".to_string() } else { String::new() },
             downloaded_bytes: None,
             total_bytes: None,
         },
         error: None,
+        is_live_recording: is_live_opt_flag,
+        live_mode: live_mode.clone(),
+        current_step: Some(if is_live_recording { "Connecting to live stream...".to_string() } else { "Starting download engine...".to_string() }),
+        recent_logs: Some(process_mgr.get_logs(&task_id)),
     };
     process_mgr.update_active_task_snapshot(&startup_task);
     let _ = app.emit("download-progress", &startup_task);
-
-
 
     let meta_file_path = std::env::temp_dir().join(format!("xdownloader_{}.meta", task_id));
 
@@ -1184,6 +1817,7 @@ pub async fn run_download(
                 None,
             );
 
+            process_mgr.append_log(&task_id, &format!("Re-establishing connection (attempt {})...", attempt + 1));
             let retry_task = ActiveDownloadTask {
                 task_id: task_id.clone(),
                 url: url.clone(),
@@ -1200,6 +1834,10 @@ pub async fn run_download(
                     total_bytes: None,
                 },
                 error: None,
+                is_live_recording: is_live_opt_flag,
+                live_mode: live_mode.clone(),
+                current_step: Some(format!("Retrying connection (attempt {})...", attempt + 1)),
+                recent_logs: Some(process_mgr.get_logs(&task_id)),
             };
             let _ = app.emit("download-progress", &retry_task);
         }
@@ -1223,8 +1861,9 @@ pub async fn run_download(
             cmd.arg("--js-runtimes").arg(format!("{}:{}", runtime, path.to_string_lossy()));
         }
 
-        // Multi-client fallback for YouTube: bypasses SABR PO Token 403s on cold initial runs
-        if url.contains("youtube.com") || url.contains("youtu.be") {
+        // Multi-client fallback for YouTube VODs: bypasses SABR PO Token 403s on cold initial runs.
+        // For live stream recordings, keep default web/mweb clients so --live-from-start and live_chat subtitles work properly.
+        if !is_live_recording && (url.contains("youtube.com") || url.contains("youtu.be")) {
             if attempt == 0 {
                 cmd.arg("--extractor-args").arg("youtube:player_client=default,ios,mweb");
             } else {
@@ -1234,12 +1873,15 @@ pub async fn run_download(
 
         // High throughput connection optimizations: multi-fragment concurrent downloads (2x - 5x faster)
         cmd.arg("--concurrent-fragments").arg("4")
-            .arg("--retries").arg("10")
-            .arg("--fragment-retries").arg("10")
             .arg("--socket-timeout").arg("30")
             .arg("--buffer-size").arg("256K")
             .arg("--no-mtime")
             .arg("--http-chunk-size").arg("10M");
+
+        if !live_config.as_ref().map(|c| c.auto_reconnect).unwrap_or(false) {
+            cmd.arg("--retries").arg("10")
+                .arg("--fragment-retries").arg("10");
+        }
 
         // Pass --ffmpeg-location so yt-dlp can reliably merge separate audio and video streams into a single mp4
         if let Some(ref ff_path) = ffmpeg_path {
@@ -1254,8 +1896,11 @@ pub async fn run_download(
             }
         }
 
-        // Quality and format args
-        if format_type == "audio" {
+        // Quality, format, and live stream recording args
+        if let Some(ref lcfg) = live_config {
+            let live_args = build_live_ytdlp_args(lcfg, &quality);
+            cmd.args(&live_args);
+        } else if format_type == "audio" {
             cmd.arg("-x");
             let audio_fmt = match quality.to_lowercase().as_str() {
                 "m4a" => "m4a",
@@ -1335,22 +1980,26 @@ pub async fn run_download(
             cmd.arg("--merge-output-format").arg("mp4");
         }
 
-        // Subtitles: only request manual sub tracks without wildcard auto-subs to prevent HTTP 429 rate-limiting
-        if download_subtitles {
-            cmd.arg("--write-sub")
-                .arg("--sub-lang").arg("en,id")
-                .arg("--convert-subs").arg("srt");
-            if format_type == "video" {
-                cmd.arg("--embed-subs");
+        // Standard VOD subtitles & time-range slicing when not in specialized live recording mode
+        if !is_live_recording {
+            // Subtitles: only request manual sub tracks without wildcard auto-subs to prevent HTTP 429 rate-limiting
+            if download_subtitles {
+                cmd.arg("--write-sub")
+                    .arg("--sub-lang").arg("en,id")
+                    .arg("--convert-subs").arg("srt");
+                if format_type == "video" {
+                    cmd.arg("--embed-subs");
+                }
             }
-        }
 
-        // Time range slicing (partial clip download)
-        if let Some(ref tr) = time_range {
-            let start = tr.start.trim();
-            let end = tr.end.trim();
-            if !start.is_empty() && !end.is_empty() && (start != "0" && start != "00:00:00" || !end.is_empty()) {
-                cmd.arg("--download-sections").arg(format!("*{} - {}", start, end));
+            // Time range slicing (partial clip download)
+            if let Some(ref tr) = time_range {
+                let start = tr.start.trim();
+                let end = tr.end.trim();
+                if !start.is_empty() && !end.is_empty() && (start != "0" && start != "00:00:00" || !end.is_empty()) {
+                    cmd.arg("--download-sections").arg(format!("*{}-{}", start, end));
+                    cmd.arg("--force-keyframes-at-cuts");
+                }
             }
         }
 
@@ -1371,26 +2020,119 @@ pub async fn run_download(
         let pid = child.id().unwrap_or(0);
         process_mgr.register(task_id.clone(), pid, out_dir.clone(), task_stem.clone());
 
+        // Optional duration auto-stop watchdog for "record_from_now" when duration_sec > 0
+        let duration_watchdog = if let Some(ref lcfg) = live_config {
+            if lcfg.mode == "record_from_now" {
+                if let Some(dur) = lcfg.duration_sec.filter(|&d| d > 0) {
+                    let pm_clone = process_mgr.clone();
+                    let tid_clone = task_id.clone();
+                    Some(tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs((dur as u64) + 3)).await;
+                        let _ = pm_clone.stop_live(&tid_clone);
+                    }))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let stdout = child.stdout.take().ok_or("Failed to capture child stdout")?;
         let stderr = child.stderr.take();
 
         let stderr_lines = Arc::new(Mutex::new(Vec::<String>::new()));
         let stderr_lines_clone = stderr_lines.clone();
 
-        // Drain stderr in background tokio task to prevent pipe deadlock on Windows (4KB OS pipe buffer)
+        let stderr_app = app.clone();
+        let stderr_pm = process_mgr.clone();
+        let stderr_tid = task_id.clone();
+        let stderr_url = url.clone();
+        let stderr_title = initial_record.title.clone();
+        let stderr_platform = initial_record.platform.clone();
+        let stderr_fmt = format_type.clone();
+        let stderr_qual = quality.clone();
+        let stderr_live_flag = is_live_opt_flag;
+        let stderr_live_mode = live_mode.clone();
+        let stderr_target_dur = target_live_duration_sec;
+
+        // Drain stderr in background tokio task (splitting on both \r and \n to capture real-time ffmpeg live progress)
         let stderr_task = tokio::spawn(async move {
-            if let Some(err_stream) = stderr {
-                use tokio::io::AsyncBufReadExt;
-                let mut r = tokio::io::BufReader::new(err_stream).lines();
-                while let Ok(Some(l)) = r.next_line().await {
-                    let trimmed = l.trim().to_string();
-                    if !trimmed.is_empty() {
-                        if let Ok(mut lock) = stderr_lines_clone.lock() {
+            if let Some(mut err_stream) = stderr {
+                use tokio::io::AsyncReadExt;
+                let mut buf = [0u8; 2048];
+                let mut pending = String::new();
+                let mut last_emit = std::time::Instant::now() - std::time::Duration::from_millis(250);
+
+                while let Ok(n) = err_stream.read(&mut buf).await {
+                    if n == 0 {
+                        break;
+                    }
+                    pending.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    while let Some(pos) = pending.find(|c| c == '\r' || c == '\n') {
+                        let segment: String = pending.drain(..pos).collect();
+                        pending.drain(..1);
+                        let trimmed = segment.trim().to_string();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+
+                        if let Some(caps) = RE_FFMPEG_PROGRESS.captures(&trimmed) {
+                            if last_emit.elapsed() >= std::time::Duration::from_millis(250) {
+                                last_emit = std::time::Instant::now();
+                                let size_str = caps[1].trim();
+                                let time_str = caps[2].trim();
+                                let bitrate_str = caps[3].trim();
+                                let downloaded_bytes = parse_size_to_bytes(size_str);
+                                let elapsed_secs = parse_hhmmss_to_secs(time_str).unwrap_or(0.0);
+                                let percent = if let Some(target_s) = stderr_target_dur {
+                                    ((elapsed_secs / target_s) * 100.0).clamp(1.0, 99.0)
+                                } else {
+                                    50.0
+                                };
+                                let clean_time = time_str.split('.').next().unwrap_or(time_str);
+                                let task_update = ActiveDownloadTask {
+                                    task_id: stderr_tid.clone(),
+                                    url: stderr_url.clone(),
+                                    title: stderr_title.clone(),
+                                    platform: stderr_platform.clone(),
+                                    format_type: stderr_fmt.clone(),
+                                    quality: stderr_qual.clone(),
+                                    status: "downloading".to_string(),
+                                    progress: TaskProgress {
+                                        percent,
+                                        speed_str: format!("{} • {}", size_str, bitrate_str),
+                                        eta_str: format!("REC {}", clean_time),
+                                        downloaded_bytes,
+                                        total_bytes: None,
+                                    },
+                                    error: None,
+                                    is_live_recording: stderr_live_flag,
+                                    live_mode: stderr_live_mode.clone(),
+                                    current_step: Some(format!("Recording stream chunks ({} • {})", size_str, clean_time)),
+                                    recent_logs: Some(stderr_pm.get_logs(&stderr_tid)),
+                                };
+                                stderr_pm.update_active_task_snapshot(&task_update);
+                                let _ = stderr_app.emit("download-progress", &task_update);
+                            }
+                        } else if let Ok(mut lock) = stderr_lines_clone.lock() {
+                            stderr_pm.append_log(&stderr_tid, &trimmed);
                             if lock.len() >= 50 {
                                 lock.remove(0);
                             }
                             lock.push(trimmed);
                         }
+                    }
+                }
+                let final_trimmed = pending.trim().to_string();
+                if !final_trimmed.is_empty() {
+                    if let Ok(mut lock) = stderr_lines_clone.lock() {
+                        if lock.len() >= 50 {
+                            lock.remove(0);
+                        }
+                        lock.push(final_trimmed);
                     }
                 }
             }
@@ -1408,8 +2150,11 @@ pub async fn run_download(
                 downloaded_path = caps["path"].trim().to_string();
                 path_detected = true;
             } else if let Some(caps) = RE_DESTINATION.captures(&line) {
-                downloaded_path = caps[1].trim().to_string();
-                path_detected = true;
+                let candidate = caps[1].trim().to_string();
+                if !candidate.ends_with(".live_chat.json") {
+                    downloaded_path = candidate;
+                    path_detected = true;
+                }
             } else if let Some(caps) = RE_ALREADY_DOWNLOADED.captures(&line) {
                 downloaded_path = caps[1].trim().to_string();
                 path_detected = true;
@@ -1436,6 +2181,11 @@ pub async fn run_download(
                 }
             }
 
+            let clean_line = line.trim();
+            if !clean_line.is_empty() {
+                process_mgr.append_log(&task_id, clean_line);
+            }
+
             if let Some(caps) = RE_PROGRESS.captures(&line) {
                 let percent: f64 = caps[1].parse().unwrap_or(0.0);
                 let speed_str = caps[3].to_string();
@@ -1454,17 +2204,88 @@ pub async fn run_download(
                         status: "downloading".to_string(),
                         progress: TaskProgress {
                             percent,
-                            speed_str,
+                            speed_str: speed_str.clone(),
                             eta_str,
                             downloaded_bytes: None,
                             total_bytes: None,
                         },
                         error: None,
+                        is_live_recording: is_live_opt_flag,
+                        live_mode: live_mode.clone(),
+                        current_step: Some(format!("Downloading ({}% • {})", percent.round(), speed_str)),
+                        recent_logs: Some(process_mgr.get_logs(&task_id)),
                     };
 
                     process_mgr.update_active_task_snapshot(&task_update);
                     let _ = app.emit("download-progress", &task_update);
                 }
+            } else if let Some(caps) = RE_LIVE_PROGRESS.captures(&line) {
+                if last_progress_emit.elapsed() >= std::time::Duration::from_millis(200) {
+                    last_progress_emit = std::time::Instant::now();
+                    let size_str = caps[1].trim();
+                    let speed_raw = caps[2].trim();
+                    let elapsed_str = caps.get(3).map(|m| m.as_str().trim()).unwrap_or("00:00");
+                    let frag_str = caps.get(4).map(|m| format!("Frag #{}", m.as_str())).unwrap_or_default();
+                    let downloaded_bytes = parse_size_to_bytes(size_str);
+                    let elapsed_secs = parse_hhmmss_to_secs(elapsed_str).unwrap_or(0.0);
+                    let percent = if let Some(target_s) = target_live_duration_sec {
+                        ((elapsed_secs / target_s) * 100.0).clamp(1.0, 99.0)
+                    } else {
+                        50.0
+                    };
+                    let eta_str = if frag_str.is_empty() {
+                        format!("REC {}", elapsed_str)
+                    } else {
+                        format!("REC {} • {}", elapsed_str, frag_str)
+                    };
+                    let task_update = ActiveDownloadTask {
+                        task_id: task_id.clone(),
+                        url: url.clone(),
+                        title: current_title.clone(),
+                        platform: initial_record.platform.clone(),
+                        format_type: format_type.clone(),
+                        quality: quality.clone(),
+                        status: "downloading".to_string(),
+                        progress: TaskProgress {
+                            percent,
+                            speed_str: format!("{} ({})", speed_raw, size_str),
+                            eta_str: eta_str.clone(),
+                            downloaded_bytes,
+                            total_bytes: None,
+                        },
+                        error: None,
+                        is_live_recording: Some(true),
+                        live_mode: live_mode.clone(),
+                        current_step: Some(format!("Capturing live stream ({})", eta_str)),
+                        recent_logs: Some(process_mgr.get_logs(&task_id)),
+                    };
+                    process_mgr.update_active_task_snapshot(&task_update);
+                    let _ = app.emit("download-progress", &task_update);
+                }
+            } else if RE_WAIT_STREAM.is_match(&line) {
+                let wait_task = ActiveDownloadTask {
+                    task_id: task_id.clone(),
+                    url: url.clone(),
+                    title: current_title.clone(),
+                    platform: initial_record.platform.clone(),
+                    format_type: format_type.clone(),
+                    quality: quality.clone(),
+                    status: "downloading".to_string(),
+                    progress: TaskProgress {
+                        percent: 2.0,
+                        speed_str: "Waiting for stream to go live...".to_string(),
+                        eta_str: "Polling...".to_string(),
+                        downloaded_bytes: None,
+                        total_bytes: None,
+                    },
+                    error: None,
+                    is_live_recording: Some(true),
+                    live_mode: live_mode.clone(),
+                    current_step: Some("Waiting for broadcast to go live...".to_string()),
+                    recent_logs: Some(process_mgr.get_logs(&task_id)),
+                };
+                process_mgr.update_active_task_snapshot(&wait_task);
+                let _ = app.emit("download-progress", &wait_task);
             } else if let Some(caps) = RE_PROGRESS_SIMPLE.captures(&line) {
                 let percent: f64 = caps[1].parse().unwrap_or(0.0);
                 let should_emit = percent <= 0.0 || percent >= 100.0 || last_progress_emit.elapsed() >= std::time::Duration::from_millis(200);
@@ -1486,6 +2307,10 @@ pub async fn run_download(
                             total_bytes: None,
                         },
                         error: None,
+                        is_live_recording: is_live_opt_flag,
+                        live_mode: live_mode.clone(),
+                        current_step: Some(format!("Downloading ({:.0}%)", percent)),
+                        recent_logs: Some(process_mgr.get_logs(&task_id)),
                     };
                     process_mgr.update_active_task_snapshot(&task_update);
                     let _ = app.emit("download-progress", &task_update);
@@ -1503,12 +2328,16 @@ pub async fn run_download(
                     status: "downloading".to_string(),
                     progress: TaskProgress {
                         percent: 1.0,
-                        speed_str: "Receiving stream...".to_string(),
-                        eta_str: String::new(),
+                        speed_str: if is_live_recording { "Capturing live stream...".to_string() } else { "Receiving stream...".to_string() },
+                        eta_str: if is_live_recording { "LIVE".to_string() } else { String::new() },
                         downloaded_bytes: None,
                         total_bytes: None,
                     },
                     error: None,
+                    is_live_recording: is_live_opt_flag,
+                    live_mode: live_mode.clone(),
+                    current_step: Some(if is_live_recording { "Initializing live stream capture...".to_string() } else { "Receiving stream...".to_string() }),
+                    recent_logs: Some(process_mgr.get_logs(&task_id)),
                 };
                 process_mgr.update_active_task_snapshot(&receiving_task);
                 let _ = app.emit("download-progress", &receiving_task);
@@ -1516,10 +2345,14 @@ pub async fn run_download(
         }
 
         let status = child.wait().await.map_err(|e| format!("Process wait failed: {}", e))?;
+        if let Some(watchdog) = duration_watchdog {
+            watchdog.abort();
+        }
         let _ = stderr_task.await;
         process_mgr.remove(&task_id);
 
         if db.is_task_cancelled(&task_id) {
+            process_mgr.unmark_stopped_live(&task_id);
             cleanup_task_artifacts(&out_dir, Some(&task_stem));
             return Err("Download cancelled by user".to_string());
         }
@@ -1529,7 +2362,42 @@ pub async fn run_download(
             return Ok(());
         }
 
-        if status.success() {
+        let stopped_live_by_user = process_mgr.is_stopped_live(&task_id);
+
+        if status.success() || stopped_live_by_user {
+            process_mgr.unmark_stopped_live(&task_id);
+
+            if is_live_recording {
+                let finalizing_task = ActiveDownloadTask {
+                    task_id: task_id.clone(),
+                    url: url.clone(),
+                    title: current_title.clone(),
+                    platform: initial_record.platform.clone(),
+                    format_type: format_type.clone(),
+                    quality: quality.clone(),
+                    status: "downloading".to_string(),
+                    progress: TaskProgress {
+                        percent: 99.0,
+                        speed_str: "Finalizing MP4 & Chat...".to_string(),
+                        eta_str: "Saving".to_string(),
+                        downloaded_bytes: None,
+                        total_bytes: None,
+                    },
+                    error: None,
+                    is_live_recording: Some(true),
+                    live_mode: live_mode.clone(),
+                    current_step: Some("Finalizing MP4 & Chat artifacts...".to_string()),
+                    recent_logs: Some(process_mgr.get_logs(&task_id)),
+                };
+                process_mgr.update_active_task_snapshot(&finalizing_task);
+                let _ = app.emit("download-progress", &finalizing_task);
+            }
+
+            // Convert .live_chat.json to .live_chat.srt when chat replay was requested
+            let mut generated_chat_srt: Option<PathBuf> = None;
+            if live_config.as_ref().map(|c| c.download_chat || c.mode == "chat_replay").unwrap_or(false) {
+                generated_chat_srt = convert_live_chat_json_to_srt(&out_dir, &task_stem);
+            }
 
             // 1. Authoritative resolution: read exact path written by yt-dlp --print-to-file
             if meta_file_path.exists() {
@@ -1555,6 +2423,13 @@ pub async fn run_download(
                     if relative_candidate.exists() && relative_candidate.is_file() {
                         downloaded_path = relative_candidate.to_string_lossy().to_string();
                     }
+                }
+            }
+
+            // 2b. Live recording finalizer: if stopped early by user ("Stop & Save") or .part files remain, remux into playable MP4
+            if is_live_recording && (downloaded_path.is_empty() || !Path::new(&downloaded_path).exists() || downloaded_path.ends_with(".part")) {
+                if let Some(remuxed) = finalize_live_recording_artifacts(&out_dir, &task_stem, ffmpeg_path.as_deref()) {
+                    downloaded_path = remuxed.to_string_lossy().to_string();
                 }
             }
 
@@ -1586,13 +2461,22 @@ pub async fn run_download(
                 }
             }
 
+            // 3b. If chat_replay mode only produced a .live_chat.srt file, accept it as the output artifact
+            if (downloaded_path.is_empty() || !Path::new(&downloaded_path).exists()) && is_live_recording {
+                if let Some(ref srt_p) = generated_chat_srt {
+                    if srt_p.exists() && srt_p.is_file() {
+                        downloaded_path = srt_p.to_string_lossy().to_string();
+                    }
+                }
+            }
+
             let is_valid_file = !downloaded_path.is_empty()
                 && Path::new(&downloaded_path).is_file()
                 && std::fs::metadata(&downloaded_path).map(|m| m.len() > 0).unwrap_or(false);
 
             if !is_valid_file {
                 cleanup_task_artifacts(&out_dir, Some(&task_stem));
-                if attempt == 0 {
+                if attempt == 0 && !stopped_live_by_user {
                     continue;
                 }
                 let err_msg = "Download finished, but output file was not found in destination folder.".to_string();
@@ -1615,9 +2499,19 @@ pub async fn run_download(
                         total_bytes: None,
                     },
                     error: Some(err_msg.clone()),
+                    is_live_recording: is_live_opt_flag,
+                    live_mode: live_mode.clone(),
+                    current_step: Some("Failed: output file not found".to_string()),
+                    recent_logs: Some(process_mgr.get_logs(&task_id)),
                 };
                 let _ = app.emit("download-progress", &err_task);
                 return Err(err_msg);
+            }
+
+            // Ensure live recordings and MPEG-TS stream dumps are cleanly remuxed to standard faststart MP4
+            if is_live_recording || is_mpegts_file(Path::new(&downloaded_path)) {
+                process_mgr.append_log(&task_id, "Optimizing live video container (faststart MP4)...");
+                let _ = remux_to_faststart_mp4(Path::new(&downloaded_path), ffmpeg_path.as_deref());
             }
 
             let file_size = std::fs::metadata(&downloaded_path).map(|m| m.len() as i64).unwrap_or(0);
@@ -1637,12 +2531,12 @@ pub async fn run_download(
             cleanup_task_artifacts(&out_dir, Some(final_stem_for_cleanup));
 
             // Extract reliable local thumbnail so Media Vault never has broken/missing thumbnails
-            if let Some(local_thumb) = generate_local_thumbnail(Path::new(&downloaded_path), &task_id) {
-                let _ = db.update_record_thumbnail(&task_id, &local_thumb);
+            let local_thumb = generate_local_thumbnail(Path::new(&downloaded_path), &task_id);
+            if let Some(ref thumb) = local_thumb {
+                let _ = db.update_record_thumbnail(&task_id, thumb);
             }
 
             // Authoritatively persist title, author, and completed path in SQLite database
-            let _ = db.update_record_title(&task_id, &final_file_name);
             let mut resolved_final_author = effective_author_or_source.clone();
             if resolved_final_author.is_empty()
                 || resolved_final_author.eq_ignore_ascii_case("youtube")
@@ -1653,17 +2547,26 @@ pub async fn run_download(
                     resolved_final_author = inferred_author;
                 }
             }
-            if !resolved_final_author.is_empty() {
-                let _ = db.update_record_author(&task_id, &resolved_final_author);
-            }
 
-            let _ = db.update_record(
-                &task_id,
-                "completed",
-                Some(&downloaded_path),
-                Some(file_size),
-                None,
-            );
+            let completed_record = DownloadRecord {
+                id: task_id.clone(),
+                platform: initial_record.platform.clone(),
+                url: url.clone(),
+                title: final_file_name.clone(),
+                author: resolved_final_author.clone(),
+                duration_sec: rec_duration,
+                thumbnail_url: local_thumb.clone().unwrap_or_else(|| rec_thumb.clone()),
+                format_type: format_type.clone(),
+                quality: quality.clone(),
+                file_path: downloaded_path.clone(),
+                file_size_bytes: file_size,
+                status: "completed".to_string(),
+                error: None,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                time_range: time_range.clone(),
+                exists: true,
+            };
+            let _ = db.add_record(&completed_record);
 
             let _ = db.log_event(
                 &task_id,
@@ -1672,6 +2575,7 @@ pub async fn run_download(
                 &format!("Download completed: {}", downloaded_path),
                 Some(&format!("fileSizeBytes: {}", file_size)),
             );
+            process_mgr.append_log(&task_id, &format!("Saved file: {}", final_file_name));
 
             let final_task = ActiveDownloadTask {
                 task_id: task_id.clone(),
@@ -1689,6 +2593,10 @@ pub async fn run_download(
                     total_bytes: Some(file_size),
                 },
                 error: None,
+                is_live_recording: is_live_opt_flag,
+                live_mode: live_mode.clone(),
+                current_step: Some("Completed".to_string()),
+                recent_logs: Some(process_mgr.get_logs(&task_id)),
             };
             process_mgr.remove_context(&task_id);
             let _ = app.emit("download-progress", &final_task);
@@ -1699,6 +2607,78 @@ pub async fn run_download(
             if db.is_task_paused(&task_id) || process_mgr.is_paused(&task_id) {
                 let _ = db.log_event(&task_id, "INFO", "DOWNLOAD", "Subprocess halted due to user pause", None);
                 return Ok(());
+            }
+
+            // Even if yt-dlp exited with non-zero code on a live stream (e.g. broadcaster abruptly ended stream),
+            // check if a valid video or remuxable .part recording was captured before declaring failure!
+            if is_live_recording {
+                if live_config.as_ref().map(|c| c.download_chat || c.mode == "chat_replay").unwrap_or(false) {
+                    let _ = convert_live_chat_json_to_srt(&out_dir, &task_stem);
+                }
+                if let Some(remuxed) = finalize_live_recording_artifacts(&out_dir, &task_stem, ffmpeg_path.as_deref()) {
+                    if is_mpegts_file(&remuxed) {
+                        let _ = remux_to_faststart_mp4(&remuxed, ffmpeg_path.as_deref());
+                    }
+                    if let Ok(meta) = std::fs::metadata(&remuxed) {
+                        if meta.len() > 0 {
+                            let file_size = meta.len() as i64;
+                            let final_path_str = remuxed.to_string_lossy().to_string();
+                            let final_file_name = remuxed
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| initial_file_name.clone());
+                            cleanup_task_artifacts(&out_dir, Some(&task_stem));
+                            let local_thumb = generate_local_thumbnail(&remuxed, &task_id);
+                            if let Some(ref thumb) = local_thumb {
+                                let _ = db.update_record_thumbnail(&task_id, thumb);
+                            }
+                            let completed_record = DownloadRecord {
+                                id: task_id.clone(),
+                                platform: initial_record.platform.clone(),
+                                url: url.clone(),
+                                title: final_file_name.clone(),
+                                author: initial_record.author.clone(),
+                                duration_sec: rec_duration,
+                                thumbnail_url: local_thumb.clone().unwrap_or_else(|| rec_thumb.clone()),
+                                format_type: format_type.clone(),
+                                quality: quality.clone(),
+                                file_path: final_path_str.clone(),
+                                file_size_bytes: file_size,
+                                status: "completed".to_string(),
+                                error: None,
+                                created_at: chrono::Utc::now().to_rfc3339(),
+                                time_range: time_range.clone(),
+                                exists: true,
+                            };
+                            let _ = db.add_record(&completed_record);
+                            let final_task = ActiveDownloadTask {
+                                task_id: task_id.clone(),
+                                url: url.clone(),
+                                title: final_file_name,
+                                platform: initial_record.platform,
+                                format_type,
+                                quality,
+                                status: "completed".to_string(),
+                                progress: TaskProgress {
+                                    percent: 100.0,
+                                    speed_str: "Saved".to_string(),
+                                    eta_str: "00:00".to_string(),
+                                    downloaded_bytes: Some(file_size),
+                                    total_bytes: Some(file_size),
+                                },
+                                error: None,
+                                is_live_recording: Some(true),
+                                live_mode: live_mode.clone(),
+                                current_step: Some("Completed".to_string()),
+                                recent_logs: Some(process_mgr.get_logs(&task_id)),
+                            };
+                            process_mgr.remove_context(&task_id);
+                            let _ = app.emit("download-progress", &final_task);
+                            return Ok(());
+                        }
+                    }
+                }
             }
 
             let last_err_line = {
@@ -1729,7 +2709,7 @@ pub async fn run_download(
             }
 
             // Fallback: If yt-dlp failed (e.g. "No video formats found" on photo post), attempt native image extraction
-            if format_type != "audio" {
+            if format_type != "audio" && !is_live_recording {
                 if let Ok(bundle) = crate::image_extractor::try_extract_image_media(&url).await {
                     if crate::image_extractor::download_image_bundle(
                         &app,
@@ -1765,6 +2745,7 @@ pub async fn run_download(
                 &format!("Download failed for URL: {}. Reason: {}", url, err_msg),
                 None,
             );
+            process_mgr.append_log(&task_id, &format!("FAILURE: {}", err_msg));
 
             let err_task = ActiveDownloadTask {
                 task_id: task_id.clone(),
@@ -1782,6 +2763,10 @@ pub async fn run_download(
                     total_bytes: None,
                 },
                 error: Some(err_msg.clone()),
+                is_live_recording: is_live_opt_flag,
+                live_mode: live_mode.clone(),
+                current_step: Some(format!("Error: {}", err_msg)),
+                recent_logs: Some(process_mgr.get_logs(&task_id)),
             };
             let _ = app.emit("download-progress", &err_task);
             return Err(err_msg);
@@ -2053,6 +3038,169 @@ mod tests {
             extract_author_from_filename("My Video-YouTube.mp4"),
             None
         );
+    }
+
+    #[test]
+    fn test_build_live_ytdlp_args_modes() {
+        // 1. Record from now with 1080p and 300s duration
+        let cfg_now = LiveStreamConfig {
+            mode: "record_from_now".to_string(),
+            duration_sec: Some(300),
+            time_range: None,
+            download_chat: false,
+            wait_for_stream: false,
+            wait_interval_sec: None,
+            auto_reconnect: true,
+            force_keyframes: true,
+        };
+        let args_now = build_live_ytdlp_args(&cfg_now, "1080p");
+        assert!(args_now.contains(&"bestvideo[height<=1080]+bestaudio/best".to_string()));
+        assert!(args_now.contains(&"--merge-output-format".to_string()));
+        assert!(args_now.contains(&"mp4".to_string()));
+        assert!(args_now.contains(&"--hls-use-mpegts".to_string()));
+        assert!(args_now.contains(&"ffmpeg_i:-t 300".to_string()));
+        assert!(args_now.contains(&"--retries".to_string()));
+        assert!(args_now.contains(&"infinite".to_string()));
+
+        // 2. Rewind Live Stream (--live-from-start) with wait-for-video
+        let cfg_rewind = LiveStreamConfig {
+            mode: "rewind_live".to_string(),
+            duration_sec: None,
+            time_range: None,
+            download_chat: true,
+            wait_for_stream: true,
+            wait_interval_sec: Some(600),
+            auto_reconnect: true,
+            force_keyframes: false,
+        };
+        let args_rewind = build_live_ytdlp_args(&cfg_rewind, "1080p");
+        assert!(args_rewind.contains(&"--live-from-start".to_string()));
+        assert!(args_rewind.contains(&"--write-subs".to_string()));
+        assert!(args_rewind.contains(&"live_chat".to_string()));
+        assert!(args_rewind.contains(&"--wait-for-video".to_string()));
+        assert!(args_rewind.contains(&"600".to_string()));
+
+        // 3. Capture time range (--download-sections "*01:30:00-02:00:00" --force-keyframes-at-cuts)
+        let cfg_range = LiveStreamConfig {
+            mode: "capture_time_range".to_string(),
+            duration_sec: None,
+            time_range: Some(TimeRange {
+                start: "01:30:00".to_string(),
+                end: "02:00:00".to_string(),
+            }),
+            download_chat: false,
+            wait_for_stream: false,
+            wait_interval_sec: None,
+            auto_reconnect: false,
+            force_keyframes: true,
+        };
+        let args_range = build_live_ytdlp_args(&cfg_range, "1080p");
+        assert!(args_range.contains(&"--download-sections".to_string()));
+        assert!(args_range.contains(&"*01:30:00-02:00:00".to_string()));
+        assert!(args_range.contains(&"--force-keyframes-at-cuts".to_string()));
+
+        // 4. Download chat replay (--write-subs --sub-langs live_chat --live-from-start)
+        let cfg_chat = LiveStreamConfig {
+            mode: "chat_replay".to_string(),
+            duration_sec: None,
+            time_range: None,
+            download_chat: true,
+            wait_for_stream: false,
+            wait_interval_sec: None,
+            auto_reconnect: false,
+            force_keyframes: false,
+        };
+        let args_chat = build_live_ytdlp_args(&cfg_chat, "720p");
+        assert!(args_chat.contains(&"bestvideo[height<=720]+bestaudio/best".to_string()));
+        assert!(args_chat.contains(&"--write-subs".to_string()));
+        assert!(args_chat.contains(&"--sub-langs".to_string()));
+        assert!(args_chat.contains(&"live_chat".to_string()));
+        assert!(args_chat.contains(&"--live-from-start".to_string()));
+    }
+
+    #[test]
+    fn test_live_progress_regex_and_parsers() {
+        assert_eq!(parse_size_to_bytes("10MiB"), Some(10 * 1024 * 1024));
+        assert_eq!(parse_size_to_bytes("1024KiB"), Some(1024 * 1024));
+        assert_eq!(parse_hhmmss_to_secs("01:30:00"), Some(5400.0));
+        assert_eq!(parse_hhmmss_to_secs("02:05"), Some(125.0));
+
+        let ytdlp_line = "[download]   18.45MiB at    3.12MiB/s (00:01:42) (frag 34)";
+        let caps = RE_LIVE_PROGRESS.captures(ytdlp_line).expect("Should match yt-dlp live progress");
+        assert_eq!(&caps[1], "18.45MiB");
+        assert_eq!(&caps[2], "3.12MiB/s");
+        assert_eq!(caps.get(3).map(|m| m.as_str()), Some("00:01:42"));
+        assert_eq!(caps.get(4).map(|m| m.as_str()), Some("34"));
+
+        let ff_line = "frame= 1820 fps= 30 q=-1.0 size=   24576KiB time=00:01:00.66 bitrate=3318.4kbits/s speed=1.00x";
+        let ff_caps = RE_FFMPEG_PROGRESS.captures(ff_line).expect("Should match ffmpeg live progress");
+        assert_eq!(&ff_caps[1], "24576KiB");
+        assert_eq!(&ff_caps[2], "00:01:00.66");
+        assert_eq!(&ff_caps[3], "3318.4kbits/s");
+    }
+
+    #[test]
+    fn test_convert_live_chat_json_to_srt_and_finalize_artifacts() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "xd_live_test_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let chat_jsonl = r#"{"replayChatItemAction":{"actions":[{"addChatItemAction":{"item":{"liveChatTextMessageRenderer":{"message":{"runs":[{"text":"Hello live stream!"}]},"authorName":{"simpleText":"Alice"}}}}}],"videoOffsetTimeMsec":"5000"}}
+{"replayChatItemAction":{"actions":[{"addChatItemAction":{"item":{"liveChatPaidMessageRenderer":{"purchaseAmountText":{"simpleText":"$10.00"},"message":{"runs":[{"text":"Great broadcast!"}]},"authorName":{"simpleText":"Bob"}}}}}],"videoOffsetTimeMsec":"12500"}}"#;
+
+        let json_file = temp_dir.join("MyStream-Creator.live_chat.json");
+        std::fs::write(&json_file, chat_jsonl).unwrap();
+
+        let srt_path = convert_live_chat_json_to_srt(&temp_dir, "MyStream-Creator")
+            .expect("Should convert .live_chat.json to .live_chat.srt");
+        assert!(srt_path.exists());
+        let srt_content = std::fs::read_to_string(&srt_path).unwrap();
+        assert!(srt_content.contains("00:00:05,000 --> 00:00:08,500"));
+        assert!(srt_content.contains("[Alice]: Hello live stream!"));
+        assert!(srt_content.contains("[Bob]: [SuperChat $10.00] Great broadcast!"));
+
+        // Test finalize_live_recording_artifacts fallback rename on .part file
+        let part_file = temp_dir.join("MyStream-Creator.mp4.part");
+        let frag_file = temp_dir.join("MyStream-Creator.mp4.part-Frag12");
+        std::fs::write(&part_file, b"fake mpegts stream bytes").unwrap();
+        std::fs::write(&frag_file, b"debris").unwrap();
+
+        let finalized = finalize_live_recording_artifacts(&temp_dir, "MyStream-Creator", None)
+            .expect("Should finalize .part into .mp4");
+        assert_eq!(finalized, temp_dir.join("MyStream-Creator.mp4"));
+        assert!(finalized.exists());
+        assert!(!frag_file.exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_is_mpegts_file_detection() {
+        let temp_dir = std::env::temp_dir().join(format!("test_ts_detect_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // 1. MPEG-TS stream (starts with 0x47, length >= 8, no 'ftyp' at 4..8)
+        let ts_file = temp_dir.join("stream.ts");
+        let mut ts_data = vec![0u8; 188];
+        ts_data[0] = 0x47;
+        ts_data[1] = 0x1f;
+        std::fs::write(&ts_file, &ts_data).unwrap();
+        assert!(is_mpegts_file(&ts_file));
+
+        // 2. Real ISO-BMFF MP4 file (has 'ftyp' at bytes 4..8)
+        let mp4_file = temp_dir.join("video.mp4");
+        let mut mp4_data = vec![0u8; 188];
+        mp4_data[0] = 0x00;
+        mp4_data[1] = 0x00;
+        mp4_data[2] = 0x00;
+        mp4_data[3] = 0x20;
+        mp4_data[4..8].copy_from_slice(b"ftyp");
+        std::fs::write(&mp4_file, &mp4_data).unwrap();
+        assert!(!is_mpegts_file(&mp4_file));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 

@@ -22,6 +22,7 @@ import {
   saveTranscriptionConfig,
   testTranscriptionKey,
   onTranscriptionProgress,
+  stopLiveRecording,
 } from "../src/lib/tauri-api";
 import { ActiveDownloadTask, LogEntry, TranscriptionConfig } from "../src/types";
 
@@ -343,6 +344,11 @@ describe("AI Spec-First Contract Tests: src/lib/tauri-api.ts", () => {
       });
       expect(typeof unlisten).toBe("function");
       unlisten();
+    });
+
+    it("should handle stopLiveRecording() safely in browser preview mode", async () => {
+      const stopped = await stopLiveRecording("mock-live-task-1");
+      expect(stopped).toBe(true);
     });
   });
 });

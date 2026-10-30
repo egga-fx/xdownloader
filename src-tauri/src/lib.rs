@@ -81,6 +81,7 @@ async fn start_download(
         selected_indices: payload.selected_indices.clone(),
         image_urls: payload.image_urls.clone(),
         media_items: payload.media_items.clone(),
+        live_config: payload.live_config.clone(),
         out_dir: out_dir.clone(),
         raw_stem: raw_stem.clone(),
     };
@@ -115,6 +116,7 @@ async fn start_download(
             payload.selected_indices,
             payload.image_urls,
             payload.media_items,
+            payload.live_config,
         )
         .await;
 
@@ -145,6 +147,10 @@ async fn start_download(
                         total_bytes: None,
                     },
                     error: Some(err_msg.clone()),
+                    is_live_recording: None,
+                    live_mode: None,
+                    current_step: Some("Failed".to_string()),
+                    recent_logs: None,
                 });
             err_task.status = "error".to_string();
             err_task.error = Some(err_msg.clone());
@@ -158,6 +164,31 @@ async fn start_download(
     process_mgr.register_native(task_id.clone(), task_handle.abort_handle(), out_dir, raw_stem);
 
     Ok(task_id)
+}
+
+#[tauri::command]
+async fn stop_live_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<bool, String> {
+    let _ = state.db.log_event(
+        &task_id,
+        "INFO",
+        "DOWNLOAD",
+        "User requested Stop & Save on live stream recording",
+        None,
+    );
+
+    if let Some(mut task) = state.process_mgr.get_active_task_snapshot(&task_id) {
+        task.progress.speed_str = "Stopping & remuxing MP4...".to_string();
+        task.progress.eta_str = "Saving".to_string();
+        state.process_mgr.update_active_task_snapshot(&task);
+        let _ = tauri::Emitter::emit(&app, "download-progress", &task);
+    }
+
+    let stopped = state.process_mgr.stop_live(&task_id);
+    Ok(stopped)
 }
 
 #[tauri::command]
@@ -210,6 +241,7 @@ async fn resume_download(
                     selected_indices: None,
                     image_urls: None,
                     media_items: None,
+                    live_config: None,
                     out_dir,
                     raw_stem,
                 }
@@ -256,6 +288,7 @@ async fn resume_download(
             ctx_clone.selected_indices,
             ctx_clone.image_urls,
             ctx_clone.media_items,
+            ctx_clone.live_config,
         )
         .await;
 
@@ -286,6 +319,10 @@ async fn resume_download(
                         total_bytes: None,
                     },
                     error: Some(err_msg.clone()),
+                    is_live_recording: None,
+                    live_mode: None,
+                    current_step: Some("Failed".to_string()),
+                    recent_logs: None,
                 });
             err_task.status = "error".to_string();
             err_task.error = Some(err_msg.clone());
@@ -826,6 +863,7 @@ pub fn run() {
             update_engine,
             get_video_metadata,
             start_download,
+            stop_live_recording,
             pause_download,
             resume_download,
             cancel_download,

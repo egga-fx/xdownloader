@@ -24,6 +24,7 @@ import {
   TranscriptionConfig,
   TranscriptionProgress,
   MediaItem,
+  LiveStreamConfig,
 } from "./types";
 import { detectPlatform, isSupportedMediaUrl, cleanMediaUrl, extractMultipleUrls, getErrorMessage, sanitizeTitle, isFallbackTitle, buildOutputFileName } from "./lib/utils";
 import {
@@ -39,6 +40,7 @@ import {
   pickFolder,
   saveAppSettings,
   startDownload,
+  stopLiveRecording,
   pauseDownload,
   resumeDownload,
   cancelDownload,
@@ -82,6 +84,7 @@ interface QueuedDownloadItem {
   selectedIndices?: number[];
   imageUrls?: string[];
   mediaItems?: MediaItem[];
+  liveConfig?: LiveStreamConfig;
 }
 
 export function App() {
@@ -243,7 +246,11 @@ export function App() {
         if (!completedTaskIdsRef.current.has(task.taskId)) {
           completedTaskIdsRef.current.add(task.taskId);
           loadRecords();
-          showToast(`Download finished: "${task.title}"`);
+          showToast(
+            task.isLiveRecording
+              ? `Live stream recording saved to Media Vault: "${task.title}"`
+              : `Download finished: "${task.title}"`
+          );
           notifyDownloadCompleted(task.title, outputFolderRef.current);
           setTimeout(dequeueAndStartNext, 150);
         }
@@ -453,7 +460,11 @@ export function App() {
   };
 
   // 4. Trigger Download (Instant Execution - No Blocking on Metadata)
-  const handleStartDownload = async (directUrl?: string, selectedIndices?: number[]) => {
+  const handleStartDownload = async (
+    directUrl?: string,
+    selectedIndices?: number[],
+    liveConfig?: LiveStreamConfig
+  ) => {
     // Strictly prioritize:
     // 1. Explicit directUrl if provided
     // 2. The active input URL from the input box
@@ -496,13 +507,14 @@ export function App() {
       }
     }
 
-    const isImage = matchedInfo?.postType === "image" || matchedInfo?.description === "image";
-    const finalFormatType =
-      isImage
-        ? "image"
-        : formatType === "image"
-        ? "video"
-        : formatType;
+    const isImage = !liveConfig && (matchedInfo?.postType === "image" || matchedInfo?.description === "image");
+    const finalFormatType = liveConfig
+      ? "video"
+      : isImage
+      ? "image"
+      : formatType === "image"
+      ? "video"
+      : formatType;
 
     if (finalFormatType === "subtitle") {
       return handleStartTranscription();
@@ -551,10 +563,11 @@ export function App() {
       selectedIndices,
       imageUrls: matchedInfo?.images,
       mediaItems: matchedInfo?.mediaItems,
+      liveConfig,
     };
 
     const maxConcurrent = appSettingsRef.current.maxConcurrentDownloads ?? 2;
-    if (activeTasksRef.current.size >= maxConcurrent) {
+    if (activeTasksRef.current.size >= maxConcurrent && !liveConfig) {
       setDownloadQueue((prev) => [...prev, queuedItem]);
       setVaultOpen(true);
       showToast(`Added to queue (#${downloadQueueRef.current.length + 1} in line)`);
@@ -581,6 +594,7 @@ export function App() {
           : (item.quality || appSettings.defaultVideoQuality || "1080p");
 
       const platform = detectPlatform(item.targetUrl);
+      const isLiveRec = Boolean(item.liveConfig);
 
       const taskId = await startDownload({
         url: item.targetUrl,
@@ -593,10 +607,11 @@ export function App() {
         author: item.author,
         durationSec: item.durationSec,
         downloadSubtitles: Boolean(appSettings.downloadSubtitles),
-        timeRange: item.timeRange,
+        timeRange: item.liveConfig?.timeRange || item.timeRange,
         selectedIndices: item.selectedIndices,
         imageUrls: item.imageUrls,
         mediaItems: item.mediaItems,
+        liveConfig: item.liveConfig,
       });
 
       // Optimistically add active task
@@ -610,14 +625,24 @@ export function App() {
           formatType: item.formatType,
           quality: item.quality,
           status: "downloading",
-          progress: { percent: 0, speedStr: "Starting...", etaStr: "--:--" },
+          progress: {
+            percent: 0,
+            speedStr: isLiveRec ? "Connecting to live stream..." : "Starting...",
+            etaStr: isLiveRec ? "LIVE" : "--:--",
+          },
+          isLiveRecording: isLiveRec ? true : undefined,
+          liveMode: item.liveConfig?.mode,
         });
         return next;
       });
 
-      // Automatically open Media Vault to show download progress
-      setVaultOpen(true);
-      showToast("Download started in Media Vault");
+      // Automatically open Media Vault to show download progress only for conventional downloads
+      if (!isLiveRec) {
+        setVaultOpen(true);
+        showToast("Download started in Media Vault");
+      } else {
+        showToast("Live stream recording started");
+      }
     } catch (err: unknown) {
       setError(getErrorMessage(err) || "Failed to start download process");
       setTimeout(dequeueAndStartNext, 200);
@@ -708,6 +733,33 @@ export function App() {
     }
   };
 
+  // 5d. Stop & Save active live stream recording
+  const handleStopLiveTask = async (taskId: string) => {
+    try {
+      await stopLiveRecording(taskId);
+      setActiveTasks((prev) => {
+        const next = new Map(prev);
+        const task = next.get(taskId);
+        if (task) {
+          next.set(taskId, {
+            ...task,
+            progress: {
+              ...task.progress,
+              percent: 99,
+              speedStr: "Stopping & remuxing MP4...",
+              etaStr: "Saving",
+            },
+          });
+        }
+        return next;
+      });
+      showToast("Stopping live capture and saving MP4...");
+    } catch (err: unknown) {
+      console.error("Failed to stop live recording:", err);
+      showToast("Failed to stop live recording");
+    }
+  };
+
   // 6. Direct Delete for records
   const handleDeleteRecordDirectly = async (id: string, title?: string) => {
     try {
@@ -789,8 +841,21 @@ export function App() {
   };
 
   const isDownloadingCurrentUrl = Array.from(activeTasks.values()).some(
-    (t) => t.url === url && t.status === "downloading"
+    (t) =>
+      !t.isLiveRecording &&
+      t.status === "downloading" &&
+      (t.url === url || (videoInfo?.webpageUrl && t.url === videoInfo.webpageUrl))
   );
+
+  const activeLiveTaskForCurrentUrl =
+    Array.from(activeTasks.values()).find(
+      (t) =>
+        t.status === "downloading" &&
+        Boolean(t.isLiveRecording) &&
+        (t.url === url ||
+          (videoInfo?.webpageUrl && t.url === videoInfo.webpageUrl) ||
+          (videoInfo?.id && (t.url.includes(videoInfo.id) || t.taskId.includes(videoInfo.id))))
+    ) || null;
 
   // 8. Trigger AI Video-to-SRT Transcription
   const handleStartTranscription = async () => {
@@ -872,6 +937,7 @@ export function App() {
   }));
 
   const allActiveTasks = [...Array.from(activeTasks.values()), ...transcriptionTasks];
+  const vaultActiveTasks = allActiveTasks.filter((t) => !t.isLiveRecording);
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#09090b] text-[#f4f4f5] overflow-hidden select-none font-sans">
@@ -886,7 +952,7 @@ export function App() {
         vaultOpen={vaultOpen}
         onToggleVault={() => setVaultOpen(!vaultOpen)}
         vaultCount={records.length}
-        activeDownloadingCount={allActiveTasks.length}
+        activeDownloadingCount={vaultActiveTasks.length}
         activeTranscription={firstActiveTranscription}
         onOpenSettings={() => {
           setSettingsInitialSection("general");
@@ -938,6 +1004,7 @@ export function App() {
                 title={customName || videoInfo?.title || "Auto Subtitle Transcript"}
                 onOpenVault={() => setVaultOpen(true)}
                 onCancel={(taskId) => handleCancelTask(taskId)}
+                onOpenStudio={() => setTranscriptStudioOpen(true)}
               />
             </div>
           )}
@@ -954,6 +1021,21 @@ export function App() {
                 customName={customName}
                 setCustomName={setCustomName}
                 onDownload={(selectedIndices) => handleStartDownload(videoInfo.webpageUrl || url, selectedIndices)}
+                onStartLiveRecord={(liveCfg) =>
+                  handleStartDownload(videoInfo.webpageUrl || url, undefined, liveCfg)
+                }
+                onStopLiveRecord={handleStopLiveTask}
+                onRefreshMetadata={() => fetchMetadata(videoInfo.webpageUrl || url)}
+                isRefreshingMetadata={fetchingInfo}
+                activeLiveTask={activeLiveTaskForCurrentUrl}
+                onCopyCommand={async (cmd) => {
+                  try {
+                    await copyToClipboard(cmd);
+                    showToast("yt-dlp CLI command copied to clipboard");
+                  } catch {
+                    showToast("Copied to clipboard");
+                  }
+                }}
                 isDownloadingCurrentUrl={isDownloadingCurrentUrl}
                 transcriptionReady={transcriptionConfig?.keyStatus === "saved"}
                 transcriptionBlockReason={
@@ -1005,9 +1087,10 @@ export function App() {
       <MediaVaultDrawer
         open={vaultOpen}
         onClose={() => setVaultOpen(false)}
-        activeTasks={allActiveTasks}
+        activeTasks={vaultActiveTasks}
         onPauseTask={handlePauseTask}
         onResumeTask={handleResumeTask}
+        onStopLiveTask={handleStopLiveTask}
         onCancelTask={handleCancelTask}
         records={records}
         onRefresh={loadRecords}
@@ -1034,6 +1117,15 @@ export function App() {
         record={previewRecord}
         onClose={() => setPreviewRecord(null)}
         onOpenFolder={(rec) => handleOpenFolder(rec)}
+        onOpenTranscriptStudio={(rec) => {
+          setStudioMediaInput({
+            type: "subtitle",
+            filePath: rec.filePath,
+            title: rec.title,
+            record: rec,
+          });
+          setTranscriptStudioOpen(true);
+        }}
       />
 
       {/* Engine Setup Modal */}

@@ -1,3 +1,4 @@
+import React, { useState } from "react";
 import {
   XCircle,
   Film,
@@ -8,6 +9,11 @@ import {
   Pause,
   Play,
   Captions,
+  Radio,
+  Square,
+  Terminal,
+  Copy,
+  Check,
 } from "lucide-react";
 import { ActiveDownloadTask, DownloadRecord } from "../types";
 import { VaultItemActions } from "./VaultItemActions";
@@ -25,6 +31,7 @@ interface VaultHistoryGridProps {
   activeTasks: ActiveDownloadTask[];
   onPauseTask?: (taskId: string) => void;
   onResumeTask?: (taskId: string) => void;
+  onStopLiveTask?: (taskId: string) => void;
   onCancelTask: (taskId: string) => void;
   records: DownloadRecord[];
   onSelectRecord: (record: DownloadRecord) => void;
@@ -39,6 +46,7 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
   activeTasks,
   onPauseTask,
   onResumeTask,
+  onStopLiveTask,
   onCancelTask,
   records,
   onSelectRecord,
@@ -48,19 +56,32 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
   onRetryRecord,
   onOpenTranscriptStudio,
 }) => {
+  const [expandedLogTaskIds, setExpandedLogTaskIds] = useState<Record<string, boolean>>({});
+  const [copiedTaskId, setCopiedTaskId] = useState<string | null>(null);
+
+  const handleCopyTaskLogs = (task: ActiveDownloadTask) => {
+    if (!task.recentLogs?.length) return;
+    navigator.clipboard?.writeText(task.recentLogs.join("\n")).catch(() => {});
+    setCopiedTaskId(task.taskId);
+    setTimeout(() => setCopiedTaskId(null), 2000);
+  };
+
   return (
     <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
       {/* 1. PINNED ACTIVE DOWNLOAD TASKS */}
       {activeTasks.map((task) => {
         const isPaused = task.status === "paused";
         const isSubtitle = task.formatType === "subtitle";
+        const isLive = Boolean(task.isLiveRecording);
 
         return (
           <div
             key={task.taskId}
-            className={`col-span-1 sm:col-span-2 bg-[#121215] border rounded-xl p-3 flex flex-col gap-2 shadow-md transition-colors ${
+            className={`col-span-1 sm:col-span-2 bg-[#121215] border rounded-xl p-3 flex flex-col gap-2.5 shadow-md transition-colors ${
               isPaused
                 ? "border-amber-500/30 shadow-amber-500/5 bg-amber-500/[0.02]"
+                : isLive
+                ? "border-red-500/40 shadow-red-500/10 bg-red-950/[0.1]"
                 : isSubtitle
                 ? "border-purple-500/30 shadow-purple-500/5 bg-purple-950/[0.08]"
                 : "border-blue-500/30 shadow-blue-500/5"
@@ -70,6 +91,8 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
               <div className="flex items-center gap-2 min-w-0">
                 {isPaused ? (
                   <Pause className="w-4 h-4 text-amber-400 shrink-0" />
+                ) : isLive ? (
+                  <Radio className="w-4 h-4 text-red-400 animate-pulse shrink-0" />
                 ) : isSubtitle ? (
                   <Captions className="w-4 h-4 text-purple-400 animate-pulse shrink-0" />
                 ) : (
@@ -78,6 +101,12 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 <span className="text-xs font-bold text-white truncate" title={getDisplayTitle(task)}>
                   {getDisplayTitle(task)}
                 </span>
+                {isLive && (
+                  <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/40 shrink-0 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />
+                    REC
+                  </span>
+                )}
                 {isSubtitle && (
                   <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
                     AI Scribe v2
@@ -89,8 +118,37 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-1 shrink-0">
-                {!isSubtitle && (
+              <div className="flex items-center gap-1.5 shrink-0">
+                {task.recentLogs && task.recentLogs.length > 0 && (
+                  <button
+                    onClick={() =>
+                      setExpandedLogTaskIds((prev) => ({
+                        ...prev,
+                        [task.taskId]: !prev[task.taskId],
+                      }))
+                    }
+                    className={`h-6 px-2 rounded border text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
+                      expandedLogTaskIds[task.taskId]
+                        ? "bg-zinc-800 border-zinc-600 text-white"
+                        : "bg-[#18181c] hover:bg-[#222228] border-[#27272a] text-zinc-400 hover:text-zinc-200"
+                    }`}
+                    title="Toggle Process Logs"
+                  >
+                    <Terminal className="w-3 h-3 text-blue-400" />
+                    <span>Logs</span>
+                  </button>
+                )}
+
+                {isLive && onStopLiveTask ? (
+                  <button
+                    onClick={() => onStopLiveTask(task.taskId)}
+                    className="h-6 px-2 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                    title="Stop Live Recording & Save MP4"
+                  >
+                    <Square className="w-2.5 h-2.5 fill-current text-red-400" />
+                    <span>Stop & Save</span>
+                  </button>
+                ) : !isSubtitle ? (
                   isPaused ? (
                     <button
                       onClick={() => onResumeTask?.(task.taskId)}
@@ -108,11 +166,11 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                       <Pause className="w-3.5 h-3.5" />
                     </button>
                   )
-                )}
+                ) : null}
                 <button
                   onClick={() => onCancelTask(task.taskId)}
                   className="w-6 h-6 rounded text-[#71717a] hover:text-red-400 flex items-center justify-center cursor-pointer transition-colors"
-                  title={isSubtitle ? "Cancel Transcription" : "Cancel Download"}
+                  title={isSubtitle ? "Cancel Transcription" : isLive ? "Discard Live Recording" : "Cancel Download"}
                 >
                   <XCircle className="w-3.5 h-3.5" />
                 </button>
@@ -124,12 +182,16 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 className={`font-bold ${
                   isPaused
                     ? "text-amber-400"
+                    : isLive
+                    ? "text-red-400"
                     : isSubtitle
                     ? "text-purple-300"
                     : "text-blue-400"
                 }`}
               >
-                {task.progress.percent > 0
+                {isLive
+                  ? task.progress.etaStr || "LIVE"
+                  : task.progress.percent > 0
                   ? `${Math.round(task.progress.percent)}%`
                   : isPaused
                   ? "Paused"
@@ -137,7 +199,7 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
               </span>
               <span className="truncate">
                 {task.progress.speedStr || (isPaused ? "Paused" : "Starting...")}{" "}
-                {task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused && !isSubtitle
+                {!isLive && task.progress.etaStr && task.progress.etaStr !== "--:--" && !isPaused && !isSubtitle
                   ? `· ETA ${task.progress.etaStr}`
                   : ""}
               </span>
@@ -148,6 +210,8 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 className={`h-full transition-all duration-300 ${
                   isPaused
                     ? "bg-amber-500"
+                    : isLive
+                    ? "bg-gradient-to-r from-red-600 via-rose-500 to-amber-500 animate-pulse"
                     : isSubtitle
                     ? "bg-gradient-to-r from-purple-500 to-indigo-500"
                     : "bg-blue-500"
@@ -155,6 +219,59 @@ export const VaultHistoryGrid: React.FC<VaultHistoryGridProps> = ({
                 style={{ width: `${Math.max(task.progress.percent, 3)}%` }}
               />
             </div>
+
+            {/* Current Step indicator */}
+            {task.currentStep && (
+              <div className="text-[10px] text-zinc-400 font-mono truncate flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 animate-pulse" />
+                <span className="truncate">{task.currentStep}</span>
+              </div>
+            )}
+
+            {/* Error Banner */}
+            {task.error && (
+              <div className="p-2.5 rounded-lg bg-red-950/40 border border-red-500/40 text-xs text-red-200 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                  <span className="truncate">{task.error}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Expandable Process Logs Console */}
+            {expandedLogTaskIds[task.taskId] && task.recentLogs && task.recentLogs.length > 0 && (
+              <div className="rounded-lg bg-[#09090b] border border-zinc-800 p-2.5 flex flex-col gap-2 font-mono text-[11px] mt-1">
+                <div className="flex items-center justify-between border-b border-zinc-800/80 pb-1.5">
+                  <div className="flex items-center gap-1.5 text-zinc-400">
+                    <Terminal className="w-3 h-3 text-blue-400" />
+                    <span className="font-semibold text-zinc-300">Process Logs</span>
+                    <span className="text-[10px] text-zinc-600 font-sans">({task.recentLogs.length} events)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyTaskLogs(task)}
+                    className="h-5 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-[10px] font-sans font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    {copiedTaskId === task.taskId ? (
+                      <Check className="w-2.5 h-2.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-2.5 h-2.5 text-zinc-400" />
+                    )}
+                    <span>{copiedTaskId === task.taskId ? "Copied" : "Copy"}</span>
+                  </button>
+                </div>
+                <div className="max-h-36 overflow-y-auto space-y-0.5 pr-1 font-mono text-[10px] leading-relaxed scrollbar-thin scrollbar-thumb-zinc-700">
+                  {task.recentLogs.map((log, idx) => (
+                    <div key={idx} className="text-zinc-300 break-all">
+                      <span className="text-zinc-600 select-none mr-2">
+                        {String(idx + 1).padStart(2, "0")}
+                      </span>
+                      {log}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         );
       })}

@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { DownloadRecord, DownloaderPlatform } from "../types";
+import { DownloadRecord, DownloaderPlatform, LiveStreamConfig, VideoInfo } from "../types";
 import { convertFileSrc } from "./tauri-api";
 
 export function cn(...inputs: ClassValue[]) {
@@ -73,7 +73,12 @@ export function isSupportedMediaUrl(inputUrl: string): boolean {
     if (parsed.hostname.includes("youtu.be")) {
       return Boolean(path);
     }
-    return Boolean(parsed.searchParams.get("v") || /\/(?:shorts|live)\/[a-zA-Z0-9_-]+/i.test(path));
+    return Boolean(
+      parsed.searchParams.get("v") ||
+        /\/(?:shorts|live)\/[a-zA-Z0-9_-]+/i.test(path) ||
+        /\/@[^/]+\/live$/i.test(path) ||
+        /\/(?:channel|c|user)\/[^/]+\/live$/i.test(path)
+    );
   }
 
   if (platform === "tiktok") {
@@ -316,6 +321,11 @@ export function cleanMediaUrl(rawUrl: string): string {
       if (shortsMatch) {
         return `https://www.youtube.com/shorts/${shortsMatch[1]}`;
       }
+      // Live: https://www.youtube.com/live/VIDEO_ID
+      const liveMatch = parsed.pathname.match(/\/live\/([a-zA-Z0-9_-]+)/);
+      if (liveMatch) {
+        return `https://www.youtube.com/live/${liveMatch[1]}`;
+      }
       // youtu.be/VIDEO_ID
       if (parsed.hostname.includes("youtu.be")) {
         const id = parsed.pathname.replace(/^\//, "").split("/")[0];
@@ -404,6 +414,25 @@ export function secondsToTimestamp(sec: number): string {
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
   return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Formats live stream broadcast duration into human-readable format.
+ * For streams running longer than 24 hours (continuous 24/7 streams), prefixes with days (e.g. "133d 10:19:25").
+ * For standard live streams under 24 hours, formats as "HH:MM:SS" (e.g. "02:15:30").
+ */
+export function formatLiveDuration(sec: number): string {
+  if (isNaN(sec) || sec < 0) return "00:00:00";
+  const days = Math.floor(sec / 86400);
+  const remSec = sec % 86400;
+  const h = Math.floor(remSec / 3600);
+  const m = Math.floor((remSec % 3600) / 60);
+  const s = remSec % 60;
+  const timeStr = `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  if (days > 0) {
+    return `${days}d ${timeStr}`;
+  }
+  return timeStr;
 }
 
 /**
@@ -785,6 +814,137 @@ export function getDisplayTitle(itemOrTask: {
   }
   return rawTitle || "Media Download";
 }
+
+export interface SplitSegment {
+  partIndex: number;
+  start: string;
+  end: string;
+  label: string;
+}
+
+/**
+ * Divides a total video duration into equal-interval segments with a remainder chunk.
+ */
+export function generatePresetSegments(
+  totalDuration: number,
+  chunkIntervalSec: number
+): SplitSegment[] {
+  if (totalDuration <= 0 || chunkIntervalSec <= 0 || isNaN(totalDuration) || isNaN(chunkIntervalSec)) {
+    return [];
+  }
+
+  const segments: SplitSegment[] = [];
+  let currentStart = 0;
+  let part = 1;
+
+  while (currentStart < totalDuration) {
+    const nextEnd = Math.min(currentStart + chunkIntervalSec, totalDuration);
+    segments.push({
+      partIndex: part,
+      start: secondsToTimestamp(currentStart),
+      end: secondsToTimestamp(nextEnd),
+      label: `Part ${part}`,
+    });
+    currentStart = nextEnd;
+    part++;
+  }
+
+  return segments;
+}
+
+/**
+ * Determines whether a video metadata payload or URL represents a live stream, upcoming broadcast, or archived live stream.
+ */
+export function isLiveStreamMetadata(metadata?: VideoInfo | null, url?: string): boolean {
+  if (metadata?.isLive === true) return true;
+  if (
+    metadata?.liveStatus &&
+    ["is_live", "is_upcoming", "was_live", "post_live"].includes(metadata.liveStatus)
+  ) {
+    return true;
+  }
+  const targetUrl = (url || metadata?.webpageUrl || "").trim();
+  if (/youtube\.com\/(?:live\/|@[^/]+\/live)/i.test(targetUrl)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Builds a copy-ready yt-dlp CLI command string matching the active LiveStreamConfig and resolution quality.
+ */
+export function buildLiveYtdlpCommandPreview(
+  url: string,
+  quality: string,
+  liveConfig: LiveStreamConfig
+): string {
+  const parts: string[] = ["yt-dlp"];
+
+  const fmtSelector = (() => {
+    switch (quality) {
+      case "4k":
+      case "2160p":
+        return "bestvideo[height<=2160]+bestaudio/best";
+      case "1440p":
+        return "bestvideo[height<=1440]+bestaudio/best";
+      case "1080p":
+        return "bestvideo[height<=1080]+bestaudio/best";
+      case "720p":
+        return "bestvideo[height<=720]+bestaudio/best";
+      case "480p":
+        return "bestvideo[height<=480]+bestaudio/best";
+      case "360p":
+        return "bestvideo[height<=360]+bestaudio/best";
+      default:
+        return "bestvideo+bestaudio/best";
+    }
+  })();
+
+  parts.push(`-f "${fmtSelector}"`, "--merge-output-format mp4");
+
+  switch (liveConfig.mode) {
+    case "rewind_live":
+      parts.push("--live-from-start", "--hls-use-mpegts");
+      break;
+    case "capture_time_range": {
+      const start = (liveConfig.timeRange?.start || "00:00:00").trim();
+      const end = (liveConfig.timeRange?.end || "00:10:00").trim();
+      parts.push(`--download-sections "*${start}-${end}"`);
+      if (liveConfig.forceKeyframes) {
+        parts.push("--force-keyframes-at-cuts");
+      }
+      break;
+    }
+    case "chat_replay":
+      parts.push('--write-subs --sub-langs "live_chat"', "--live-from-start");
+      break;
+    case "record_from_now":
+    default:
+      parts.push("--hls-use-mpegts");
+      if (liveConfig.durationSec && liveConfig.durationSec > 0) {
+        parts.push("--downloader ffmpeg", `--downloader-args "ffmpeg_i:-t ${liveConfig.durationSec}"`);
+      }
+      break;
+  }
+
+  if (liveConfig.downloadChat && liveConfig.mode !== "chat_replay") {
+    parts.push('--write-subs --sub-langs "live_chat"');
+  }
+
+  if (liveConfig.waitForStream) {
+    const interval = Math.max(10, liveConfig.waitIntervalSec || 600);
+    parts.push(`--wait-for-video ${interval}`);
+  }
+
+  if (liveConfig.autoReconnect) {
+    parts.push("--retries 10", "--fragment-retries infinite");
+  }
+
+  parts.push(`"${url || "https://www.youtube.com/watch?v=live_id"}"`);
+  return parts.join(" ");
+}
+
+
 
 
 

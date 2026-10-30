@@ -10,6 +10,7 @@ import {
   Volume2,
   Play,
   Captions,
+  Sparkles,
 } from "lucide-react";
 import { DownloadRecord } from "../types";
 import { formatDuration, formatFileSize, getRecordThumbnail, getSourceAccount, getDisplayTitle } from "../lib/utils";
@@ -24,12 +25,14 @@ interface MediaPreviewModalProps {
   record: DownloadRecord | null;
   onClose: () => void;
   onOpenFolder: (record: DownloadRecord) => void;
+  onOpenTranscriptStudio?: (record: DownloadRecord) => void;
 }
 
 export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   record,
   onClose,
   onOpenFolder,
+  onOpenTranscriptStudio,
 }) => {
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [videoError, setVideoError] = useState(false);
@@ -113,9 +116,22 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
               <p className="text-xs text-[#71717a] mt-1 text-center">
                 Subtitle & Transcript File (.srt) · {formatFileSize(record.fileSizeBytes)}
               </p>
-              <div className="flex items-center gap-2 mt-4">
+              <div className="flex items-center gap-2 mt-4 flex-wrap justify-center">
                 {isTauriEnvironment() ? (
                   <>
+                    {onOpenTranscriptStudio && (
+                      <button
+                        onClick={() => {
+                          onClose();
+                          onOpenTranscriptStudio(record);
+                        }}
+                        className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                        title="Open and edit in AI Transcript Studio"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Open in Studio</span>
+                      </button>
+                    )}
                     {record.filePath && (
                       <button
                         onClick={() => openMediaFile(record.filePath)}
@@ -135,13 +151,27 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                     </button>
                   </>
                 ) : (
-                  <button
-                    onClick={() => triggerDirectBrowserDownload(record)}
-                    className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Download SRT</span>
-                  </button>
+                  <>
+                    {onOpenTranscriptStudio && (
+                      <button
+                        onClick={() => {
+                          onClose();
+                          onOpenTranscriptStudio(record);
+                        }}
+                        className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Open in Studio</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => triggerDirectBrowserDownload(record)}
+                      className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download SRT</span>
+                    </button>
+                  </>
                 )}
               </div>
             </div>

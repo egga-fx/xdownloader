@@ -30,6 +30,30 @@ export interface TimeRange {
   end: string;
 }
 
+export type LiveRecordMode =
+  | "record_from_now"
+  | "rewind_live"
+  | "capture_time_range"
+  | "chat_replay";
+
+export type LiveStreamStatus =
+  | "is_live"
+  | "is_upcoming"
+  | "was_live"
+  | "post_live"
+  | "not_live";
+
+export interface LiveStreamConfig {
+  mode: LiveRecordMode;
+  durationSec?: number | null;
+  timeRange?: TimeRange | null;
+  downloadChat: boolean;
+  waitForStream: boolean;
+  waitIntervalSec?: number | null;
+  autoReconnect: boolean;
+  forceKeyframes: boolean;
+}
+
 export interface DownloadRecord {
   id: string;
   platform: DownloaderPlatform;
@@ -67,6 +91,10 @@ export interface ActiveDownloadTask {
   status: "downloading" | "paused" | "completed" | "error";
   progress: TaskProgress;
   error?: string;
+  isLiveRecording?: boolean;
+  liveMode?: LiveRecordMode | string;
+  currentStep?: string;
+  recentLogs?: string[];
 }
 
 export interface MediaItem {
@@ -93,6 +121,7 @@ export interface StartDownloadPayload {
   selectedIndices?: number[];
   imageUrls?: string[];
   mediaItems?: MediaItem[];
+  liveConfig?: LiveStreamConfig;
 }
 
 export interface VideoInfo {
@@ -108,6 +137,9 @@ export interface VideoInfo {
   webpageUrl: string;
   images?: string[];
   mediaItems?: MediaItem[];
+  isLive?: boolean;
+  liveStatus?: LiveStreamStatus | string;
+  releaseTimestamp?: number | null;
 }
 
 export interface BinariesStatus {

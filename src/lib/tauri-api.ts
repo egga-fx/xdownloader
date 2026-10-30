@@ -262,6 +262,12 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
     const fallbackThumb = ytIdMatch
       ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`
       : "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80";
+    const isLiveHint = /\/live\/|live_id|upcoming_id|\/@[^/]+\/live/i.test(cleanUrl);
+    const simulatedLiveStatus = /upcoming/i.test(cleanUrl)
+      ? "is_upcoming"
+      : isLiveHint
+      ? "is_live"
+      : "not_live";
 
     try {
       const res = await fetch(
@@ -273,11 +279,13 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
           id: ytId,
           title: data.title || `YouTube Video [${ytId}]`,
           webpageUrl: cleanUrl,
-          duration: 180,
+          duration: isLiveHint ? 0 : 180,
           thumbnail: data.thumbnail_url || fallbackThumb,
           uploader: data.author_name || "YouTube Creator",
           channel: data.author_name || "YouTube Channel",
           description: "YouTube media fetched via oEmbed",
+          isLive: simulatedLiveStatus === "is_live",
+          liveStatus: simulatedLiveStatus,
         };
       }
     } catch {
@@ -286,11 +294,13 @@ export async function getVideoMetadata(url: string): Promise<VideoInfo> {
         id: ytId,
         title: `YouTube Video [${ytId}]`,
         webpageUrl: cleanUrl,
-        duration: 180,
+        duration: isLiveHint ? 0 : 180,
         thumbnail: fallbackThumb,
         uploader: "YouTube Creator",
         channel: "YouTube Channel",
         description: "YouTube media preview",
+        isLive: simulatedLiveStatus === "is_live",
+        liveStatus: simulatedLiveStatus,
       };
     }
   }
@@ -416,6 +426,7 @@ export async function startDownload(params: StartDownloadPayload): Promise<strin
         selectedIndices: params.selectedIndices || null,
         imageUrls: params.imageUrls || null,
         mediaItems: params.mediaItems || null,
+        liveConfig: params.liveConfig || null,
       },
     });
   }
@@ -560,11 +571,13 @@ export async function startDownload(params: StartDownloadPayload): Promise<strin
       status: isDone ? "completed" : "downloading",
       progress: {
         percent: Math.min(percent, 100),
-        speedStr: "Browser Stream",
-        etaStr: isDone ? "00:00" : `00:0${Math.max(1, 5 - Math.floor(percent / 20))}`,
+        speedStr: params.liveConfig ? "REC Live Stream" : "Browser Stream",
+        etaStr: isDone ? "00:00" : params.liveConfig ? `REC 00:0${Math.floor(percent / 20)}` : `00:0${Math.max(1, 5 - Math.floor(percent / 20))}`,
         downloadedBytes: Math.floor((percent / 100) * 28_000_000),
         totalBytes: 28_000_000,
       },
+      isLiveRecording: Boolean(params.liveConfig),
+      liveMode: params.liveConfig?.mode,
     };
 
     browserDownloadListeners.forEach((cb) => cb(task));
@@ -660,6 +673,20 @@ export function triggerDirectBrowserDownload(record: DownloadRecord) {
   } catch (err) {
     console.warn("Failed to trigger direct download:", err);
   }
+}
+
+export async function stopLiveRecording(taskId: string): Promise<boolean> {
+  if (isTauriEnvironment()) {
+    return await invoke<boolean>("stop_live_recording", { taskId });
+  }
+
+  const timer = browserActiveSimulations.get(taskId);
+  if (timer) {
+    clearInterval(timer);
+    browserActiveSimulations.delete(taskId);
+    return true;
+  }
+  return true;
 }
 
 export async function cancelDownload(taskId: string): Promise<boolean> {

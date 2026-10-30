@@ -1,3 +1,12 @@
 # Use default MSVC linker on Windows to prevent rust-lld 0xc0000006 paging crash
 [target.x86_64-pc-windows-msvc]
 linker = "link.exe"
+
+# TEMPORARY: D: drive has bad sectors (STATUS_IN_PAGE_ERROR while compiling).
+# Build artifacts live on the healthy C: SSD until the drive is replaced.
+# Remove this section after moving the repo to a healthy disk.
+[build]
+target-dir = "C:/cargo-target-xdl"
+
+[profile.dev]
+debug = 0

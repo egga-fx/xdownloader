@@ -9,6 +9,34 @@ pub struct TimeRange {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LiveStreamConfig {
+    /// "record_from_now" | "rewind_live" | "capture_time_range" | "chat_replay"
+    pub mode: String,
+    /// Optional recording duration in seconds for "record_from_now" (0 or None = until stream ends)
+    #[serde(default)]
+    pub duration_sec: Option<i64>,
+    /// Optional start/end timestamps for "capture_time_range"
+    #[serde(default)]
+    pub time_range: Option<TimeRange>,
+    /// Save live chat replay (.srt & .json) alongside the video
+    #[serde(default)]
+    pub download_chat: bool,
+    /// Poll and wait if stream is scheduled/upcoming (--wait-for-video)
+    #[serde(default)]
+    pub wait_for_stream: bool,
+    /// Wait polling interval in seconds (default 600)
+    #[serde(default)]
+    pub wait_interval_sec: Option<u32>,
+    /// Auto-retry streams and fragments on network drops (--retries 10 --fragment-retries infinite)
+    #[serde(default = "default_true")]
+    pub auto_reconnect: bool,
+    /// Frame-accurate cuts (--force-keyframes-at-cuts) for time range mode
+    #[serde(default = "default_true")]
+    pub force_keyframes: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DownloadRecord {
     pub id: String,
     pub platform: String,
@@ -50,6 +78,14 @@ pub struct ActiveDownloadTask {
     pub status: String,
     pub progress: TaskProgress,
     pub error: Option<String>,
+    #[serde(default)]
+    pub is_live_recording: Option<bool>,
+    #[serde(default)]
+    pub live_mode: Option<String>,
+    #[serde(default)]
+    pub current_step: Option<String>,
+    #[serde(default)]
+    pub recent_logs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +114,12 @@ pub struct VideoInfo {
     pub webpage_url: String,
     pub images: Option<Vec<String>>,
     pub media_items: Option<Vec<MediaItem>>,
+    #[serde(default)]
+    pub is_live: Option<bool>,
+    #[serde(default)]
+    pub live_status: Option<String>,
+    #[serde(default)]
+    pub release_timestamp: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,6 +283,8 @@ pub struct StartDownloadPayload {
     pub image_urls: Option<Vec<String>>,
     #[serde(default)]
     pub media_items: Option<Vec<MediaItem>>,
+    #[serde(default)]
+    pub live_config: Option<LiveStreamConfig>,
 }
 
 

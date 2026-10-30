@@ -20,6 +20,7 @@ interface MediaVaultDrawerProps {
   activeTasks: ActiveDownloadTask[];
   onPauseTask?: (taskId: string) => void;
   onResumeTask?: (taskId: string) => void;
+  onStopLiveTask?: (taskId: string) => void;
   onCancelTask: (taskId: string) => void;
   records: DownloadRecord[];
   onRefresh: () => void;
@@ -38,6 +39,7 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
   activeTasks,
   onPauseTask,
   onResumeTask,
+  onStopLiveTask,
   onCancelTask,
   records,
   onRefresh,
@@ -205,7 +207,7 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
             <option value="video">Videos</option>
             <option value="audio">Audio</option>
             <option value="image">Images</option>
-            <option value="subtitle">Transkrip (SRT)</option>
+            <option value="subtitle">Transcript (SRT)</option>
           </select>
 
           {/* View Mode Toggle */}
@@ -252,6 +254,7 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
               activeTasks={activeTasks}
               onPauseTask={onPauseTask}
               onResumeTask={onResumeTask}
+              onStopLiveTask={onStopLiveTask}
               onCancelTask={onCancelTask}
               records={filteredRecords}
               onSelectRecord={onSelectRecord}
@@ -266,6 +269,7 @@ export const MediaVaultDrawer: React.FC<MediaVaultDrawerProps> = ({
               activeTasks={activeTasks}
               onPauseTask={onPauseTask}
               onResumeTask={onResumeTask}
+              onStopLiveTask={onStopLiveTask}
               onCancelTask={onCancelTask}
               records={filteredRecords}
               onSelectRecord={onSelectRecord}

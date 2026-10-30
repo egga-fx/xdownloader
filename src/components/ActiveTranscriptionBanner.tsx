@@ -13,6 +13,7 @@ interface ActiveTranscriptionBannerProps {
   title?: string;
   onOpenVault: () => void;
   onCancel: (taskId: string) => void;
+  onOpenStudio?: () => void;
 }
 
 const STAGES: { id: TranscriptionStage; label: string; step: number }[] = [
@@ -44,6 +45,7 @@ export const ActiveTranscriptionBanner: React.FC<ActiveTranscriptionBannerProps>
   title,
   onOpenVault,
   onCancel,
+  onOpenStudio,
 }) => {
   const currentStageIdx = getStageIndex(transcription.stage);
   const percent = Math.min(Math.max(Math.round(transcription.percent), 0), 100);
@@ -73,6 +75,17 @@ export const ActiveTranscriptionBanner: React.FC<ActiveTranscriptionBannerProps>
 
         {/* Action buttons */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {onOpenStudio && (
+            <button
+              type="button"
+              onClick={onOpenStudio}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-xs font-semibold text-purple-200 hover:text-white transition-colors cursor-pointer shadow-sm shadow-purple-500/10"
+              title="Open in AI Transcript Studio"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span>Studio</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onOpenVault}
